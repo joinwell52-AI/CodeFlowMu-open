@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "mode": "official_demo_limited",
+  "gateway_url": "wss://ai.chedian.cc/codeflowmu/gateway/pc",
+  "public_base_url": "https://ai.chedian.cc/codeflowmu",
+  "instance_id": "",
+  "instance_secret": "",
+  "auto_connect": true,
+  "note": "Open edition default: connect to the official demo / limited-use Gateway. Authorization, rate limits, privacy, and data-retention controls are enforced by that service."
+}

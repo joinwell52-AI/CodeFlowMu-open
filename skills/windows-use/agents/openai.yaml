@@ -1,0 +1,4 @@
+interface:
+  display_name: "Windows Use"
+  short_description: "Control approved Windows desktop applications"
+  default_prompt: "Use $windows-use to inspect and control an approved Windows application."

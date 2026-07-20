@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://codeflowmu.dev/schemas/session/v0.1.json",
+  "title": "codeflowmu Session",
+  "description": "An agent โ?task conversation. See design doc ยง3.5. v0.1-alpha.",
+  "type": "object",
+  "required": ["session_id", "agent_id", "task_id", "started_at", "status", "runs"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "session_id": {
+      "type": "string",
+      "pattern": "^session-[a-z0-9-]+$"
+    },
+    "agent_id": { "type": "string" },
+    "task_id": { "type": "string" },
+    "started_at": { "type": "string", "format": "date-time" },
+    "ended_at": { "type": ["string", "null"], "format": "date-time" },
+    "status": {
+      "type": "string",
+      "enum": ["running", "completed", "failed", "cancelled"]
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["run_id", "started_at", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "run_id": { "type": "string", "pattern": "^run-[a-z0-9-]+$" },
+          "started_at": { "type": "string", "format": "date-time" },
+          "ended_at": { "type": ["string", "null"], "format": "date-time" },
+          "status": { "type": "string", "enum": ["running", "finished", "failed", "cancelled"] },
+          "tokens_used": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "properties": {
+              "input": { "type": "integer", "minimum": 0 },
+              "output": { "type": "integer", "minimum": 0 },
+              "thinking": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "tool_calls_count": { "type": "integer", "minimum": 0 },
+          "transcript_path": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "total_cost_usd": { "type": ["number", "null"], "minimum": 0 },
+    "outcome": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "properties": {
+        "files_changed": { "type": "array", "items": { "type": "string" } },
+        "report_ref": { "type": ["string", "null"] }
+      }
+    }
+  }
+}
+

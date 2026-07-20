@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://codeflowmu.dev/schemas/agent/v0.1.json",
+  "title": "codeflowmu Agent",
+  "description": "Defines a digital employee. See design doc §3.2. v0.1-alpha.",
+  "type": "object",
+  "required": ["agent_id", "role", "layer", "node", "runtime", "skills", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "agent_id": {
+      "type": "string",
+      "description": "Globally unique role-level identifier (NOT the SDK agentId).",
+      "pattern": "^[A-Z][A-Z0-9_-]+(-\\d+)?$",
+      "examples": ["DEV-01", "PM-01", "REVIEW-01"]
+    },
+    "sdk_agent_id": {
+      "type": ["string", "null"],
+      "description": "Cursor SDK agentId returned from Agent.create(). Used by Agent.resume()."
+    },
+    "role": {
+      "type": "string",
+      "description": "Mapped to roles.yaml roles[].id",
+      "examples": ["developer", "reviewer", "pm"]
+    },
+    "layer": {
+      "type": "string",
+      "enum": ["worker", "governance", "admin", "leader", "observer"],
+      "description": "Org layer (§0.9.1). worker = L1 producer; leader = L1.5 dispatcher (PM); governance = L2 reviewer/audit; observer = EVAL fact observer (read +旁观 report, no lifecycle); admin = L3 human (kernel mode)."
+    },
+    "node": {
+      "type": "string",
+      "enum": ["local", "cloud", "mobile"],
+      "description": "Which node the agent runs on."
+    },
+    "runtime": {
+      "type": "string",
+      "enum": ["local", "cloud"],
+      "description": "Cursor SDK runtime mode. local agents must be on the local node."
+    },
+    "workspace": {
+      "type": "string",
+      "description": "For local agents: cwd path. For cloud agents: repo URL."
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "examples": ["claude-sonnet-4-6", "gpt-5.3-codex", "default"] },
+        "params": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "value"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string" },
+              "value": { "type": ["string", "number", "boolean"] }
+            }
+          }
+        }
+      }
+    },
+    "skills": {
+      "type": "array",
+      "description": "Active MCP skill IDs. MUST include 'fcop' (kernel dependency).",
+      "items": { "type": "string" },
+      "contains": { "const": "fcop" },
+      "minItems": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["idle", "running", "blocked", "review", "error", "stopped"]
+    },
+    "current_task": {
+      "type": ["string", "null"],
+      "description": "Currently held Task ID. null when idle."
+    },
+    "current_session": {
+      "type": ["string", "null"]
+    },
+    "memory_usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tokens_in_context": { "type": "integer", "minimum": 0 },
+        "max_context": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "started_at": { "type": "string", "format": "date-time" },
+    "last_active_at": { "type": "string", "format": "date-time" },
+    "labels": {
+      "type": "object",
+      "description": "User-defined tags (always-open extension point per §3.8).",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}
+

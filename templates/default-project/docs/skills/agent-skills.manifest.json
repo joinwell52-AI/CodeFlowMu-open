@@ -1,0 +1,314 @@
+{
+  "version": 1,
+  "kind": "agent_skills_manifest",
+  "scope": "codeflowmu",
+  "layers": {
+    "mcp_skill": {
+      "description": "Tool registration layer. Defines callable MCP tools, schemas, write permissions and risk levels.",
+      "file": "skill.schema.json"
+    },
+    "agent_playbook_skill": {
+      "description": "Agent behavior layer. Defines how roles should use tools, write reports, respect lifecycle boundaries and avoid unsafe actions.",
+      "file": ".codeflowmu/agent-skills.manifest.json"
+    }
+  },
+  "common_skills": [
+    {
+      "id": "windows-use",
+      "display_name": "Windows Use",
+      "description": "Control user-approved native Windows applications through the Cursor capability bus.",
+      "skill_package": "skills/windows-use/SKILL.md",
+      "status": "implemented",
+      "mapped_mcp_tools": [
+        "windows.capabilities",
+        "windows.list_apps",
+        "windows.screenshot",
+        "windows.inspect_ui",
+        "windows.click",
+        "windows.type_text",
+        "windows.keypress",
+        "windows.scroll",
+        "windows.invoke_ui",
+        "windows.cancel"
+      ]
+    },
+    {
+      "id": "browser-use",
+      "display_name": "Browser Use",
+      "description": "Control approved enterprise Web applications in managed Chrome or Edge as a bounded digital employee.",
+      "skill_package": "skills/browser-use/SKILL.md",
+      "status": "implemented",
+      "mapped_mcp_tools": [
+        "browser.capabilities",
+        "browser.list_targets",
+        "browser.open_target",
+        "browser.list_tabs",
+        "browser.snapshot",
+        "browser.find",
+        "browser.record_login_start",
+        "browser.record_login_finish",
+        "browser.verify_login",
+        "browser.login",
+        "browser.submit_login",
+        "browser.click",
+        "browser.fill",
+        "browser.fill_credentials",
+        "browser.select",
+        "browser.upload",
+        "browser.wait",
+        "browser.screenshot",
+        "browser.cancel"
+      ]
+    },
+    {
+      "id": "read_context",
+      "display_name": "读取上下文",
+      "doc": "docs/skills/common-skills.md",
+      "status": "playbook_stub",
+      "mapped_pm_runtime_skills": [
+        "pm.summarize_thread"
+      ]
+    },
+    {
+      "id": "read_task",
+      "display_name": "读取任务",
+      "doc": "docs/skills/common-skills.md",
+      "status": "partially_implemented",
+      "mapped_mcp_tools": [
+        "fcop.read_task"
+      ]
+    },
+    {
+      "id": "write_report",
+      "display_name": "写回执报告",
+      "doc": "docs/skills/write-report-contract.md",
+      "status": "partially_implemented",
+      "mapped_mcp_tools": [
+        "fcop.write_report"
+      ],
+      "mapped_pm_runtime_skills": [
+        "pm.close_admin_task",
+        "pm.review_check"
+      ]
+    },
+    {
+      "id": "attach_evidence",
+      "display_name": "附加证据",
+      "doc": "docs/skills/common-skills.md",
+      "status": "playbook_stub",
+      "mapped_pm_runtime_skills": [
+        "pm.review_check"
+      ]
+    },
+    {
+      "id": "skill-search",
+      "display_name": "Skill Search",
+      "description": "Discover reusable capabilities across the local skill library, GitHub repositories, and the public web.",
+      "status": "implemented",
+      "mapped_mcp_tools": [
+        "skill_search"
+      ]
+    },
+    {
+      "id": "skill-learn",
+      "display_name": "Skill Learn",
+      "description": "Read selected local and remote sources and produce a traceable learning pack with a minimal validation contract.",
+      "status": "implemented",
+      "mapped_mcp_tools": [
+        "skill_learn"
+      ]
+    },
+    {
+      "id": "skill-publish",
+      "display_name": "Skill Publish",
+      "description": "Publish a validated skill package and synchronize both skill manifests; leader-only and evidence-gated.",
+      "status": "implemented",
+      "mapped_mcp_tools": [
+        "skill_publish"
+      ]
+    },
+    {
+      "id": "summarize_logs",
+      "display_name": "日志摘要",
+      "doc": "docs/skills/common-skills.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "detect_blocked",
+      "display_name": "阻塞识别",
+      "doc": "docs/skills/detect-blocked-contract.md",
+      "status": "playbook_stub",
+      "mapped_pm_runtime_skills": [
+        "pm.detect_thread_stall"
+      ]
+    },
+    {
+      "id": "create_followup_request",
+      "display_name": "创建后续请求",
+      "doc": "docs/skills/common-skills.md",
+      "status": "partially_implemented",
+      "mapped_mcp_tools": [
+        "fcop.write_task"
+      ],
+      "mapped_pm_runtime_skills": [
+        "pm.wake_downstream"
+      ]
+    },
+    {
+      "id": "classify_issue_scope",
+      "display_name": "问题范围分类",
+      "doc": "docs/skills/safe-public-draft.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "create_issue_draft",
+      "display_name": "创建 Issue 草稿",
+      "doc": "docs/skills/safe-public-draft.md",
+      "status": "partially_implemented",
+      "mapped_runtime_logic": [
+        "EVAL three actions",
+        "issue draft generation"
+      ]
+    },
+    {
+      "id": "safe_public_draft",
+      "display_name": "公开草稿安全检查",
+      "doc": "docs/skills/safe-public-draft.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "update_frontmatter",
+      "display_name": "更新 Frontmatter",
+      "doc": "docs/skills/common-skills.md",
+      "status": "partially_implemented",
+      "mapped_mcp_tools": [
+        "fcop.update_frontmatter"
+      ]
+    },
+    {
+      "id": "respect_mutation_boundary",
+      "display_name": "遵守变更边界",
+      "doc": "docs/skills/skill-layers.md",
+      "status": "playbook_stub",
+      "references": [
+        "fcop/adopted/pending/0001-lifecycle-authority-review-done-archive.md"
+      ]
+    }
+  ],
+  "role_skills": {
+    "PM": {
+      "manifest": ".codeflowmu/pm-skills.manifest.json",
+      "status": "implemented",
+      "playbook_skills": [
+        "pm-solve-problems",
+        "pm-product-design-brief",
+        "pm-evolve-skills"
+      ],
+      "implemented_skills": [
+        {
+          "id": "pm.summarize_thread",
+          "display_name": "线程摘要",
+          "maps_to_common": [
+            "read_context"
+          ]
+        },
+        {
+          "id": "pm.detect_thread_stall",
+          "display_name": "线程卡顿检测",
+          "maps_to_common": [
+            "detect_blocked"
+          ]
+        },
+        {
+          "id": "pm.close_admin_task",
+          "display_name": "ADMIN 关单草稿",
+          "maps_to_common": [
+            "write_report"
+          ]
+        },
+        {
+          "id": "pm.wake_downstream",
+          "display_name": "下游唤醒",
+          "maps_to_common": [
+            "create_followup_request"
+          ]
+        },
+        {
+          "id": "pm.review_check",
+          "display_name": "回执验收检查",
+          "maps_to_common": [
+            "attach_evidence",
+            "write_report"
+          ]
+        }
+      ]
+    },
+    "OPS": {
+      "status": "playbook_stub_only",
+      "playbook_skills": [
+        "ops-runtime-health",
+        "ops-log-diagnosis",
+        "ops-stuck-workflow"
+      ]
+    },
+    "DEV": {
+      "status": "playbook_stub_only",
+      "playbook_skills": [
+        "dev-code-location",
+        "dev-small-scope-patch",
+        "dev-test-and-explain"
+      ]
+    },
+    "QA": {
+      "status": "playbook_stub_only",
+      "playbook_skills": [
+        "qa-reproduce-issue",
+        "qa-verify-fix",
+        "qa-regression-check"
+      ]
+    },
+    "EVAL": {
+      "status": "partially_implemented",
+      "playbook_skills": [
+        "eval-observation-writing",
+        "eval-risk-gap-analysis",
+        "eval-promotion-advice",
+        "controlled-emergence-observer"
+      ]
+    },
+    "ADMIN": {
+      "status": "human_control_only",
+      "planned_skills": [
+        "admin_review_task",
+        "admin_approve_promotion",
+        "admin_archive_task",
+        "admin_submit_issue",
+        "admin_reject_or_hold"
+      ]
+    }
+  },
+  "pm_playbook_skills": [],
+  "technical_manager_playbook_skills": [],
+  "architect_playbook_skills": [],
+  "dev_playbook_skills": [],
+  "qa_playbook_skills": [],
+  "ops_playbook_skills": [],
+  "eval_playbook_skills": [],
+  "ui_playbook_skills": [],
+  "forbidden_v1": [
+    "auto_github_submit",
+    "auto_archive_all",
+    "auto_delete_task",
+    "auto_role_switch",
+    "auto_adr",
+    "auto_shared",
+    "auto_emergence_absorb",
+    "large_migration",
+    "autonomous_governance",
+    "multi_agent_negotiation",
+    "knowledge_graph_build",
+    "full_runtime_repair"
+  ],
+  "edition": "open-dev-team",
+  "filtered_missing_private_skill_packages": 40
+}

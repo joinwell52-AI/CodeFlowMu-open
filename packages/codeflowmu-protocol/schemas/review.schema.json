@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://codeflowmu.dev/schemas/review/v0.1.json",
+  "title": "codeflowmu Review",
+  "description": "Defines a review verdict. Lives in REVIEW-*.md front-matter. See design doc §3.4. v0.1-alpha.",
+  "type": "object",
+  "required": ["protocol", "review_id", "subject_type", "subject_ref", "decision", "decided_at"],
+  "additionalProperties": true,
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "protocol": { "type": "string", "const": "fcop" },
+    "runtime_protocol_version": { "type": "string" },
+    "review_id": {
+      "type": "string",
+      "pattern": "^REVIEW-\\d{8}-\\d{3}-[A-Z]+-on-TASK-\\d{8}-\\d{3}.*$"
+    },
+    "subject_type": {
+      "type": "string",
+      "enum": ["task", "code_change", "report", "role_switch"]
+    },
+    "subject_ref": {
+      "type": "string",
+      "description": "ID of the object being reviewed."
+    },
+    "reviewer_role": { "type": ["string", "null"] },
+    "reviewer_agent": { "type": ["string", "null"] },
+    "review_board": {
+      "type": ["object", "null"],
+      "description": "Multi-reviewer mode (v0.5+). See §0.9.5.B.",
+      "additionalProperties": false,
+      "properties": {
+        "policy": { "type": "string", "examples": ["normal", "high_risk"] },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["role", "decision"],
+            "additionalProperties": false,
+            "properties": {
+              "role": { "type": "string" },
+              "agent": { "type": ["string", "null"] },
+              "decision": { "type": "string", "enum": ["approved", "rejected", "needs_changes", "abstained"] },
+              "decided_at": { "type": ["string", "null"], "format": "date-time" }
+            }
+          }
+        },
+        "consensus_required": { "type": "integer", "minimum": 1 },
+        "consensus_reached": { "type": "boolean" }
+      }
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["approved", "rejected", "needs_changes", "abstained", "needs_human"],
+      "description": "needs_human triggers Mobile push. See §0.9.4."
+    },
+    "rationale": { "type": "string" },
+    "required_changes": { "type": ["string", "array", "null"] },
+    "human_approval": {
+      "type": ["object", "null"],
+      "description": "Required when decision=needs_human.",
+      "additionalProperties": false,
+      "properties": {
+        "pushed_to": { "type": "string", "enum": ["mobile", "cli"] },
+        "pushed_at": { "type": "string", "format": "date-time" },
+        "approved_by": { "type": ["string", "null"] },
+        "approved_at": { "type": ["string", "null"], "format": "date-time" },
+        "trigger_reason": { "type": "string" }
+      },
+      "required": ["pushed_to", "pushed_at", "trigger_reason"]
+    },
+    "decided_at": { "type": "string", "format": "date-time" },
+    "decision_duration_ms": { "type": ["integer", "null"], "minimum": 0 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "decision": { "const": "needs_human" } }, "required": ["decision"] },
+      "then": { "required": ["human_approval"] }
+    },
+    {
+      "if": { "properties": { "decision": { "const": "needs_changes" } }, "required": ["decision"] },
+      "then": { "required": ["required_changes"] }
+    }
+  ]
+}
+

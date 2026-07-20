@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://codeflowmu.dev/schemas/task/v0.1.json",
+  "title": "codeflowmu Task (FCoP-compatible)",
+  "description": "Defines a unit of work. Backward-compatible with FCoP TASK-*.md front-matter. See design doc §3.3. v0.1-alpha.",
+  "type": "object",
+  "required": ["protocol", "task_id", "sender", "recipient", "priority", "status"],
+  "additionalProperties": true,
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "protocol": {
+      "type": "string",
+      "const": "fcop",
+      "description": "MUST be 'fcop' �?this is the FCoP kernel marker."
+    },
+    "fcop_version": { "type": "string", "examples": ["1.0", "1.0-pre"] },
+    "runtime_protocol_version": { "type": "string", "examples": ["1.0", "0.1-alpha"] },
+    "task_id": {
+      "type": "string",
+      "description": "Globally unique. MUST match the filename (without .md).",
+      "pattern": "^TASK-\\d{8}-\\d{3}-[A-Z]+-to-[A-Z]+$",
+      "examples": ["TASK-20260601-001-PM-to-DEV"]
+    },
+    "sender": {
+      "type": "string",
+      "description": "FCoP role (e.g. PM, ADMIN, DEV)."
+    },
+    "recipient": {
+      "type": "string"
+    },
+    "priority": {
+      "type": "string",
+      "enum": ["P0", "P1", "P2", "P3"],
+      "description": "P0=blocking, P1=high, P2=medium, P3=low."
+    },
+    "thread_key": {
+      "type": ["string", "null"],
+      "description": "Tasks sharing a session thread share the same thread_key."
+    },
+    "parent_task": {
+      "type": ["string", "null"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "dispatched", "in_progress", "review", "done", "blocked", "cancelled"]
+    },
+    "state_history": {
+      "type": "array",
+      "description": "Append-only audit trail. Never delete entries.",
+      "items": {
+        "type": "object",
+        "required": ["state", "at", "by"],
+        "additionalProperties": false,
+        "properties": {
+          "state": { "type": "string" },
+          "at": { "type": "string", "format": "date-time" },
+          "by": { "type": "string" }
+        }
+      }
+    },
+    "review_required": { "type": "boolean" },
+    "review_assignee": { "type": ["string", "null"] },
+    "risk_level": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "irreversible"],
+      "description": "high/irreversible auto-trigger HITL (Human-in-the-loop). See §0.9.4."
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "deadline": { "type": ["string", "null"], "format": "date-time" },
+    "labels": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "attachments": {
+      "type": "array",
+      "description": "Optional lightweight attachment references carried in TASK/REPORT frontmatter. Only image url/local_path references are supported.",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "type": "string", "const": "image" },
+          "url": { "type": "string" },
+          "local_path": { "type": "string" },
+          "mime": { "type": "string" }
+        },
+        "anyOf": [
+          { "required": ["url"] },
+          { "required": ["local_path"] }
+        ]
+      }
+    }
+  }
+}
+

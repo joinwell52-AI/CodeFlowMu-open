@@ -1,0 +1,78 @@
+/**
+ * DRAFT — TS mirror of fcop_mcp.governance.skill_resolver.SkillMeta
+ *
+ * Not imported anywhere in v0.3.0-alpha. Lives in the spike folder as a
+ * head-start for any future P4.5 sprint that integrates fcop-mcp governance.
+ *
+ * Source of truth: `fcop_mcp/governance/skill_resolver.py` v1.2.0
+ *
+ *   @dataclass(frozen=True)
+ *   class SkillMeta:
+ *       tool: str
+ *       risk_level: str          # "Safe" | "Sensitive" | "Critical"
+ *       category: str = "general"
+ *       capabilities: list[str] = field(default_factory=list)
+ *
+ * If a future `fcop-mcp` release adds fields (e.g. `approval_required`,
+ * `audit_class`, etc.), this mirror must be updated AND a drift report
+ * must be added to fcop/internal/ (analogous to p4-day5-schema-drift.md
+ * pattern — see Charter 5.4 ownership matrix).
+ */
+
+/**
+ * Risk levels recognized by fcop-mcp governance.
+ * - Safe:      read-only, no side effects
+ * - Sensitive: mutates business state (task graph, reviews, config)
+ * - Critical:  destructive / irreversible operations
+ */
+export type FcopRiskLevel = "Safe" | "Sensitive" | "Critical";
+
+/**
+ * Audit tag mapping (interceptor.py `_RISK_TAG`).
+ * Pure 3-entry table — no policy engine.
+ */
+export type FcopAuditTag = "ALLOW" | "REVIEW_TAG" | "CRITICAL_TAG";
+
+/**
+ * Mirror of fcop_mcp.governance.skill_resolver.SkillMeta (immutable dataclass).
+ */
+export interface FcopSkillMeta {
+  readonly tool: string;
+  readonly risk_level: FcopRiskLevel;
+  readonly category: string; // default "general"
+  readonly capabilities: readonly string[]; // default []
+}
+
+/**
+ * Mirror of fcop_mcp.governance.events event schema (events.py module docstring).
+ *
+ * Note: emit_event() only sets `emitted_at` server-side (Python `time.time()`).
+ * Caller-provided fields are passed through verbatim.
+ */
+export interface FcopGovernanceEvent {
+  type: string; // e.g. "tool_call_intercept", or CodeFlow-specific like "inbox_dispatch"
+  tool: string;
+  risk: FcopRiskLevel;
+  tag?: FcopAuditTag; // present in interceptor.py default events
+  args_hash: string; // sha256 hex
+  approval_token?: string | null;
+  session_id?: string | null;
+  timestamp?: number; // unix epoch UTC (caller-set)
+  emitted_at?: number; // unix epoch UTC (auto-set by emit_event if absent)
+  [key: string]: unknown; // forward-compatible — events.py accepts arbitrary dicts
+}
+
+/**
+ * Sketch of the pythonia adapter shape (NOT implemented in v0.3.0-alpha).
+ * P4.5 sprint would flesh this out alongside FcopProjectClient.
+ */
+export interface FcopGovernanceAtomsAdapter {
+  /** Mirror of resolve_skill(tool_name) -> SkillMeta. */
+  resolveSkill(toolName: string): Promise<FcopSkillMeta>;
+
+  /** Mirror of emit_event(dict) -> None. Caller must ensure FCOP_EVENT_LOG is set BEFORE Node spawn (see D22-S4). */
+  emitEvent(event: FcopGovernanceEvent): Promise<void>;
+
+  /** Mirror of load_registry_yaml(path) -> None. MERGE semantics (S3-confirmed). */
+  loadRegistryYaml(absolutePath: string): Promise<void>;
+}

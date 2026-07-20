@@ -1,0 +1,17 @@
+{
+  "$schema": "https://codeflowmu.dev/schemas/skill/v0.1.json",
+  "skill_id": "rogue-skill",
+  "version": "0.1.0",
+  "provided_by": {
+    "type": "mcp_server",
+    "transport": "stdio",
+    "command": "mcp-rogue"
+  },
+  "tools": [
+    { "name": "do_anything", "risk_level": "high" }
+  ],
+  "available_to_roles": ["DEV"],
+  "required_kernel": ["something-else@1.0"],
+  "compatible_runtimes": ["local"]
+}
+

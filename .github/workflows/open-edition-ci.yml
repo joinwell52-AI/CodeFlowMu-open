@@ -1,0 +1,47 @@
+name: Open Edition CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  public-boundary:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: TypeScript contract closure
+        run: npm run shell:typecheck
+      - name: Reject generated Python binaries and runtime ledgers
+        shell: bash
+        run: |
+          if git ls-files | grep -E '(^|/)__pycache__/|\.py[co]$|^fcop/(ledger|chat|logs|reports|tasks|issues|reviews|_lifecycle|attachments)/'; then
+            echo "Forbidden generated/runtime files are tracked"
+            exit 1
+          fi
+      - name: Windows Use and Browser Use tests
+        working-directory: codeflowmu-shell
+        run: >-
+          node --import tsx --test --test-concurrency=1
+          src/__tests__/browser-use-mcp.test.ts
+          src/__tests__/browser-use-settings.test.ts
+          src/__tests__/windows-use-mcp.test.ts
+          src/__tests__/windows-use-settings.test.ts
+      - name: Windows Use runtime tests
+        working-directory: packages/codeflowmu-runtime
+        run: >-
+          node --import tsx --test --test-concurrency=1
+          src/windows-use/__tests__/WindowsUseProvider.test.ts
+      - name: Windows Use Python host tests
+        working-directory: packages/codeflowmu-runtime
+        run: python -m unittest src/windows-use/__tests__/test_windows_use_host.py
+      - name: Dependency audit (critical gate)
+        run: npm audit --omit=dev --audit-level=critical

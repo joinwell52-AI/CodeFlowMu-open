@@ -1,0 +1,20 @@
+{
+  "edition": "open-dev-team",
+  "primary": [
+    { "id": "dashboard", "label": "仪表盘", "enabled": true },
+    { "id": "chat", "label": "聊天", "enabled": true },
+    { "id": "tasks", "label": "任务", "enabled": true },
+    { "id": "reports", "label": "报告", "enabled": true },
+    { "id": "approvals", "label": "审批", "enabled": true },
+    { "id": "projects", "label": "项目", "enabled": true },
+    { "id": "git", "label": "Git 状态", "enabled": true },
+    { "id": "settings", "label": "设置", "enabled": true }
+  ],
+  "hidden": [
+    "internal-eval",
+    "private-gateway-publish",
+    "mother-runtime-history",
+    "digital-worker-lab"
+  ]
+}
+

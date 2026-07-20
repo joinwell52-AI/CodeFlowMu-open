@@ -1,0 +1,20 @@
+[
+  {
+    "version": "V1.1.23-open",
+    "date": "2026-07-20",
+    "tasks": [
+      "TASK-20260712-004"
+    ],
+    "title": "CodeFlowMu Open Dev Team Edition",
+    "changes": [
+      "Generated from the approved mother source and verified public feature set.",
+      "Includes a clean initialized newproject fallback without user runtime history.",
+      "Environment precheck provides initialization/repair and Cursor channel configuration actions."
+    ],
+    "affected": [
+      "Open Panel",
+      "FCoP project initialization",
+      "release boundary"
+    ]
+  }
+]

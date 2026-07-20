@@ -1,0 +1,26 @@
+{
+  "name": "码流 CodeFlowMu",
+  "short_name": "CodeFlowMu",
+  "description": "CodeFlowMu mobile operator console",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f1419",
+  "theme_color": "#1e3a5f",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "logo-64.png",
+      "sizes": "64x64",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "logo-64.png",
+      "sizes": "64x64",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

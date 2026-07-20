@@ -1,0 +1,37 @@
+{
+  "$schema": "https://codeflowmu.dev/schemas/skill/v0.1.json",
+  "skill_id": "git",
+  "version": "1.2.0",
+  "displayName": "Git 操作",
+  "provided_by": {
+    "type": "mcp_server",
+    "transport": "stdio",
+    "command": "mcp-server-git"
+  },
+  "tools": [
+    {
+      "name": "git_commit",
+      "required_perms": ["repo:write"],
+      "risk_level": "low",
+      "irreversible": false,
+      "cost_sensitive": false
+    },
+    {
+      "name": "git_status",
+      "required_perms": ["repo:read"],
+      "risk_level": "low"
+    },
+    {
+      "name": "git_push_force",
+      "required_perms": ["repo:write"],
+      "risk_level": "high",
+      "irreversible": true
+    }
+  ],
+  "available_to_roles": ["DEV", "OPS"],
+  "required_kernel": ["fcop@>=1.0-pre"],
+  "compatible_runtimes": ["local"],
+  "homepage": "https://github.com/example/mcp-server-git",
+  "license": "MIT"
+}
+

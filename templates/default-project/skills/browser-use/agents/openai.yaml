@@ -1,0 +1,4 @@
+interface:
+  display_name: "Browser Use"
+  short_description: "Control approved Chrome and Edge web applications"
+  default_prompt: "Use $browser-use to open and control an approved web application in Chrome or Edge."

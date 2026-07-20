@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#1e3a5f" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta name="cfm-pwa-bundle-version" content="V1.0.53" />
+  <title>码流 CodeFlowMu</title>
+  <link rel="manifest" href="manifest.json?v=1.0.53" />
+  <link rel="stylesheet" href="mobile.css?v=1.0.53" />
+  <link rel="apple-touch-icon" href="logo-64.png?v=1.0.53" />
+  <script>
+    (function () {
+      try {
+        document.documentElement.setAttribute("data-tab", "home");
+        var search = window.location.search || "";
+        var hash = window.location.hash || "";
+        var hashQuery = hash.indexOf("?") >= 0 ? hash.slice(hash.indexOf("?") + 1) : "";
+        var params = new URLSearchParams(search);
+        var hashParams = new URLSearchParams(hashQuery);
+        var bindId = params.get("bind_id") || params.get("id") || hashParams.get("bind_id") || hashParams.get("id");
+        var token = params.get("token") || params.get("t") || hashParams.get("token") || hashParams.get("t");
+        var hasBindQr = !!(bindId && String(bindId).trim() && token && String(token).trim());
+        var bound = !hasBindQr && !!localStorage.getItem("cfm_mobile_session_token");
+        document.documentElement.setAttribute("data-bound", bound ? "1" : "0");
+      } catch (e) {
+        document.documentElement.setAttribute("data-tab", "home");
+        document.documentElement.setAttribute("data-bound", "0");
+      }
+    })();
+  </script>
+</head>
+<body>
+
+<div id="bindGate" class="bind-gate hidden">
+  <div class="card">
+    <div class="card-head"><h3 class="card-title" data-i18n="bindTitle">绑定此设备</h3></div>
+    <p class="muted" data-i18n="bindHint">扫码或粘贴 PC 面板绑定链接。</p>
+    <button type="button" class="btn-primary" id="bindScanBtn" data-i18n="scanQr">扫一扫绑定</button>
+    <input id="bindPasteInput" type="text" data-i18n-placeholder="pasteBindPlaceholder" placeholder="粘贴绑定链接" />
+    <button type="button" class="btn-secondary" id="bindPasteBtn" data-i18n="pasteBindConfirm">确认粘贴并绑定</button>
+  </div>
+</div>
+
+<div id="cfm-qr-scan-modal" class="hidden" aria-hidden="true">
+  <div class="qr-panel">
+    <div id="cfm-qr-title" style="font-weight:700;font-size:16px;margin-bottom:12px;" data-i18n="scanQrTitle">扫一扫绑定</div>
+    <video id="cfm-qr-video" autoplay playsinline muted></video>
+    <canvas id="cfm-qr-canvas" style="display:none;"></canvas>
+    <div id="cfm-qr-status" style="color:var(--text3);font-size:13px;margin:10px 0;" data-i18n="qrStartingCamera">正在启动摄像头…</div>
+    <button type="button" id="cfm-qr-photo" class="btn-secondary hidden" data-i18n="scanPhotoCapture">拍照识别二维码</button>
+    <button type="button" id="cfm-qr-close" class="btn-secondary" data-i18n="qrScanClose">取消</button>
+    <input type="file" id="cfm-qr-file" accept="image/*" capture="environment" style="display:none;" />
+  </div>
+</div>
+
+<div id="toastContainer" class="toast-container"></div>
+
+<div class="app-shell" id="appShell">
+  <header class="app-header">
+    <div class="header-row1">
+      <img class="header-logo" src="logo-64.png?v=1.0.53" width="28" height="28" alt="" />
+      <div class="header-brand-block">
+        <span id="headerBrand" class="header-brand" data-i18n="appTitle">码流 CodeFlowMu</span>
+        <span id="heroSub" class="header-sub" data-i18n="homeSloganFull">手机驭 AI，指令达团队</span>
+      </div>
+      <div class="header-right">
+        <div class="status-pair" title="PC">
+          <span id="dotPc" class="status-light"></span>
+          <span class="status-pair-label" data-i18n="statusPc">PC</span>
+        </div>
+        <div class="status-pair" title="Gateway">
+          <span id="dotGw" class="status-light"></span>
+          <span class="status-pair-label" data-i18n="statusGateway">GW</span>
+        </div>
+        <button id="headerRefreshBtn" class="header-refresh-btn" type="button" title="刷新">↻</button>
+        <button id="myQuickBtn" class="header-my-btn" type="button" data-i18n="navMy">我的</button>
+      </div>
+    </div>
+  </header>
+
+  <div id="bindBanner" class="bind-banner hidden">
+    <span id="bindBannerText" data-i18n="unbound">未绑定，请先完成绑定。</span>
+    <button id="bindBannerBtn" type="button" class="bind-banner-btn" data-i18n="goBind">去绑定</button>
+  </div>
+  <div id="apiErrorBanner" class="api-error-banner hidden" role="alert"></div>
+  <div id="offlineBanner" class="offline-banner hidden" data-i18n="offlineBanner">当前离线，部分功能不可用</div>
+
+  <!-- ═══ 首页 / 工作台 ═══ -->
+  <div id="viewHome" class="tab-view active">
+    <div class="tab-scroll">
+      <div id="homeMainContent" class="home-main-content">
+        <div class="home-pinned">
+          <div id="updateBar" class="update-bar" role="button" tabindex="0" onclick="doForceUpdate()">
+            <span data-i18n="updateAvailable">🆕 发现新版本，点击立即更新</span>
+            <span class="ub-close" onclick="event.stopPropagation();hideUpdateBarFromDom()" title="关闭" data-i18n-title="close">✕</span>
+          </div>
+          <div class="stat-grid">
+            <button class="stat-btn" type="button" data-stat="tasks">
+              <span class="stat-label" data-i18n="homeStatTodayTasks">今日任务</span>
+              <strong id="todayTasks" class="stat-num">0</strong>
+            </button>
+            <button class="stat-btn" type="button" data-stat="reports">
+              <span class="stat-label" data-i18n="homeStatTodayReports">今日回复</span>
+              <strong id="todayReplies" class="stat-num">0</strong>
+            </button>
+            <button class="stat-btn" type="button" data-stat="progress">
+              <span class="stat-label" data-i18n="homeStatInProgress">进行中任务</span>
+              <strong id="inProgressThreads" class="stat-num">0</strong>
+            </button>
+            <button class="stat-btn" type="button" data-stat="done">
+              <span class="stat-label" data-i18n="homeStatDone">已完成文件</span>
+              <strong id="repliedThreads" class="stat-num">0</strong>
+            </button>
+          </div>
+
+          <div class="card team-section">
+            <div class="card-head">
+              <h3 class="card-title" data-i18n="homeMyTeam">我的团队</h3>
+              <span id="teamCount" class="muted">4</span>
+            </div>
+            <div id="teamList" class="role-grid"></div>
+          </div>
+        </div>
+
+        <div class="home-scroll-rest">
+        <div class="card task-section">
+          <div class="card-head">
+            <h3 class="card-title" data-i18n="homeTaskList">任务清单</h3>
+            <button type="button" id="homeViewAllBtn" class="link-btn" aria-label="view all tasks"></button>
+          </div>
+          <div id="taskList" class="task-stack"></div>
+          <div id="taskListEmpty" class="empty-state muted hidden" data-i18n="homeTaskEmpty">暂无任务或回复</div>
+        </div>
+
+        <div class="card composer-section composer-quick">
+          <div class="card-head">
+            <h3 class="card-title" data-i18n="homeQuickTask">快速任务</h3>
+          </div>
+          <p class="muted composer-hint" data-i18n="homeQuickHint">默认新建任务线，发送给 PM。</p>
+          <input type="text" id="homeQuickTitle" maxlength="120" data-i18n-placeholder="taskPhTitle" placeholder="任务标题…" autocomplete="off" />
+          <textarea id="homeQuickBody" rows="4" data-i18n-placeholder="taskPhBody" placeholder="任务详情…"></textarea>
+          <div class="composer-actions-row composer-actions-stack">
+            <select id="homeQuickPriority" class="composer-priority" aria-label="Priority">
+              <option value="P2" selected>P2</option>
+            </select>
+            <button id="sendBtn" type="button" class="btn-send-primary" data-i18n="homeQuickSendBtn">发布 →</button>
+          </div>
+        </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ 任务页 ═══ -->
+  <div id="viewTasks" class="tab-view hidden">
+    <div class="tab-scroll tasks-tab-scroll">
+      <div id="tasksUnboundPanel" class="card home-unbound-panel hidden">
+        <h3 class="card-title" data-i18n="homeUnboundTitle">尚未绑定设备</h3>
+        <p class="muted" data-i18n="tabUnboundHint">绑定 PC 后可查看任务并发送指令。</p>
+        <button type="button" id="tasksUnboundBindBtn" class="btn-block-primary" data-i18n="goBind">去绑定</button>
+      </div>
+      <div id="tasksBoundContent">
+        <div class="card tasks-list-card" id="tasksListCard">
+          <div class="card-head tasks-card-head">
+            <div class="tasks-card-head-left">
+              <h3 class="card-title" data-i18n="navTasks">任务</h3>
+              <span id="tasksRoleFilterLabel" class="tasks-role-filter-label hidden" aria-hidden="true"></span>
+            </div>
+            <button type="button" id="tasksListCollapseBtn" class="link-btn tasks-list-collapse-btn" aria-expanded="true" aria-controls="tasksListBody">
+              <span class="tasks-list-collapse-chevron" aria-hidden="true">▼</span>
+              <span id="tasksListCollapseBtnLabel" data-i18n="tasksListCollapse">折叠</span>
+            </button>
+          </div>
+          <div id="tasksListBody" class="tasks-list-body">
+            <div id="taskFilterRow" class="filter-row"></div>
+            <div id="fullTaskList" class="task-stack"></div>
+            <div id="fullTaskEmpty" class="empty-state muted hidden" data-i18n="tasksEmpty">暂无任务</div>
+          </div>
+        </div>
+        <div class="card composer-section composer-task-publish tasks-publish-section">
+          <div class="card-head">
+            <h3 class="card-title" data-i18n="taskPublishTitle">发布任务</h3>
+          </div>
+          <p class="muted composer-hint" data-i18n="taskPublishHint">落盘为 TASK-*-ADMIN-to-PM.md，由 PM 拆给团队。</p>
+          <div class="composer-field">
+            <label class="composer-label" data-i18n="taskRelation">任务关系</label>
+            <select id="taskSendRelationMode" aria-label="Task relation">
+              <option value="new" data-i18n="taskRelationNew">新建任务线</option>
+              <option value="continue" data-i18n="taskRelationContinue">接着做</option>
+              <option value="child" data-i18n="taskRelationChild">添加子任务</option>
+            </select>
+          </div>
+          <div id="taskRelationSingleWrap" class="composer-field hidden">
+            <label class="composer-label" data-i18n="taskSelectParent">选择父任务（单选）</label>
+            <select id="taskRelationSingleSelect" aria-label="Parent task"></select>
+          </div>
+          <div id="taskRelationMultiWrap" class="composer-field hidden">
+            <label id="taskRelationMultiLabel" class="composer-label" data-i18n="taskSelectReferences">选择承接任务（可多选）</label>
+            <div id="taskRelationMultiList" class="task-relation-multi-list"></div>
+          </div>
+          <input type="text" id="taskSendTitleInput" maxlength="120" data-i18n-placeholder="taskPhTitle" placeholder="任务标题…" autocomplete="off" />
+          <textarea id="taskSendBodyInput" rows="3" data-i18n-placeholder="taskPhBody" placeholder="任务详情…"></textarea>
+          <div class="composer-attach-row">
+            <input type="file" id="taskAttachFile" accept="image/*" multiple hidden />
+            <input type="file" id="taskMdImportFile" accept=".md,text/markdown" hidden />
+            <button type="button" class="btn-ghost btn-sm" id="taskAttachBtn" data-i18n="chatAttach">📎 附件</button>
+            <button type="button" class="btn-ghost btn-sm" id="taskMdImportBtn" data-i18n="taskImportMd">📄 导入 MD</button>
+          </div>
+          <div id="taskAttachPreview" class="pending-attach-preview"></div>
+          <div class="composer-actions-row composer-actions-stack">
+            <select id="taskSendPriority" class="composer-priority" aria-label="Priority">
+              <option value="P2" selected>P2</option>
+            </select>
+            <button type="button" id="taskSendBtn" class="btn-send-primary" data-i18n="taskPublishBtn">发布 →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ 报告页 ═══ -->
+  <div id="viewReports" class="tab-view hidden">
+    <div class="tab-scroll">
+      <div id="reportsUnboundPanel" class="card home-unbound-panel hidden">
+        <h3 class="card-title" data-i18n="homeUnboundTitle">尚未绑定设备</h3>
+        <p class="muted" data-i18n="tabUnboundHint">绑定 PC 后可查看报告。</p>
+        <button type="button" id="reportsUnboundBindBtn" class="btn-block-primary" data-i18n="goBind">去绑定</button>
+      </div>
+      <div id="reportsBoundContent" class="card">
+        <div class="card-head">
+          <h3 class="card-title" data-i18n="navReports">报告</h3>
+          <button type="button" id="reportsRefreshBtn" class="link-btn" data-i18n="refresh">刷新</button>
+        </div>
+        <div id="reportFilterRow" class="filter-row"></div>
+        <div id="reportsList" class="task-stack"></div>
+        <div id="reportsListEmpty" class="empty-state muted hidden" data-i18n="reportsShellEmpty">暂无报告</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ 审批页 ═══ -->
+  <div id="viewApprovals" class="tab-view hidden">
+    <div class="tab-scroll">
+      <div id="approvalsUnboundPanel" class="card home-unbound-panel hidden">
+        <h3 class="card-title" data-i18n="homeUnboundTitle">尚未绑定设备</h3>
+        <p class="muted" data-i18n="tabUnboundHint">绑定 PC 后可处理审批。</p>
+        <button type="button" id="approvalsUnboundBindBtn" class="btn-block-primary" data-i18n="goBind">去绑定</button>
+      </div>
+      <div id="approvalsBoundContent" class="card">
+        <div class="card-head">
+          <h3 class="card-title" data-i18n="navApprovals">审批</h3>
+          <button type="button" id="approvalsRefreshBtn" class="link-btn" data-i18n="refresh">刷新</button>
+        </div>
+        <div id="approvalFilterRow" class="filter-row"></div>
+        <div id="approvalsList" class="task-stack"></div>
+        <div id="approvalsListEmpty" class="empty-state muted hidden" data-i18n="empty">暂无数据</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ 动态页 ═══ -->
+  <div id="viewActivity" class="tab-view hidden">
+    <div class="tab-scroll">
+      <div id="activityUnboundPanel" class="card home-unbound-panel hidden">
+        <h3 class="card-title" data-i18n="homeUnboundTitle">尚未绑定设备</h3>
+        <p class="muted" data-i18n="tabUnboundHint">绑定 PC 后可查看执行动态。</p>
+        <button type="button" id="activityUnboundBindBtn" class="btn-block-primary" data-i18n="goBind">去绑定</button>
+      </div>
+      <div id="activityBoundContent" class="card">
+        <div class="card-head">
+          <h3 class="card-title" data-i18n="navActivity">动态</h3>
+          <button type="button" id="activityRefreshBtn" class="link-btn" data-i18n="refresh">刷新</button>
+        </div>
+        <div id="activityFilterRow" class="filter-row"></div>
+        <div id="activityList" class="activity-stack"></div>
+        <div id="activityListEmpty" class="empty-state muted hidden" data-i18n="activityEmpty">暂无动态</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ 聊天页 ═══ -->
+  <div id="viewChat" class="tab-view hidden chat-view">
+    <div id="chatMessages" class="chat-messages" role="log" aria-live="polite"></div>
+    <div class="chat-composer">
+      <div class="chat-composer-row">
+        <textarea
+          id="chatInput"
+          rows="2"
+          autocomplete="off"
+          data-i18n-placeholder="chatInputPlaceholder"
+          placeholder="输入消息…"
+        ></textarea>
+        <input id="chatAttachFile" type="file" accept="image/*" multiple hidden />
+        <button id="chatAttachBtn" type="button" class="chat-attach-btn" aria-label="upload chat images" data-i18n="chatImageButton">图片</button>
+        <button id="chatSendBtn" type="button" data-i18n="chatSend">发送</button>
+      </div>
+      <div id="chatAttachPreview" class="chat-attach-preview"></div>
+    </div>
+  </div>
+
+  <!-- ═══ 我的 / 设置 ═══ -->
+  <div id="viewMy" class="tab-view hidden">
+    <div class="tab-scroll">
+      <div class="card">
+        <div class="card-head"><h3 class="card-title" data-i18n="navMy">我的</h3></div>
+        <div class="detail-grid">
+          <div class="detail-field">
+            <div class="detail-label" data-i18n="myBindStatus">绑定状态</div>
+            <div id="myBindStatusValue" class="detail-value">—</div>
+          </div>
+          <div class="detail-field">
+            <div class="detail-label" data-i18n="settingsAppVersion">应用版本</div>
+            <div id="versionInfo" class="detail-value mono">—</div>
+          </div>
+        </div>
+        <div class="lang-switch" style="margin-top:10px;">
+          <button id="langZhBtn" class="lang-btn active" type="button" data-i18n="langZh">中文</button>
+          <button id="langEnBtn" class="lang-btn" type="button" data-i18n="langEn">English</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3 class="card-title" data-i18n="myDeviceBind">设备绑定</h3></div>
+        <p class="muted" data-i18n="bindHint">请使用 PC 端 CodeFlowMu 面板生成绑定二维码后扫码绑定。</p>
+        <div class="action-grid">
+          <button id="scanQrBtn" type="button" class="btn-block-primary" data-i18n="scanQr">扫描二维码绑定</button>
+          <button id="clearCacheBtn" type="button" data-i18n="settingsCacheClear">清除缓存并检查更新</button>
+          <button id="rebindBtn" type="button" data-i18n="settingsRebind">重新绑定</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3 class="card-title" data-i18n="firstUseTitle">首次使用</h3></div>
+        <div id="firstBindSteps" class="detail-body-text" data-i18n="firstUseSteps">1. 在 PC 打开 CodeFlowMu 面板，进入「移动端访问」生成二维码。
+2. 手机浏览器打开本 PWA 或添加到主屏幕。
+3. 点击「扫描二维码绑定」完成设备绑定。
+4. 绑定成功后即可查看任务、报告与审批。</div>
+      </div>
+    </div>
+  </div>
+
+  <nav id="bottomNav" class="bottom-nav" aria-label="主导航" data-i18n-aria-label="mainNav">
+    <button type="button" class="bottom-nav-item active" data-tab="home" aria-label="home">
+      <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></span>
+      <span class="nav-label" data-i18n="navHome">首页</span>
+    </button>
+    <button type="button" class="bottom-nav-item" data-tab="tasks" aria-label="tasks">
+      <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><line x1="8" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="16" y2="14"/><line x1="8" y1="18" x2="12" y2="18"/></svg></span>
+      <span class="nav-label" data-i18n="navTasks">任务</span>
+    </button>
+    <button type="button" class="bottom-nav-item" data-tab="reports" aria-label="reports">
+      <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>
+      <span class="nav-label" data-i18n="navReports">报告</span>
+    </button>
+    <button type="button" class="bottom-nav-item" data-tab="approvals" aria-label="approvals">
+      <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>
+      <span class="nav-label" data-i18n="navApprovals">审批</span>
+    </button>
+    <button type="button" class="bottom-nav-item" data-tab="activity" aria-label="activity">
+      <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span>
+      <span class="nav-label" data-i18n="navActivity">动态</span>
+    </button>
+    <button type="button" class="bottom-nav-item" data-tab="chat" aria-label="chat">
+      <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span>
+      <span class="nav-label" data-i18n="navChat">聊天</span>
+    </button>
+  </nav>
+</div>
+
+<!-- 大图预览弹层（聊天图片点击后展示；置于 app-shell 外避免被裁切） -->
+<div id="imagePreviewModal" class="image-preview-modal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="image-preview-backdrop" aria-hidden="true"></div>
+  <div class="image-preview-card">
+    <button
+      type="button"
+      id="imagePreviewCloseBtn"
+      class="image-preview-close"
+      aria-label="close"
+    >
+      ×
+    </button>
+    <img id="imagePreviewImg" class="image-preview-img" alt="image preview" />
+  </div>
+</div>
+
+<!-- ═══ 任务详情全屏 ═══ -->
+<div id="taskDetailPage" class="fullscreen-page">
+  <header class="fullscreen-page-header">
+    <button id="taskDetailBackBtn" class="fullscreen-back-btn" type="button" data-i18n="back">← 返回</button>
+    <span id="taskDetailPageTitle" class="fullscreen-page-title" data-i18n="taskDetailTitle">任务详情</span>
+  </header>
+  <div class="fullscreen-page-content fp-detail-content">
+    <div class="detail-compact-header">
+      <div class="detail-compact-id" id="fpDetailTaskId">—</div>
+      <div class="detail-compact-file" id="fpDetailFileName">—</div>
+      <div id="fpStatusAlert" class="detail-alert hidden" role="alert"></div>
+      <div class="detail-compact-pills">
+        <span class="detail-pill">⬤ <b id="fpDetailStatus">—</b></span>
+        <span class="detail-pill">👤 <b id="fpDetailSender">—</b></span>
+        <span class="detail-pill">→ <b id="fpDetailRecipient">—</b></span>
+        <span class="detail-pill">📁 <b id="fpDetailBucket">—</b></span>
+      </div>
+    </div>
+    <div id="fpFlowOverviewSection" class="card hidden">
+      <div class="fp-section-title">流程概览</div>
+      <div id="fpFlowOverview" class="flow-overview"></div>
+    </div>
+    <div id="fpChildTasksSection" class="card hidden">
+      <div class="fp-section-title">关联子任务</div>
+      <div id="fpChildTasks" class="task-stack"></div>
+      <div id="fpNoChildTasks" class="muted hidden">暂无关联子任务</div>
+    </div>
+    <div class="card">
+      <div class="fp-section-title" data-i18n="taskTabMarkdown">Markdown 原文</div>
+      <div id="fpMarkdown" class="detail-markdown fp-markdown-body"></div>
+    </div>
+    <div id="fpRelatedTasksSection" class="card hidden">
+      <div class="fp-section-title" data-i18n="reportLinkedTasks">关联任务</div>
+      <div id="fpRelatedTasks" class="task-stack"></div>
+      <div id="fpNoLinkedTasks" class="muted hidden" data-i18n="reportNoLinkedTasks">暂无关联任务</div>
+    </div>
+    <div class="card">
+      <div class="fp-section-title" data-i18n="relatedReports">关联报告</div>
+      <div id="fpRelatedReports" class="task-stack"></div>
+      <div id="fpNoReports" class="muted" data-i18n="noRelatedReports">暂无关联报告</div>
+    </div>
+    <div id="fpRelatedIssuesSection" class="card hidden">
+      <div class="fp-section-title" data-i18n="taskRelatedIssues">关联 Issue</div>
+      <div id="fpRelatedIssues" class="task-stack"></div>
+      <div id="fpNoIssues" class="muted hidden" data-i18n="taskNoIssues">暂无关联 Issue</div>
+    </div>
+    <div id="fpApprovalPanel" class="card approval-panel hidden">
+      <p id="fpApprovalGateHint" class="approval-gate-hint hidden" data-i18n="approvalMaterialsMissing">缺少材料，无法审批</p>
+      <div class="approval-actions">
+        <button type="button" id="fpApprovalApprove" class="btn-block-primary" data-i18n="approvalApprove">批准</button>
+        <button type="button" id="fpApprovalReject" class="btn-secondary-block" data-i18n="approvalReject">驳回</button>
+      </div>
+    </div>
+    <div id="fpTaskActionBar" class="fp-task-action-bar"></div>
+  </div>
+</div>
+
+  <script src="i18n.js?v=1.0.53"></script>
+  <script src="jsqr.min.js?v=1.0.53"></script>
+  <script src="mobile.js?v=1.0.53"></script>
+</body>
+</html>

@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://codeflowmu.dev/schemas/skill/v0.1.json",
+  "title": "codeflowmu Skill (MCP server registration)",
+  "description": "An MCP server registered as a codeflowmu skill. See design doc §3.6. v0.1-alpha.",
+  "type": "object",
+  "required": ["skill_id", "version", "provided_by", "tools", "available_to_roles", "required_kernel"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "skill_id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(-.*)?$" },
+    "displayName": { "type": "string" },
+    "provided_by": {
+      "type": "object",
+      "required": ["type", "transport"],
+      "additionalProperties": true,
+      "properties": {
+        "type": { "type": "string", "enum": ["mcp_server"] },
+        "transport": { "type": "string", "enum": ["stdio", "http", "sse"] },
+        "command": { "type": "string", "description": "Required for stdio transport." },
+        "url": { "type": "string", "format": "uri", "description": "Required for http/sse transport." }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "transport": { "const": "stdio" } }, "required": ["transport"] },
+          "then": { "required": ["command"] }
+        },
+        {
+          "if": { "properties": { "transport": { "enum": ["http", "sse"] } }, "required": ["transport"] },
+          "then": { "required": ["url"] }
+        }
+      ]
+    },
+    "tools": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "required_perms": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "risk_level": {
+            "type": "string",
+            "enum": ["low", "medium", "high", "irreversible"],
+            "description": "Defaults to 'medium' for 3rd-party skills lacking the field. See §0.9.4."
+          },
+          "irreversible": { "type": "boolean", "default": false },
+          "cost_sensitive": { "type": "boolean", "default": false }
+        }
+      }
+    },
+    "available_to_roles": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Which roles can mount this skill."
+    },
+    "required_kernel": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Hard kernel deps. Skills exposing fcop-aware tools MUST list 'fcop@>=1.0' or 'fcop@>=1.0-pre'.",
+      "contains": { "type": "string", "pattern": "^fcop@.+" },
+      "minItems": 1
+    },
+    "compatible_runtimes": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["local", "cloud"] },
+      "minItems": 1
+    },
+    "homepage": { "type": "string", "format": "uri" },
+    "license": { "type": "string" }
+  }
+}
+

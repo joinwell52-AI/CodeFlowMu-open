@@ -1,0 +1,32 @@
+{
+  "$schema": "https://codeflowmu.dev/schemas/agent/v0.1.json",
+  "agent_id": "DEV-01",
+  "sdk_agent_id": "agent-c2b242c3-aaaa-bbbb-cccc-ddddeeee0001",
+  "role": "developer",
+  "layer": "worker",
+  "node": "local",
+  "runtime": "local",
+  "workspace": "/abs/path/to/project",
+  "model": {
+    "id": "claude-sonnet-4-6",
+    "params": [
+      { "id": "thinking", "value": "true" },
+      { "id": "context", "value": "1m" }
+    ]
+  },
+  "skills": ["fcop", "git"],
+  "status": "idle",
+  "current_task": null,
+  "current_session": null,
+  "memory_usage": {
+    "tokens_in_context": 0,
+    "max_context": 1000000
+  },
+  "started_at": "2026-05-09T15:00:00Z",
+  "last_active_at": "2026-05-09T15:30:00Z",
+  "labels": {
+    "team": "platform",
+    "cost_center": "r-and-d"
+  }
+}
+

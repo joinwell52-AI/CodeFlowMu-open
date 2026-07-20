@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="CodeFlowMu">
+  <defs>
+    <linearGradient id="bg" x1="64" y1="48" x2="448" y2="464" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#3B82F6"/>
+      <stop offset="1" stop-color="#1D4ED8"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <path d="M128 352V160h58c40 0 66 20 66 52 0 22-11 38-29 46l22 94h-44l-38-50h-36v50h-59zm38-84h18c18 0 28-9 28-22 0-15-11-22-29-22h-17v44zm98 84V160h82v33h-42v29h40v32h-40v35h42v33h-82z" fill="#F8FAFC"/>
+</svg>

@@ -1,0 +1,72 @@
+{
+  "team_name": "CodeFlowMu Open Dev Team Edition",
+  "edition": "open-dev-team",
+  "development_team": [
+    "PM",
+    "DEV",
+    "OPS",
+    "QA"
+  ],
+  "independent_observers": [
+    "EVAL"
+  ],
+  "panel_port": 18765,
+  "local_url": "http://127.0.0.1:18765/",
+  "source_repository": "joinwell52-AI/codeflowmu",
+  "public_repository": "joinwell52-AI/CodeFlowMu-open",
+  "runtime_isolation": {
+    "motherRoot": "D:\\codeflowmu",
+    "openRoot": "D:\\CodeFlowMu-open",
+    "mustNotShareFcopState": true,
+    "mustNotShareRuntimeState": true,
+    "mustNotShareWorkspaceState": true
+  },
+  "members": [
+    {
+      "agent_id": "PM-01",
+      "role": "PM",
+      "display": "PM",
+      "layer": "leader",
+      "skills": [
+        "fcop"
+      ]
+    },
+    {
+      "agent_id": "DEV-01",
+      "role": "DEV",
+      "display": "DEV",
+      "layer": "worker",
+      "skills": [
+        "fcop",
+        "git"
+      ]
+    },
+    {
+      "agent_id": "OPS-01",
+      "role": "OPS",
+      "display": "OPS",
+      "layer": "worker",
+      "skills": [
+        "fcop"
+      ]
+    },
+    {
+      "agent_id": "QA-01",
+      "role": "QA",
+      "display": "QA",
+      "layer": "worker",
+      "skills": [
+        "fcop"
+      ]
+    },
+    {
+      "agent_id": "EVAL-01",
+      "role": "EVAL",
+      "display": "EVAL",
+      "layer": "observer",
+      "skills": [
+        "fcop"
+      ]
+    }
+  ]
+}

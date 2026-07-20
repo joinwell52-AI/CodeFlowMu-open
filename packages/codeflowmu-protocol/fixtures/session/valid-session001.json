@@ -1,0 +1,26 @@
+{
+  "$schema": "https://codeflowmu.dev/schemas/session/v0.1.json",
+  "session_id": "session-7f82fb65-aaaa-bbbb-cccc-ddddeeee0001",
+  "agent_id": "DEV-01",
+  "task_id": "TASK-20260601-001-PM-to-DEV",
+  "started_at": "2026-06-01T15:01:00Z",
+  "ended_at": "2026-06-01T15:30:00Z",
+  "status": "completed",
+  "runs": [
+    {
+      "run_id": "run-7f82fb65-aaaa-bbbb-cccc-ddddeeee0001",
+      "started_at": "2026-06-01T15:01:00Z",
+      "ended_at": "2026-06-01T15:30:00Z",
+      "status": "finished",
+      "tokens_used": { "input": 1234, "output": 567, "thinking": 89 },
+      "tool_calls_count": 6,
+      "transcript_path": ".codeflowmu/state/transcripts/run-7f82fb65-aaaa-bbbb-cccc-ddddeeee0001.md"
+    }
+  ],
+  "total_cost_usd": 0.12,
+  "outcome": {
+    "files_changed": ["src/utils.ts"],
+    "report_ref": "REPORT-20260601-001-DEV-to-PM"
+  }
+}
+

@@ -1,0 +1,44 @@
+{
+  "name": "codeflowmu",
+  "version": "1.1.23-open",
+  "private": false,
+  "description": "CodeFlowMu - AI-powered collaborative workflow system",
+  "scripts": {
+    "start": "npm --prefix codeflowmu-shell start",
+    "daemon": "npm --prefix codeflowmu-shell run start:daemon",
+    "start:no-ui": "npm --prefix codeflowmu-shell run start:no-ui",
+    "shell:start": "npm --prefix codeflowmu-shell start",
+    "shell:build": "npm --prefix codeflowmu-shell run build",
+    "shell:test": "npm --prefix codeflowmu-shell test",
+    "shell:typecheck": "npm --prefix codeflowmu-shell run typecheck",
+    "protocol:install": "npm --prefix packages/codeflowmu-protocol install",
+    "runtime:install": "npm --prefix packages/codeflowmu-runtime install",
+    "install:all": "npm install && npm --prefix packages/codeflowmu-protocol install && npm --prefix packages/codeflowmu-runtime install && npm --prefix codeflowmu-shell install"
+  },
+  "workspaces": [
+    "packages/codeflowmu-protocol",
+    "packages/codeflowmu-runtime",
+    "codeflowmu-shell"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/joinwell52-AI/CodeFlowMu-open.git"
+  },
+  "homepage": "https://github.com/joinwell52-AI/CodeFlowMu-open#readme",
+  "license": "MIT",
+  "keywords": [
+    "ai",
+    "agents",
+    "workflow",
+    "collaboration",
+    "fcop",
+    "file-based",
+    "coordination"
+  ],
+  "dependencies": {
+    "playwright": "^1.61.1"
+  },
+  "bugs": {
+    "url": "https://github.com/joinwell52-AI/CodeFlowMu-open/issues"
+  }
+}

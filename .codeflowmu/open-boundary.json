@@ -1,0 +1,84 @@
+{
+  "edition": "open-dev-team",
+  "policy": "install_root_read_only",
+  "installRoot": ".",
+  "activeProjectRoot": "projects/<project>",
+  "readOnly": [
+    {
+      "path": ".codeflowmu",
+      "owner": "CodeFlowMu release/runtime files"
+    },
+    {
+      "path": "adoptedSource",
+      "owner": "bundled initialization source"
+    },
+    {
+      "path": "codeflowmu-shell",
+      "owner": "backend runtime"
+    },
+    {
+      "path": "codeflowmu-desktop",
+      "owner": "panel UI"
+    },
+    {
+      "path": "docs",
+      "owner": "public docs shipped by release"
+    },
+    {
+      "path": "fcop",
+      "owner": "bundled protocol assets at install root"
+    },
+    {
+      "path": "packages",
+      "owner": "runtime packages"
+    },
+    {
+      "path": "package.json",
+      "owner": "release metadata"
+    },
+    {
+      "path": "START-CODEFLOWMU-OPEN.bat",
+      "owner": "launcher shipped by release"
+    },
+    {
+      "path": "VERSION.json",
+      "owner": "release metadata"
+    }
+  ],
+  "writable": [
+    {
+      "path": "projects/<project>/**",
+      "purpose": "customer development project files"
+    },
+    {
+      "path": "projects/<project>/fcop/**",
+      "purpose": "FCoP task/report/issue/review ledger"
+    },
+    {
+      "path": "projects/<project>/.cursor/rules/**",
+      "purpose": "project-scoped Cursor/FCoP rules"
+    },
+    {
+      "path": "projects/<project>/.codeflowmu/**",
+      "purpose": "project local runtime state"
+    },
+    {
+      "path": "workspace/<legacy-project>/**",
+      "purpose": "legacy install-local projects (compatibility)"
+    },
+    {
+      "path": "node_modules/**",
+      "purpose": "local Node dependency cache"
+    },
+    {
+      "path": ".venv/**",
+      "purpose": "local Python virtual environment"
+    }
+  ],
+  "hardRules": [
+    "The Open install-integrity shell restores release-owned code to its startup baseline.",
+    "CodeFlowMu Open updates are full replacement updates from the public repository.",
+    "Open must not reduce normal Agent project capabilities to protect its own code.",
+    "PM dispatches implementation work through FCoP task files; worker roles operate inside the project root."
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "name": "@codeflowmu/runtime",
+  "version": "0.3.0-alpha",
+  "private": false,
+  "description": "codeflowmu runtime for agent registry, task scheduling, review workflows, and fcop-backed collaboration.",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test --test-concurrency=1 \"src/**/__tests__/*.test.ts\"",
+    "test:parallel": "node --import tsx --test \"src/**/__tests__/*.test.ts\"",
+    "test:agent-skill-routing": "node --import tsx --test src/skills/__tests__/AgentSkillRouting.test.ts",
+    "ledger:verify-thread": "tsx scripts/ledger_cli.ts verify_thread"
+  },
+  "dependencies": {
+    "@codeflowmu/protocol": "file:../codeflowmu-protocol",
+    "@cursor/sdk": "^1.0.12",
+    "chokidar": "^4.0.3",
+    "codeflowmu": "file:../..",
+    "playwright": "^1.61.1",
+    "pythonia": "^1.2.6",
+    "yaml": "^2.8.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.6.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joinwell52-AI/CodeFlowMu.git"
+  },
+  "homepage": "https://github.com/joinwell52-AI/CodeFlowMu#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "README.md",
+    "package.json",
+    "src/**/*.ts",
+    "src/windows-use/host/*.py",
+    "src/windows-use/host/requirements.txt",
+    "!src/**/__tests__/**",
+    "!src/_spike/**"
+  ]
+}

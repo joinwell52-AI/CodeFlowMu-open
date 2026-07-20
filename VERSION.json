@@ -1,0 +1,477 @@
+{
+  "schemaVersion": 1,
+  "productName": "CodeFlowMu Open Dev Team Edition",
+  "positioning": "A multi-agent development team application governed by the FCoP protocol and driven through Cursor SDK interfaces.",
+  "edition": "open-dev-team",
+  "version": "V1.1.23-open",
+  "npmVersion": "1.1.23-open",
+  "releaseChannel": "open",
+  "status": "public-open",
+  "sourceRepository": "joinwell52-AI/codeflowmu",
+  "targetRepository": "joinwell52-AI/CodeFlowMu-open",
+  "builtAt": "2026-07-20T06:04:37.793Z",
+  "sourceGitCommit": "472a3acb43eec268cea5e42860c93ed8fe9425ad",
+  "sourceDirty": false,
+  "motherVersion": "V1.1.23",
+  "features": [
+    {
+      "id": "fcop-development-team",
+      "name": "FCoP multi-agent development team",
+      "status": "public",
+      "roles": [
+        "PM",
+        "DEV",
+        "OPS",
+        "QA"
+      ]
+    },
+    {
+      "id": "cursor-sdk-interface",
+      "name": "Cursor SDK agent interface",
+      "status": "public"
+    },
+    {
+      "id": "open-install-integrity",
+      "name": "Open install integrity shell and collaboration parity",
+      "status": "public",
+      "publicSince": "V1.1.10-open"
+    },
+    {
+      "id": "windows-use",
+      "name": "Policy-bounded Windows Use",
+      "status": "public",
+      "publicSince": "V1.1.0-open"
+    },
+    {
+      "id": "browser-use",
+      "name": "Policy-bounded Browser Use",
+      "status": "public",
+      "publicSince": "V1.1.0-open"
+    },
+    {
+      "id": "eval-observer",
+      "name": "Independent EVAL observer",
+      "status": "public",
+      "executionTeamMember": false
+    }
+  ],
+  "boundary": {
+    "developmentTeam": [
+      "PM",
+      "DEV",
+      "OPS",
+      "QA"
+    ],
+    "independentObservers": [
+      "EVAL"
+    ],
+    "included": [
+      "FCoP protocol governance",
+      "Cursor SDK interfaces",
+      "Windows Use with explicit allowlists",
+      "Browser Use with approved Chrome/Edge targets",
+      "local PC Panel and Mobile PWA client"
+    ],
+    "excluded": [
+      "private Gateway implementation and credentials",
+      "mother runtime state and internal governance experiments",
+      "real tasks, reports, logs, attachments and user projects",
+      "company-only release infrastructure"
+    ]
+  },
+  "providerBoundary": {
+    "policy": "cursor-only-public-runtime",
+    "supportedProviders": [
+      "cursor"
+    ],
+    "publicAbstractions": [
+      "AgentSdkAdapter",
+      "CursorSdkAdapter",
+      "InMemorySdkAdapter"
+    ],
+    "forbiddenProviders": [
+      "google",
+      "gemini",
+      "claude",
+      "openrouter",
+      "anthropic"
+    ],
+    "forbiddenDependencies": [
+      "@google/genai"
+    ],
+    "transformedPublicPaths": [
+      "package-lock.json",
+      "codeflowmu-shell/package-lock.json",
+      "packages/codeflowmu-protocol/package-lock.json",
+      "packages/codeflowmu-runtime/package-lock.json",
+      "codeflowmu-shell/src/config.ts",
+      "codeflowmu-shell/src/panel-runtime-identity.ts",
+      "codeflowmu-shell/src/sdk-factory.ts",
+      "codeflowmu-shell/src/web-panel.ts",
+      "codeflowmu-desktop/panel/index.html",
+      "packages/codeflowmu-runtime/src/index.ts",
+      "packages/codeflowmu-runtime/src/registry/index.ts",
+      "packages/codeflowmu-runtime/src/registry/RoleToolPolicy.ts",
+      "packages/codeflowmu-runtime/src/registry/ToolAuthorityGuard.ts",
+      "packages/codeflowmu-runtime/src/registry/pmHeavyToolWrapper.ts",
+      "packages/codeflowmu-runtime/src/registry/promptHotPath.ts",
+      "packages/codeflowmu-runtime/src/registry/writeReportTaskIdGuard.ts",
+      "packages/codeflowmu-runtime/src/session/SessionManager.ts",
+      "packages/codeflowmu-runtime/src/session/index.ts",
+      "fcop_sdk/__init__.py",
+      "fcop_sdk/kernel.py"
+    ],
+    "hardExclusions": [
+      "packages/codeflowmu-runtime/src/registry/Google*.ts",
+      "packages/codeflowmu-runtime/src/registry/*Google*.ts",
+      "packages/codeflowmu-runtime/src/registry/google*.ts",
+      "packages/codeflowmu-runtime/src/registry/*google*.ts",
+      "packages/codeflowmu-runtime/src/registry/gemini*.ts",
+      "packages/codeflowmu-runtime/src/registry/*gemini*.ts",
+      "packages/codeflowmu-runtime/src/registry/Claude*.ts",
+      "packages/codeflowmu-runtime/src/registry/*Claude*.ts",
+      "packages/codeflowmu-runtime/src/registry/ReportSettlement.ts",
+      "packages/codeflowmu-runtime/src/registry/__tests__/ReportSettlement.test.ts",
+      "packages/codeflowmu-runtime/src/registry/__tests__/Google*.ts",
+      "packages/codeflowmu-runtime/src/registry/__tests__/*Google*.ts",
+      "packages/codeflowmu-runtime/src/registry/__tests__/google*.ts",
+      "packages/codeflowmu-runtime/src/registry/__tests__/*google*.ts",
+      "packages/codeflowmu-runtime/src/registry/__tests__/gemini*.ts",
+      "packages/codeflowmu-runtime/src/registry/__tests__/Claude*.ts",
+      "packages/codeflowmu-runtime/src/session/google*.ts",
+      "packages/codeflowmu-runtime/src/session/Claude*.ts",
+      "packages/codeflowmu-runtime/src/session/__tests__/google*.ts",
+      "packages/codeflowmu-runtime/src/session/__tests__/Claude*.ts",
+      "codeflowmu-shell/src/__tests__/google*.ts",
+      "codeflowmu-shell/src/__tests__/open-release-console.test.ts",
+      "codeflowmu-shell/src/__tests__/operation-approval-architecture.test.ts",
+      "codeflowmu-shell/src/__tests__/panel-runtime-identity.test.ts",
+      "codeflowmu-shell/src/__tests__/panel-dispatch-retry-ui.test.ts",
+      "codeflowmu-shell/src/__tests__/web-panel.test.ts",
+      "packages/codeflowmu-runtime/src/pm/__tests__/pmAdminRejectPrompt.test.ts",
+      "fcop_sdk/adapters.py",
+      "fcop_sdk/agent.py",
+      "fcop_sdk/__main__.py",
+      "fcop_sdk/runner.py"
+    ]
+  },
+  "releaseApproval": {
+    "policy": "deny_unregistered_mother_changes",
+    "approvedBy": "ADMIN",
+    "taskId": "TASK-20260712-004",
+    "approvedFeatureIds": [
+      "project-root-hot-switch",
+      "open-install-integrity",
+      "windows-use",
+      "browser-use",
+      "qa-rework-dependency-gate",
+      "product-delivery-governance-gate",
+      "pre-action-approval-gate",
+      "runtime-governance-remediation"
+    ],
+    "changeGroups": [
+      {
+        "id": "project-root-hot-switch",
+        "productPolicy": "open-core",
+        "description": "切换项目后自动同步 Runtime、MCP 和 Agent 工作目录。",
+        "paths": [
+          "codeflowmu-shell/src/main.ts",
+          "codeflowmu-shell/src/open-start.ts",
+          "codeflowmu-shell/src/project-registry.ts",
+          "codeflowmu-shell/src/project-context-prompt.ts",
+          "codeflowmu-shell/src/sdk-factory.ts",
+          "codeflowmu-shell/src/fcop-env-probe.ts",
+          "codeflowmu-shell/src/web-panel.ts",
+          "codeflowmu-shell/src/artifact-layout.ts",
+          "codeflowmu-shell/src/panel-task-thread-visibility.ts",
+          "codeflowmu-shell/src/__tests__/artifact-layout.test.ts",
+          "codeflowmu-shell/src/__tests__/panel-task-thread-visibility.test.ts",
+          "codeflowmu-shell/src/__tests__/project-registry.test.ts",
+          "codeflowmu-shell/src/__tests__/project-switch-adaptation-ui.test.ts",
+          "codeflowmu-shell/src/__tests__/web-panel.test.ts",
+          "codeflowmu-desktop/panel/index.html",
+          "packages/codeflowmu-runtime/src/registry/AgentSdkAdapter.ts",
+          "packages/codeflowmu-runtime/src/registry/RoleToolPolicy.ts",
+          "packages/codeflowmu-runtime/src/registry/__tests__/AgentSdkAdapter.test.ts",
+          "packages/codeflowmu-runtime/src/registry/__tests__/RoleToolPolicy.test.ts",
+          "docs/articles/open-release-rules.md",
+          "templates/default-project/**"
+        ]
+      },
+      {
+        "id": "open-install-integrity",
+        "productPolicy": "open-core",
+        "description": "保持 Open Agent 正常项目能力，以应用内代码基线、监控和恢复机制保护发行版自身，并修复 PM 工作区与任务生命周期能力。",
+        "paths": [
+          "codeflowmu-shell/src/open-install-integrity.ts",
+          "codeflowmu-shell/src/sdk-factory.ts",
+          "codeflowmu-shell/src/__tests__/open-install-integrity.test.ts",
+          "packages/codeflowmu-runtime/src/registry/RoleToolPolicy.ts",
+          "packages/codeflowmu-runtime/src/registry/__tests__/RoleToolPolicy.test.ts",
+          "packages/codeflowmu-runtime/src/scheduler/TaskDispatcher.ts",
+          "packages/codeflowmu-runtime/src/scheduler/TaskParser.ts",
+          "packages/codeflowmu-runtime/src/scheduler/__tests__/TaskDispatcher.test.ts",
+          "packages/codeflowmu-runtime/src/pm/taskDispatchContext.ts",
+          "packages/codeflowmu-runtime/src/pm/__tests__/qaDispatchGate.test.ts",
+          "packages/codeflowmu-runtime/scripts/fcop_invoke_once.py",
+          "packages/codeflowmu-runtime/src/skill/FcopToolProfile.ts",
+          "packages/codeflowmu-runtime/src/skill/__tests__/FcopToolProfile.test.ts",
+          "docs/articles/open-release-rules.md",
+          "docs/open/getting-started.md",
+          "OPEN-BOUNDARY.md",
+          ".codeflowmu/open-boundary.json"
+        ]
+      },
+      {
+        "id": "windows-use",
+        "productPolicy": "open-core",
+        "description": "允许 Agent 在权限边界内操作已批准的 Windows 应用。",
+        "paths": [
+          "codeflowmu-shell/scripts/pick-executable-win.ps1",
+          "codeflowmu-shell/src/pick-executable.ts",
+          "codeflowmu-shell/scripts/pick-folder-win.ps1",
+          "codeflowmu-shell/src/windows-use-**",
+          "codeflowmu-shell/src/__tests__/windows-use-**",
+          "codeflowmu-shell/src/sdk-factory.ts",
+          "packages/codeflowmu-runtime/src/windows-use/**",
+          "docs/WINDOWS-USE-OPERATIONS.md",
+          "docs/architecture/WINDOWS-USE.md",
+          "skills/windows-use/**"
+        ]
+      },
+      {
+        "id": "browser-use",
+        "productPolicy": "open-core",
+        "description": "允许 Agent 在权限边界内使用已批准的 Chrome 或 Edge。",
+        "paths": [
+          "codeflowmu-shell/src/browser-use-**",
+          "codeflowmu-shell/src/__tests__/browser-use-**",
+          "docs/BROWSER-USE-OPERATIONS.md",
+          "docs/architecture/browser-use-v1.md",
+          "skills/browser-use/**",
+          "docs/skills/agent-skills.manifest.json",
+          "packages/codeflowmu-runtime/src/skills/SkillContextRouter.ts",
+          "packages/codeflowmu-runtime/src/skills/__tests__/SkillContextRouter.test.ts"
+        ]
+      },
+      {
+        "id": "qa-rework-dependency-gate",
+        "productPolicy": "open-core",
+        "description": "按本轮具体 DEV task_id 约束返工 QA，阻止同线程旧 DEV REPORT 穿透门禁，并统一自动派发、周期释放与 PM wake 判断。",
+        "paths": [
+          "packages/codeflowmu-runtime/src/pm/taskDispatchGate.ts",
+          "packages/codeflowmu-runtime/src/pm/qaDispatchGate.ts",
+          "packages/codeflowmu-runtime/src/pm/executionState.ts",
+          "packages/codeflowmu-runtime/src/pm/taskDispatchContext.ts",
+          "packages/codeflowmu-runtime/src/pm/pmAdminRejectPrompt.ts",
+          "packages/codeflowmu-runtime/src/pm/PmGovernanceActions.ts",
+          "packages/codeflowmu-runtime/src/pm/__tests__/taskDispatchGate.test.ts",
+          "packages/codeflowmu-runtime/src/pm/__tests__/qaDispatchGate.test.ts",
+          "packages/codeflowmu-runtime/src/scheduler/TaskDispatcher.ts",
+          "packages/codeflowmu-runtime/src/scheduler/__tests__/dependencyRelease.test.ts",
+          "packages/codeflowmu-runtime/src/scheduler/__tests__/TaskDispatcher.controlPlane.test.ts",
+          "docs/open/release-and-initialization.md",
+          "docs/articles/open-release-rules.md"
+        ]
+      },
+      {
+        "id": "product-delivery-governance-gate",
+        "productPolicy": "open-core",
+        "description": "统一产品任务分类、Product Brief/Playbook 证据、PM 代码边界、DEV→QA 验收与 PM→ADMIN 关单门禁，母版与 Open 共用同一 Runtime 实现。",
+        "paths": [
+          "codeflowmu-shell/src/web-panel.ts",
+          "codeflowmu-shell/src/fcop-mcp-filter.ts",
+          "codeflowmu-shell/src/panel-runtime-actions.ts",
+          "codeflowmu-shell/src/sdk-factory.ts",
+          "codeflowmu-shell/src/__tests__/windows-use-mcp.test.ts",
+          "packages/codeflowmu-runtime/src/index.ts",
+          "packages/codeflowmu-runtime/src/pm/index.ts",
+          "packages/codeflowmu-runtime/src/pm/ProductDeliveryGovernance.ts",
+          "packages/codeflowmu-runtime/src/pm/ProductDeliveryRuntimeGate.ts",
+          "packages/codeflowmu-runtime/src/pm/PmRuntimeControlTools.ts",
+          "packages/codeflowmu-runtime/src/pm/PmSummaryGate.ts",
+          "packages/codeflowmu-runtime/src/pm/PmGovernanceActions.ts",
+          "packages/codeflowmu-runtime/src/pm/PmGovernancePlanner.ts",
+          "packages/codeflowmu-runtime/src/pm/PmSkillManifest.ts",
+          "packages/codeflowmu-runtime/src/pm/SkillInvocationJournal.ts",
+          "packages/codeflowmu-runtime/src/pm/guardPmDevDispatchWriteReport.ts",
+          "packages/codeflowmu-runtime/src/pm/pmDevDispatchPolicy.ts",
+          "packages/codeflowmu-runtime/src/pm/taskCurrentBucket.ts",
+          "packages/codeflowmu-runtime/src/pm/__tests__/ProductDeliveryGovernance.test.ts",
+          "packages/codeflowmu-runtime/src/pm/__tests__/PmRuntimeControlTools.test.ts",
+          "packages/codeflowmu-runtime/src/pm/__tests__/PmSummaryGate.test.ts",
+          "packages/codeflowmu-runtime/src/pm/__tests__/guardPmDevDispatchWriteReport.test.ts",
+          "packages/codeflowmu-runtime/src/pm/__tests__/pmExecutionGovernance.test.ts",
+          "packages/codeflowmu-runtime/src/Runtime.ts",
+          "packages/codeflowmu-runtime/src/lifecycle/**",
+          "packages/codeflowmu-runtime/src/scheduler/index.ts",
+          "packages/codeflowmu-runtime/src/ledger/LedgerBuilder.ts",
+          "packages/codeflowmu-runtime/src/ledger/reportDependencyOutcome.ts",
+          "packages/codeflowmu-runtime/src/ledger/ReportResolver.ts",
+          "packages/codeflowmu-runtime/src/ledger/types.ts",
+          "packages/codeflowmu-runtime/src/registry/FcopMcpOneShot.ts",
+          "packages/codeflowmu-runtime/src/registry/RoleToolPolicy.ts",
+          "packages/codeflowmu-runtime/src/registry/__tests__/RoleToolPolicy.test.ts",
+          "packages/codeflowmu-runtime/src/scheduler/DownstreamAutoNudge.ts",
+          "packages/codeflowmu-runtime/src/scheduler/__tests__/DownstreamAutoNudge.test.ts",
+          "packages/codeflowmu-runtime/src/skill/FcopToolProfile.ts",
+          "packages/codeflowmu-runtime/src/skill/index.ts",
+          "packages/codeflowmu-runtime/src/skill/__tests__/FcopToolProfile.test.ts",
+          "packages/codeflowmu-runtime/src/scheduler/TaskDispatcher.ts",
+          "packages/codeflowmu-runtime/src/skills/SkillContextRouter.ts",
+          "packages/codeflowmu-runtime/src/skills/__tests__/SkillContextRouter.test.ts",
+          "docs/skills/pm-planning-governance.md",
+          "templates/default-project/docs/skills/pm-planning-governance.md",
+          "projects/README.md",
+          "docs/skills/pm-playbook/**",
+          "docs/skills/ui-playbook/**",
+          "skills/pm-product-design-brief/**",
+          "skills/pm-product-requirements/**",
+          "skills/pm-scope-control/**",
+          "skills/pm-acceptance-criteria/**",
+          "skills/pm-delivery-plan/**",
+          "skills/ui-information-architecture/**",
+          "skills/ui-visual-consistency/**",
+          "skills/ui-usability-acceptance/**"
+        ]
+      },
+      {
+        "id": "pre-action-approval-gate",
+        "productPolicy": "open-core",
+        "description": "AI 越过权限边界前的确定性人工审批门禁；普通可逆本地编程默认放行，任务 REVIEW 与事实核查不进入全局审批。",
+        "paths": [
+          "codeflowmu-desktop/panel/index.html",
+          "codeflowmu-desktop/mobile/**",
+          "codeflowmu-shell/scripts/confirm-operation-win.ps1",
+          "codeflowmu-shell/src/git-operation-approval.ts",
+          "codeflowmu-shell/src/native-operation-confirm.ts",
+          "codeflowmu-shell/src/web-panel.ts",
+          "codeflowmu-shell/src/mobile/mobileRoutes.ts",
+          "codeflowmu-shell/src/mobile/mobileUiLocale.ts",
+          "codeflowmu-shell/src/mobile/types.ts",
+          "codeflowmu-shell/src/__tests__/AdminTaskDetail.eval-display.test.ts",
+          "codeflowmu-shell/src/__tests__/mobile-api.test.ts",
+          "codeflowmu-shell/src/__tests__/mobile-bind-url-ui.test.ts",
+          "codeflowmu-shell/src/__tests__/mobileImageUpload.test.ts",
+          "codeflowmu-shell/src/__tests__/operation-approval-architecture.test.ts",
+          "codeflowmu-shell/src/__tests__/web-panel.test.ts",
+          "packages/codeflowmu-runtime/src/approval/**",
+          "packages/codeflowmu-runtime/src/index.ts",
+          "packages/codeflowmu-runtime/src/session/SdkRunHandle.ts",
+          "packages/codeflowmu-runtime/src/session/__tests__/SdkRunHandle.test.ts",
+          "docs/security/operation-approval-boundary.md"
+        ]
+      },
+      {
+        "id": "runtime-governance-remediation",
+        "productPolicy": "open-core",
+        "description": "修复治理目录只读边界、Runtime Session 身份与失败状态、跨进程重复唤醒租约，以及依赖释放信号去重。",
+        "paths": [
+          "codeflowmu-shell/src/web-panel.ts",
+          "codeflowmu-shell/src/__tests__/web-panel.test.ts",
+          "packages/codeflowmu-runtime/src/index.ts",
+          "packages/codeflowmu-runtime/src/approval/NativeOperationApprovalGate.ts",
+          "packages/codeflowmu-runtime/src/approval/__tests__/NativeOperationApprovalGate.test.ts",
+          "packages/codeflowmu-runtime/src/registry/AgentSdkAdapter.ts",
+          "packages/codeflowmu-runtime/src/registry/AgentRegistry.ts",
+          "packages/codeflowmu-runtime/src/registry/verifiedSdkBinding.ts",
+          "packages/codeflowmu-runtime/src/scheduler/DependencyReleaseRunner.ts",
+          "packages/codeflowmu-runtime/src/scheduler/TaskDependencyGate.ts",
+          "packages/codeflowmu-runtime/src/scheduler/__tests__/dependencyRelease.test.ts",
+          "packages/codeflowmu-runtime/src/session/SessionLeaseStore.ts",
+          "packages/codeflowmu-runtime/src/session/SessionManager.ts",
+          "packages/codeflowmu-runtime/src/session/index.ts",
+          "packages/codeflowmu-runtime/src/session/__tests__/SessionLeaseStore.test.ts",
+          "packages/codeflowmu-runtime/src/session/__tests__/SessionManager.test.ts"
+        ]
+      },
+      {
+        "id": "provider-boundary-enforcement",
+        "kind": "release-system",
+        "selectable": false,
+        "description": "构建器在审批过滤之后固定执行的 Cursor-only 供应商硬边界；仅接管已被回退或原本无母版差异的确定性裁剪结果，不得批准共享文件中的其他产品改动。",
+        "paths": []
+      },
+      {
+        "id": "release-governance",
+        "kind": "release-system",
+        "selectable": false,
+        "description": "母版侧固定执行的版本号、构建、校验、安全同步与发布管线；它不是 Open 产品功能，也不参与发布内容勾选。",
+        "paths": [
+          ".github/**",
+          ".codeflowmu/edition-ui.json",
+          ".codeflowmu/nav.json",
+          ".codeflowmu/welcome.md",
+          ".codeflowmu/open-boundary.json",
+          ".codeflowmu/mobile-gateway.json",
+          ".gitignore",
+          "CODE_OF_CONDUCT.md",
+          "CONTRIBUTING.md",
+          "SECURITY.md",
+          "INSTALL.md",
+          "README.md",
+          "README.zh.md",
+          "RELEASES.md",
+          "RELEASE_MANIFEST.json",
+          "SHA256SUMS",
+          "START-CODEFLOWMU-OPEN.bat",
+          "UPDATE.md",
+          "VERSION.json",
+          "VERSION_HISTORY.json",
+          "OPEN-BOUNDARY.md",
+          "codeflowmu.team.json",
+          "docs/articles/**",
+          "docs/open/**",
+          "package.json",
+          "package-lock.json",
+          "codeflowmu-shell/package.json",
+          "codeflowmu-shell/package-lock.json",
+          "codeflowmu-shell/src/open-start.ts",
+          "codeflowmu-shell/src/panel-api-timing.ts",
+          "codeflowmu-shell/src/mobile/mobileGatewayConfig.ts",
+          "codeflowmu-shell/src/mobile/mobileGatewayClient.ts",
+          "codeflowmu-shell/src/mobile/mobilePwaGatewaySync.ts",
+          "codeflowmu-shell/src/mobile/mobileVersion.ts",
+          "codeflowmu-shell/src/__tests__/mobile-gateway-config.test.ts",
+          "codeflowmu-shell/src/__tests__/mobile-gateway-client.test.ts",
+          "codeflowmu-shell/src/__tests__/panel-api-timing.test.ts",
+          "packages/codeflowmu-runtime/package.json",
+          "packages/codeflowmu-runtime/src/index.ts",
+          "packages/codeflowmu-runtime/src/skills/AgentPlaybookCatalog.ts",
+          "packages/codeflowmu-runtime/src/skills/SkillAssetResolver.ts",
+          "packages/codeflowmu-runtime/src/skills/__tests__/AgentPlaybookCatalog.test.ts",
+          "**/__pycache__/**",
+          "**/*.pyc"
+        ]
+      },
+      {
+        "id": "unregistered-mother-change",
+        "paths": [
+          "**"
+        ]
+      }
+    ]
+  },
+  "localUrl": "http://127.0.0.1:18765/",
+  "updatePolicy": {
+    "strategy": "full_replace",
+    "preserve": [
+      ".git/",
+      "node_modules/",
+      ".venv/",
+      "venv/",
+      ".env",
+      ".env.*",
+      "projects/",
+      "workspace/ (legacy project collection)",
+      "external project roots outside CodeFlowMu-open"
+    ],
+    "replace": [
+      "application source",
+      "panel assets",
+      "shell/runtime source",
+      "docs",
+      "public initialization templates"
+    ]
+  }
+}

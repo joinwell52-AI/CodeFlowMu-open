@@ -1,0 +1,49 @@
+{
+  "name": "@codeflowmu/protocol",
+  "version": "0.1.0-alpha.2",
+  "private": false,
+  "description": "codeflowmu protocol schemas and validators for agents, tasks, reviews, sessions, and skills.",
+  "type": "module",
+  "main": "src/index.ts",
+  "bin": {
+    "codeflowmu-validate": "src/cli.ts"
+  },
+  "scripts": {
+    "validate:agent": "tsx src/cli.ts agent fixtures/agent/valid-dev01.json",
+    "validate:task": "tsx src/cli.ts task fixtures/task/valid-task001.md",
+    "validate:review": "tsx src/cli.ts review fixtures/review/valid-review001.md",
+    "validate:session": "tsx src/cli.ts session fixtures/session/valid-session001.json",
+    "validate:skill": "tsx src/cli.ts skill fixtures/skill/valid-git.json",
+    "validate:all": "npm run validate:agent && npm run validate:task && npm run validate:review && npm run validate:session && npm run validate:skill",
+    "test:invalid": "tsx src/cli.ts agent fixtures/agent/invalid-missing-layer.json --expect-fail && tsx src/cli.ts task fixtures/task/invalid-bad-status.md --expect-fail && tsx src/cli.ts skill fixtures/skill/invalid-no-fcop-kernel.json --expect-fail",
+    "test": "npm run validate:all && npm run test:invalid",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "codeflowmu": "file:../..",
+    "gray-matter": "^4.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.6.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joinwell52-AI/CodeFlowMu.git"
+  },
+  "homepage": "https://github.com/joinwell52-AI/CodeFlowMu#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src",
+    "schemas",
+    "fixtures",
+    "README.md",
+    "package.json"
+  ]
+}

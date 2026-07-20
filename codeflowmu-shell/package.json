@@ -1,0 +1,59 @@
+{
+  "name": "codeflowmu-shell",
+  "version": "1.1.23-open",
+  "private": false,
+  "description": "codeflowmu Shell CLI for running the local codeflowmu runtime, web panel, and collaboration bridge.",
+  "type": "module",
+  "main": "src/main.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "start": "tsx src/open-start.ts",
+    "start:daemon": "tsx src/main.ts --no-panel",
+    "start:no-ui": "tsx src/main.ts --no-panel",
+    "test": "node --import tsx --test --test-concurrency=1 \"src/__tests__/*.test.ts\"",
+    "build": "tsc --noEmit && esbuild src/main.ts --bundle --platform=node --target=node22 --format=esm --loader:.map=empty --external:@cursor/sdk --external:@anysphere/* --external:playwright --external:playwright/* --external:playwright-core --external:playwright-core/* --banner:js=\"#!/usr/bin/env node\" --outfile=dist/main.bundle.js",
+    "pack:win": "pack.cmd"
+  },
+  "dependencies": {
+    "@codeflowmu/protocol": "file:../packages/codeflowmu-protocol",
+    "@codeflowmu/runtime": "file:../packages/codeflowmu-runtime",
+    "@cursor/sdk": "^1.0.13",
+    "@types/express": "^5.0.6",
+    "codeflowmu": "file:..",
+    "express": "^5.2.1",
+    "playwright": "^1.61.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/supertest": "^7.2.0",
+    "esbuild": "^0.25.0",
+    "postject": "^1.0.0-alpha.6",
+    "supertest": "^7.2.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.6.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joinwell52-AI/CodeFlowMu-open.git"
+  },
+  "homepage": "https://github.com/joinwell52-AI/CodeFlowMu-open#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "codeflowmu": "dist/main.bundle.js",
+    "codeflowmu-shell": "dist/main.bundle.js"
+  },
+  "files": [
+    "README.md",
+    "package.json",
+    "dist/**",
+    "examples/**",
+    "src/**/*.ts",
+    "!src/**/__tests__/**"
+  ],
+  "bugs": {
+    "url": "https://github.com/joinwell52-AI/CodeFlowMu-open/issues"
+  }
+}

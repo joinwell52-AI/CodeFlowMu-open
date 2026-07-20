@@ -1,0 +1,26 @@
+{
+  "name": "@codeflowmu/_spike-fcop-pythonia",
+  "version": "0.0.0-spike",
+  "private": true,
+  "description": "P4 调研 spike —pythonia 同进程嵌兀Python 谀fcop@1.1.0 工程可行性验证。隔离子项目，不在workspace 引用，不近dependency graph。对庀TASK-20260511-005-PM-to-DEV。,
+  "type": "module",
+  "scripts": {
+    "hello": "tsx hello-fcop.ts",
+    "demo": "tsx demo-fcop-api.ts"
+  },
+  "dependencies": {
+    "pythonia": "^1.2.6"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  },
+  "_codeflow_spike": {
+    "task_ref": "TASK-20260511-005-PM-to-DEV",
+    "isolated_from_runtime": true,
+    "delete_after_p4_decision": true,
+    "python_required": ">=3.10 with fcop>=1.1.0 importable",
+    "windows_python_path_override": "PYTHON_BIN env var should point to Python 3.12 .exe with fcop installed"
+  }
+}
+

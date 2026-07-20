@@ -1,0 +1,29 @@
+{
+  "edition": "open-dev-team",
+  "productName": "CodeFlowMu Open Dev Team Edition",
+  "brand": "码流 CodeFlowMu Open",
+  "defaultPort": 18765,
+  "firstRun": {
+    "resetRuntimeOnFirstLaunch": true,
+    "marker": ".codeflowmu/open-runtime-initialized.flag",
+    "showWelcome": true
+  },
+  "features": {
+    "provider": "cursor",
+    "gitStatus": true,
+    "dataExport": true,
+    "taskTemplates": true,
+    "gateway": "official_demo_limited",
+    "gatewayAutoConnect": true,
+    "privateGatewayPublish": false,
+    "internalEvalPromotion": false,
+    "digitalWorkerExperiments": false,
+    "motherRuntimeHistory": false
+  },
+  "introDocs": [
+    "docs/open/getting-started.md",
+    "docs/open/edition-boundary.md",
+    "docs/open/gateway-demo.md",
+    "docs/open/contributing.md"
+  ]
+}
