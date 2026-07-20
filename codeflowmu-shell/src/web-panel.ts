@@ -5480,14 +5480,7 @@ export function buildWebPanelApp(
   });
 
   app.get("/api/v2/models", async (_req: Request, res: Response) => {
-    const fallback = [
-      "default",
-      "composer-latest",
-      "claude-sonnet-4.5",
-      "claude-3-5-sonnet",
-      "gpt-4o",
-      "gpt-4o-mini",
-    ];
+    const fallback = ["default"];
     try {
       const root = resolveAppConfigRoot();
       const envPath = join(root, ".env");
@@ -5515,15 +5508,7 @@ export function buildWebPanelApp(
       }
 
       const { Cursor } = await import("@cursor/sdk");
-      const oldCursorKey = process.env["CURSOR_API_KEY"];
-      process.env["CURSOR_API_KEY"] = apiKey;
-      let listed: unknown;
-      try {
-        listed = await Cursor.models.list();
-      } finally {
-        if (oldCursorKey === undefined) delete process.env["CURSOR_API_KEY"];
-        else process.env["CURSOR_API_KEY"] = oldCursorKey;
-      }
+      const listed = await Cursor.models.list({ apiKey });
       const models = new Set<string>(["default"]);
       for (const model of listed as Array<{ id?: unknown; aliases?: unknown }>) {
         const id = String(model?.id ?? "").trim();

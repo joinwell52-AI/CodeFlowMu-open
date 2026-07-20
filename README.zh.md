@@ -28,7 +28,7 @@
 
 CodeFlowMu Open Dev Team Edition 是 FCoP 协议治理下、通过 Cursor SDK 接口驱动的多 Agent 开发团队应用，也是 CodeFlowMu 的公开开源版本。
 
-当前开源版本：`V1.1.23-open`
+当前开源版本：`V1.1.24-open`
 
 它面向四件事：
 

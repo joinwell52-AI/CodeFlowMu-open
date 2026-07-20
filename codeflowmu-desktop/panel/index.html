@@ -22042,7 +22042,7 @@ async function loadCursorModelsForUi(){
     if(data&&Array.isArray(data.models)){
       _cursorModelsSource=data.source||'cursor';
       window._cursorModelsLastError=data.error||'';
-      CURSOR_TC_MODELS=_uniqueModelList(['auto','default',...data.models,...CURSOR_TC_MODELS]);
+      CURSOR_TC_MODELS=_uniqueModelList(['auto','default',...data.models]);
       return CURSOR_TC_MODELS;
     }
   }catch(e){
@@ -25584,7 +25584,10 @@ function toggleKeyVisible(id, btn) {
 function toggleProviderUI(_val) {
   activeProvider = 'cursor';
   const cursorArea = document.getElementById('area-cursor');
-  if (cursorArea) cursorArea.style.display = '';
+  if (cursorArea) {
+    cursorArea.style.display = 'flex';
+    cursorArea.style.opacity = '1';
+  }
 }
 
 function applyOpenEditionApiSettings() {
