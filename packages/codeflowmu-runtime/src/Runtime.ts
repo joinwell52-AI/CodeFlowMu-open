@@ -239,6 +239,7 @@ export interface RuntimeCreateOptions {
     agentId: string;
     layer: AgentLayer;
     sessionId: string;
+    currentTaskId: string;
   }) => Record<string, unknown> | undefined;
   /**
    * Doorbell token guard: max SDK tool rounds per session (default 5).

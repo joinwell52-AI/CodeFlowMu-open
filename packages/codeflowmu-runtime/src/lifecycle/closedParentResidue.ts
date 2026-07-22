@@ -78,7 +78,10 @@ export function isTaskOpenForArchiveGate(
   fm: Record<string, unknown> | TaskFm,
 ): boolean {
   if (isClosedParentResidueMarked(fm)) return false;
-  if (isOpenLifecycleBucket(bucket)) return true;
+  const physical = String(bucket ?? "").trim().toLowerCase();
+  // 物理落盘位置是事实源；done/archive 不能被陈旧 projection 重新判为 open。
+  if (physical === "done" || physical === "archive") return false;
+  if (isOpenLifecycleBucket(physical)) return true;
   const proj = String(fm.lifecycle_projection ?? "").trim().toLowerCase();
   return isOpenLifecycleProjection(proj);
 }

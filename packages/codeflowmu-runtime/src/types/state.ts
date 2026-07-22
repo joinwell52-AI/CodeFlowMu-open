@@ -109,6 +109,8 @@ export interface SessionRecord {
   runtime_trigger_chat_id?: string;
   /** Effective FCoP thread key used by evidence/review correlation. */
   runtime_thread_key?: string;
+  /** Canonical ADMIN root task bound to this runtime session. */
+  runtime_root_task_id?: string;
 }
 
 // ───────────────────────────────────────────────────────────────────────────

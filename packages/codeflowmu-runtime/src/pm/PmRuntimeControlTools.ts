@@ -91,7 +91,7 @@ export const PM_RUNTIME_CONTROL_TOOL_DEFINITIONS: readonly PmRuntimeControlToolD
         },
         thread_key: stringProp("可选 FCoP thread_key，用于定位主任务"),
       },
-      required: ["task_id", "body_markdown"],
+      required: ["body_markdown"],
       additionalProperties: false,
     },
   },
@@ -117,7 +117,6 @@ export const PM_RUNTIME_CONTROL_TOOL_DEFINITIONS: readonly PmRuntimeControlToolD
       },
       required: [
         "skill_id",
-        "task_id",
         "input_context",
         "output_summary",
         "brief_section",
@@ -170,6 +169,7 @@ export async function invokePmRuntimeControlTool(input: {
   args: Record<string, unknown>;
   agentId?: string;
   sessionId?: string;
+  currentTaskId?: string;
   panelUrl?: string;
 }): Promise<Record<string, unknown>> {
   const agentId = String(input.agentId ?? "PM-01").trim();
@@ -230,7 +230,11 @@ export async function invokePmRuntimeControlTool(input: {
       path = "/api/v2/pm/governance/planning-skill-evidence";
       body = {
         skill_id: requiredString(input.args, "skill_id"),
-        task_id: requiredString(input.args, "task_id"),
+        task_id:
+          optionalString(input.args, "task_id") ||
+          String(input.currentTaskId ?? "").trim(),
+        current_task_id: String(input.currentTaskId ?? "").trim(),
+        agent_id: agentId,
         thread_key: optionalString(input.args, "thread_key") || undefined,
         input_context: requiredString(input.args, "input_context"),
         output_summary: requiredString(input.args, "output_summary"),
@@ -246,7 +250,11 @@ export async function invokePmRuntimeControlTool(input: {
       method = "POST";
       path = "/api/v2/pm/governance/planning-artifact";
       body = {
-        task_id: requiredString(input.args, "task_id"),
+        task_id:
+          optionalString(input.args, "task_id") ||
+          String(input.currentTaskId ?? "").trim(),
+        current_task_id: String(input.currentTaskId ?? "").trim(),
+        agent_id: agentId,
         body_markdown: requiredString(input.args, "body_markdown"),
         status: optionalString(input.args, "status") || "ready",
         thread_key: optionalString(input.args, "thread_key") || undefined,
@@ -293,12 +301,23 @@ export async function invokePmRuntimeControlTool(input: {
               ? "ok"
               : "error"),
       http_status: response.status,
+      ...(!response.ok
+        ? {
+            error_code:
+              String(runtimeResult["code"] ?? parsed["code"] ?? "") ||
+              "PLANNING_RUNTIME_REQUEST_FAILED",
+            recovery:
+              "确认 PM Runtime 会话仍在运行且绑定当前根任务后重试；无需手工传 session_id 或 caller_role。",
+          }
+        : {}),
     };
   } catch (error) {
     return {
       ok: false,
       outcome: "error",
       error: error instanceof Error ? error.message : String(error),
+      error_code: "PLANNING_RUNTIME_UNAVAILABLE",
+      recovery: "确认 CodeFlowMu Panel Runtime 已启动后重试。",
     };
   }
 }

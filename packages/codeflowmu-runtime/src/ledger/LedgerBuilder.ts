@@ -769,19 +769,32 @@ export class LedgerBuilder {
         const transitions = Array.isArray(transitionsRaw)
           ? transitionsRaw
           : undefined;
+        const physicalBucket = bucketFromPath(filePath, layout.lifecycleRoot);
+        const settledPhysical =
+          physicalBucket === "done" || physicalBucket === "archive";
+        const normalizedFm = settledPhysical
+          ? {
+              ...fm,
+              state: physicalBucket,
+              lifecycle_projection: physicalBucket,
+              lifecycle_path: `fcop/_lifecycle/${physicalBucket}`,
+              display_status:
+                physicalBucket === "archive" ? "archived" : "done",
+            }
+          : fm;
 
         tasks.push({
           task_id,
           filename: name,
           sender: strField(fm, "sender"),
           recipient: strField(fm, "recipient"),
-          bucket: bucketFromPath(filePath, layout.lifecycleRoot),
+          bucket: physicalBucket,
           path: relPath,
           created_at: ts.created_at,
           updated_at: ts.updated_at,
           timezone: ts.timezone,
           created_at_utc: ts.created_at_utc,
-          yaml: fm,
+          yaml: normalizedFm,
           ...(transitions ? { transitions } : {}),
           ...(sync_status ? { sync_status } : {}),
           ...(strField(fm, "thread_key")
@@ -793,9 +806,22 @@ export class LedgerBuilder {
           ...(listField(fm, "related").length
             ? { related: listField(fm, "related") }
             : {}),
-          ...(strField(fm, "state") ? { state: strField(fm, "state") } : {}),
-          ...(strField(fm, "review_status")
-            ? { review_status: strField(fm, "review_status") }
+          ...(strField(normalizedFm, "state")
+            ? { state: strField(normalizedFm, "state") }
+            : {}),
+          ...(strField(normalizedFm, "lifecycle_projection")
+            ? {
+                lifecycle_projection: strField(
+                  normalizedFm,
+                  "lifecycle_projection",
+                ),
+              }
+            : {}),
+          ...(strField(normalizedFm, "lifecycle_path")
+            ? { lifecycle_path: strField(normalizedFm, "lifecycle_path") }
+            : {}),
+          ...(strField(normalizedFm, "review_status")
+            ? { review_status: strField(normalizedFm, "review_status") }
             : {}),
           ...(strField(fm, "reopen_reason")
             ? { reopen_reason: strField(fm, "reopen_reason") }
@@ -806,8 +832,8 @@ export class LedgerBuilder {
           ...(strField(fm, "review_note")
             ? { review_note: strField(fm, "review_note") }
             : {}),
-          ...(strField(fm, "display_status")
-            ? { display_status: strField(fm, "display_status") }
+          ...(strField(normalizedFm, "display_status")
+            ? { display_status: strField(normalizedFm, "display_status") }
             : {}),
           ...(strField(fm, "pm_attention_reason")
             ? { pm_attention_reason: strField(fm, "pm_attention_reason") }

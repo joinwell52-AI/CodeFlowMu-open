@@ -14117,27 +14117,9 @@ function adminThreadModelMatchesSearch(m,q){
 
 function threadModelsScopedForTaskTab(){
   const fullList=dashboardTaskList(tasks||[]);
-  const models=buildAdminThreadModels(fullList,{forPageFilter:true});
-  const represented=new Set(models.map(m=>
-    taskIdPrefix((m.root&&m.root.filename)||'')||String(m.id||'')
-  ));
-  fullList.filter(isAdminMainlineRootTask).forEach(root=>{
-    const id=taskIdPrefix(root.filename||'');
-    if(!id||represented.has(id))return;
-    models.push({
-      id,
-      name:String(root.subject||root.filename||id),
-      root,
-      members:[root]
-    });
-    represented.add(id);
-  });
+  const models=buildMainTaskSelectionModels(fullList,ledgerThreads||[]);
   if(taskArchiveTab==='all')return models;
-  const {visibleIds}=taskIdsMatchingRootArchiveTab(fullList);
-  return models.filter(m=>{
-    const rootId=taskIdPrefix((m.root&&m.root.filename)||'')||m.id;
-    return visibleIds.has(rootId);
-  });
+  return models.filter(m=>rootTaskMatchesArchiveTab(m.root));
 }
 
 function threadModelsScopedForReportTab(){
@@ -14266,7 +14248,7 @@ function rootTaskMatchesArchiveTab(rootTask){
 function taskIdsMatchingRootArchiveTab(taskList){
   const fullList=dashboardTaskList(taskList||tasks);
   const rows=typeof ledgerThreads!=='undefined'?ledgerThreads:[];
-  const threads=buildTaskBusThreads(fullList, rows);
+  const threads=buildMainTaskSelectionModels(fullList, rows);
   const visibleIds=new Set();
   const threadMemberIds=new Set();
   threads.forEach(th=>{
@@ -14275,7 +14257,7 @@ function taskIdsMatchingRootArchiveTab(taskList){
       const id=taskIdPrefix(m.filename);
       if(id)threadMemberIds.add(id);
     });
-    const root=th.root||members.find(m=>isAdminMainlineTask(m.filename))||members[0];
+    const root=th.root||members[0];
     if(!root||!rootTaskMatchesArchiveTab(root))return;
     members.forEach(m=>{
       const id=taskIdPrefix(m.filename);
@@ -14289,7 +14271,7 @@ function taskPageBasePool(){
   let pool=dashboardTaskList(tasks);
   const tid=window._taskThreadFilter||'';
   if(tid){
-    const m=buildAdminThreadModels(dashboardTaskList(tasks),{forPageFilter:true}).find(t=>t.id===tid);
+    const m=buildMainTaskSelectionModels(dashboardTaskList(tasks),ledgerThreads||[]).find(t=>t.id===tid);
     if(m)pool=m.members;
   }else if(window._activeThreadId&&currentTaskViewMode==='kanban'){
     const m=getThreadBoardModel();
@@ -14374,7 +14356,7 @@ function taskIsDescendantOfVisibleRoot(f,visibleIds,taskList){
 function taskIdsMatchingRootArchiveTab(taskList){
   const fullList=dashboardTaskList(taskList||tasks);
   const rows=typeof ledgerThreads!=='undefined'?ledgerThreads:[];
-  const threads=buildTaskBusThreads(fullList, rows);
+  const threads=buildMainTaskSelectionModels(fullList, rows);
   const visibleIds=new Set();
   const threadMemberIds=new Set();
   threads.forEach(th=>{
@@ -14383,7 +14365,7 @@ function taskIdsMatchingRootArchiveTab(taskList){
       const id=taskIdPrefix(m.filename);
       if(id)threadMemberIds.add(id);
     });
-    const root=th.root||members.find(m=>isAdminMainlineTask(m.filename))||members[0];
+    const root=th.root||members[0];
     if(!root||!rootTaskMatchesArchiveTab(root))return;
     members.forEach(m=>{
       const id=taskIdPrefix(m.filename);
@@ -14397,12 +14379,15 @@ function taskIdsMatchingRootArchiveTab(taskList){
 function taskPageVisiblePoolBase(){
   const pool=taskPageBasePool();
   const fullList=dashboardTaskList(tasks);
+  const selectedRoot=Boolean(window._taskThreadFilter);
   if(taskArchiveTab==='all'){
-    return pool.filter(f=>!shouldHideStalePmBranchOnActiveTab(f,fullList,taskArchiveTab));
+    return selectedRoot
+      ?pool
+      :pool.filter(f=>!shouldHideStalePmBranchOnActiveTab(f,fullList,taskArchiveTab));
   }
   const {visibleIds,threadMemberIds}=taskIdsMatchingRootArchiveTab(fullList);
   const filtered=pool.filter(f=>{
-    if(shouldHideStalePmBranchOnActiveTab(f,fullList,taskArchiveTab))return false;
+    if(!selectedRoot&&shouldHideStalePmBranchOnActiveTab(f,fullList,taskArchiveTab))return false;
     const id=taskIdPrefix(f.filename);
     if(id&&threadMemberIds.has(id))return visibleIds.has(id);
     if(id&&taskIsDescendantOfVisibleRoot(f,visibleIds,fullList))return true;
@@ -14520,8 +14505,18 @@ function syncTaskThreadSelect(){
     })
   );
   sel.innerHTML=opts.join('');
-  if(prev&&models.some(m=>m.id===prev))sel.value=prev;
-  else{sel.value='';window._taskThreadFilter='';}
+  if(prev){
+    const selected=models.find(m=>m.id===prev);
+    if(selected)sel.value=prev;
+    else{
+      const allModels=threadModelsScopedForTaskTab();
+      const stillValid=allModels.find(m=>m.id===prev);
+      if(stillValid){
+        sel.insertAdjacentHTML('beforeend',`<option value="${esc(prev)}">${esc(stillValid.name||prev)}</option>`);
+        sel.value=prev;
+      }else{sel.value='';window._taskThreadFilter='';}
+    }
+  }else sel.value='';
 }
 
 function onTaskThreadSelect(val){
@@ -15701,7 +15696,7 @@ function renderTaskExecutionGate(f){
 }
 
 function planningStatusLabel(value){
-  const labels={not_required:'无需规划',legacy_compatible:'历史任务兼容',missing:'未开始',in_progress:'进行中',completed:'已完成'};
+  const labels={not_required:'无需规划',legacy_compatible:'历史任务兼容',missing:'尚未生成',failed:'生成失败',in_progress:'进行中',completed:'已完成'};
   return labels[String(value||'')]||String(value||'—');
 }
 const _pmPlanningGateCache=new Map();
@@ -15755,6 +15750,10 @@ function renderTaskPlanningGate(data){
   if((data.missing_skills||[]).length)rows.push(['缺失技能',data.missing_skills.join('、')]);
   if((data.missing_sections||[]).length)rows.push(['缺少章节',data.missing_sections.join('、')]);
   if((data.invalid_skill_evidence||[]).length)rows.push(['无效证据',data.invalid_skill_evidence.join('、')]);
+  if(data.planning_failure){
+    rows.push(['失败代码',data.planning_failure.code||'PLANNING_FAILED']);
+    rows.push(['恢复方式',data.planning_failure.recovery||'请从当前 PM Runtime 会话重试']);
+  }
   rows.push(['下游派单',data.dispatch_open?'已开放':'未开放']);
   if(data.next_action)rows.push(['PM 下一步',data.next_action]);
   const safeTaskId=esc(String(data.task_id||'')).replace(/'/g,"\\'");
@@ -16014,7 +16013,7 @@ function _renderTeamSection(){
   const pool=taskPageVisiblePool();
   const pmRows=collectTeamSectionTasks(pool,role,dashboardTaskList(tasks));
   const threadModel=window._taskThreadFilter
-    ?buildAdminThreadModels(dashboardTaskList(tasks),{forPageFilter:true}).find(t=>t.id===window._taskThreadFilter)
+    ?buildMainTaskSelectionModels(dashboardTaskList(tasks),ledgerThreads||[]).find(t=>t.id===window._taskThreadFilter)
     :null;
   const teamRootId=threadModel?taskIdPrefix(threadModel.root&&threadModel.root.filename):'';
   const pmFlat=flattenTaskTree(buildTaskTree(pmRows,teamRootId));
@@ -20377,6 +20376,60 @@ function buildTaskByIdMapForVisibility(list){
   }
   return byId;
 }
+/** 任务页独立根任务模型：主键是 root task_id，thread_key 仅唯一时兜底。 */
+function buildMainTaskSelectionModels(allTasks,rows){
+  const list=(allTasks||[]).filter(t=>String(t.filename||'').startsWith('TASK-'));
+  const byId=buildTaskByIdMapForVisibility(list);
+  const roots=list.filter(t=>isAdminMainlineTask(t.filename)&&!taskParentPrefix(t));
+  const rootById={};
+  const rootsByThread={};
+  roots.forEach(root=>{
+    const id=taskIdPrefix(root.filename);
+    if(!id)return;
+    rootById[id]=root;
+    const key=bareThreadKey(root.thread_key);
+    if(key)(rootsByThread[key]||(rootsByThread[key]=[])).push(id);
+  });
+  const members={};
+  Object.keys(rootById).forEach(id=>members[id]=[]);
+  const ledgerRootsForTask=id=>{
+    const found=new Set();
+    (rows||[]).forEach(row=>{
+      const ids=(row.task_ids||[]).map(value=>taskIdPrefix(String(value||'')));
+      const rootId=taskIdPrefix(String(row.root_task_id||''));
+      if(ids.includes(id)&&rootById[rootId])found.add(rootId);
+    });
+    return [...found];
+  };
+  list.forEach(task=>{
+    const id=taskIdPrefix(task.filename);
+    if(!id)return;
+    let rootId=rootById[id]?id:'';
+    if(!rootId&&taskParentPrefix(task)){
+      const candidate=resolveAdminRootIdForTask(task,byId);
+      if(rootById[candidate])rootId=candidate;
+    }
+    if(!rootId){
+      const candidates=ledgerRootsForTask(id);
+      if(candidates.length===1)rootId=candidates[0];
+    }
+    if(!rootId){
+      const candidates=taskReferenceIds(task).filter(ref=>rootById[ref]);
+      if(candidates.length===1)rootId=candidates[0];
+    }
+    if(!rootId){
+      const candidates=rootsByThread[bareThreadKey(task.thread_key)]||[];
+      if(candidates.length===1)rootId=candidates[0];
+    }
+    if(rootId&&members[rootId])members[rootId].push(task);
+  });
+  return Object.keys(rootById).map(id=>{
+    const root=rootById[id];
+    const rootMembers=members[id]||[];
+    if(!rootMembers.some(t=>taskIdPrefix(t.filename)===id))rootMembers.unshift(root);
+    return {id,name:String(root.subject||root.filename||id),root,members:rootMembers};
+  }).sort((a,b)=>b.id.localeCompare(a.id));
+}
 /** keep in sync with panel-task-thread-visibility.ts findLivingAdminMainlineIdForThread */
 function findLivingAdminMainlineIdForThread(allTasks,bareKey){
   const bare=String(bareKey||'').trim();
@@ -20800,18 +20853,9 @@ function collectTeamSectionTasks(pool,roleFilter,fullList){
   const all=fullList||dashboardTaskList(tasks);
   const threadFilter=window._taskThreadFilter&&String(window._taskThreadFilter).trim();
   if(threadFilter){
-    const threadModel=buildAdminThreadModels(all,{forPageFilter:true}).find(t=>t.id===threadFilter);
-    const threadKey=threadModel&&threadModel.root?bareThreadKey(threadModel.root.thread_key):'';
-    const threadRootId=threadModel&&threadModel.root?taskIdPrefix(threadModel.root.filename):'';
-    const byId=buildTaskByIdMapForVisibility(all);
-    if(threadKey){
-      let rows=all.filter(f=>{
-        if(!isPmTeamDispatchTask(f.filename||''))return false;
-        const route=taskRouteFromFn(f.filename||'');
-        if(route&&route.sender!=='PM')return false;
-        const strongRoot=resolveAdminRootIdForTask(f,byId);
-        return (strongRoot&&strongRoot===threadRootId)||bareThreadKey(f.thread_key)===threadKey;
-      });
+    const threadModel=buildMainTaskSelectionModels(all,ledgerThreads||[]).find(t=>t.id===threadFilter);
+    if(threadModel){
+      let rows=(threadModel.members||[]).filter(f=>isPmTeamDispatchTask(f.filename||''));
       if(roleFilter)rows=rows.filter(f=>new RegExp('PM-to-'+roleFilter,'i').test(f.filename||''));
       const seen=new Set();
       return rows.filter(f=>{
@@ -20828,18 +20872,8 @@ function collectTeamSectionTasks(pool,roleFilter,fullList){
   if(scopedModels.length){
     const seen=new Set();
     let rows=[];
-    const byId=buildTaskByIdMapForVisibility(all);
     scopedModels.forEach(m=>{
-      const threadKey=m&&m.root?bareThreadKey(m.root.thread_key):'';
-      const threadRootId=m&&m.root?taskIdPrefix(m.root.filename):'';
-      if(!threadKey)return;
-      all.filter(f=>{
-        if(!isPmTeamDispatchTask(f.filename||''))return false;
-        const route=taskRouteFromFn(f.filename||'');
-        if(route&&route.sender!=='PM')return false;
-        const strongRoot=resolveAdminRootIdForTask(f,byId);
-        return (strongRoot&&strongRoot===threadRootId)||bareThreadKey(f.thread_key)===threadKey;
-      }).forEach(f=>{
+      (m.members||[]).filter(f=>isPmTeamDispatchTask(f.filename||'')).forEach(f=>{
         const id=taskIdPrefix(f.filename);
         if(!id||seen.has(id))return;
         seen.add(id);
@@ -20852,7 +20886,7 @@ function collectTeamSectionTasks(pool,roleFilter,fullList){
   const src=all;
   let rows=(pool||[]).filter(f=>!/TASK-.*-ADMIN-to-PM/i.test(f.filename||''));
   if(roleFilter)rows=rows.filter(f=>new RegExp('PM-to-'+roleFilter,'i').test(f.filename||''));
-  const rootId=(window._taskThreadFilter&&buildAdminThreadModels(all,{forPageFilter:true}).find(t=>t.id===window._taskThreadFilter))||null;
+  const rootId=(window._taskThreadFilter&&buildMainTaskSelectionModels(all,ledgerThreads||[]).find(t=>t.id===window._taskThreadFilter))||null;
   const effectiveRootId=rootId?taskIdPrefix(rootId.root&&rootId.root.filename):'';
   const byId={};
   (pool||[]).forEach(f=>{

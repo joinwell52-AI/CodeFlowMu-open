@@ -7,7 +7,7 @@ echo ============================================================
 echo CodeFlowMu Open Dev Team Edition
 echo ============================================================
 echo Working directory: %CD%
-echo Version: V1.1.24-open
+echo Version: V1.1.25-open
 echo Default URL: http://127.0.0.1:18765/
 echo Install policy: one standard CodeFlowMu Open install per computer. Default path: D:\CodeFlowMu-open.
 echo Update policy: full replacement update; preserves .git, node_modules, .venv, projects, legacy workspace projects, and external projects.

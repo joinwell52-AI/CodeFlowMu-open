@@ -39,18 +39,22 @@ export type OpenChildTaskRef = {
   filename: string;
   bucket: string;
   display_status?: string;
+  reason?: string;
 };
 
 export class ChildTasksOpenError extends Error {
   readonly code = "CHILD_TASKS_OPEN" as const;
   readonly openChildren: OpenChildTaskRef[];
+  readonly children: OpenChildTaskRef[];
 
   constructor(openChildren: OpenChildTaskRef[]) {
+    const ids = openChildren.map((child) => child.task_id).join(", ");
     super(
-      `CHILD_TASKS_OPEN: ${openChildren.length} child task(s) still open`,
+      `CHILD_TASKS_OPEN: ${openChildren.length} child task(s) still open${ids ? `: ${ids}` : ""}`,
     );
     this.name = "ChildTasksOpenError";
     this.openChildren = openChildren;
+    this.children = openChildren;
   }
 }
 
@@ -89,6 +93,38 @@ function parentMatchesMain(
     if (pid === mainId) return true;
   }
   return false;
+}
+
+function taskDescendsFromMain(
+  task: ScannedChild,
+  byId: Map<string, ScannedChild>,
+  mainTaskId: string,
+): boolean {
+  const mainId = normalizeTaskId(mainTaskId);
+  let parentId = normalizeTaskId(
+    String(task.fm.parent ?? task.fm.parent_task_id ?? ""),
+  );
+  const seen = new Set<string>();
+  while (parentId && !seen.has(parentId)) {
+    if (parentId === mainId) return true;
+    seen.add(parentId);
+    const parent = byId.get(parentId);
+    if (!parent) return false;
+    parentId = normalizeTaskId(
+      String(parent.fm.parent ?? parent.fm.parent_task_id ?? ""),
+    );
+  }
+  return false;
+}
+
+function openReason(task: ScannedChild): string {
+  if (isOpenLifecycleBucket(task.bucket)) {
+    return `physical_bucket=${task.bucket}`;
+  }
+  const projection = String(task.fm.lifecycle_projection ?? "").trim();
+  return projection
+    ? `lifecycle_projection=${projection}`
+    : "lifecycle_state_open";
 }
 
 function doneDisplayBlocksArchive(fm: TaskFm): string | null {
@@ -200,6 +236,7 @@ export async function collectRelatedChildTasks(
 ): Promise<OpenChildTaskRef[]> {
   const mainId = normalizeTaskId(opts.mainTaskId);
   const scanned = await scanLifecycleTasks(opts.lifecycleRoot);
+  const byId = new Map(scanned.map((task) => [task.task_id, task] as const));
   const openChildren: OpenChildTaskRef[] = [];
   const seenIds = new Set<string>();
 
@@ -208,11 +245,12 @@ export async function collectRelatedChildTasks(
     if (isAdminMainlineRootTask(t.filename, t.fm as Record<string, unknown>))
       continue;
 
-    const parentMatch = parentMatchesMain(
-      t.fm as Record<string, unknown>,
-      mainId,
-      opts.mainFilename,
-    );
+    const parentMatch =
+      parentMatchesMain(
+        t.fm as Record<string, unknown>,
+        mainId,
+        opts.mainFilename,
+      ) || taskDescendsFromMain(t, byId, mainId);
     if (!parentMatch) continue;
 
     const isOpen = isTaskOpenForArchiveGate(t.bucket, t.fm);
@@ -225,6 +263,7 @@ export async function collectRelatedChildTasks(
       filename: t.filename,
       bucket: t.bucket,
       display_status: String(t.fm.display_status ?? "").trim() || undefined,
+      reason: openReason(t),
     });
   }
 
@@ -258,6 +297,7 @@ export async function classifyRelatedChildTasksForMainlineArchive(
 }> {
   const mainId = normalizeTaskId(opts.mainTaskId);
   const scanned = await scanLifecycleTasks(opts.lifecycleRoot);
+  const byId = new Map(scanned.map((task) => [task.task_id, task] as const));
   const blockingOpen: OpenChildTaskRef[] = [];
   const blockingNotAccepted: NotAcceptedChildRef[] = [];
   const autoArchive: OpenChildTaskRef[] = [];
@@ -268,11 +308,12 @@ export async function classifyRelatedChildTasksForMainlineArchive(
     if (isAdminMainlineRootTask(t.filename, t.fm as Record<string, unknown>))
       continue;
 
-    const parentMatch = parentMatchesMain(
-      t.fm as Record<string, unknown>,
-      mainId,
-      opts.mainFilename,
-    );
+    const parentMatch =
+      parentMatchesMain(
+        t.fm as Record<string, unknown>,
+        mainId,
+        opts.mainFilename,
+      ) || taskDescendsFromMain(t, byId, mainId);
     if (!parentMatch) continue;
 
     if (seenIds.has(t.task_id)) continue;
@@ -283,6 +324,7 @@ export async function classifyRelatedChildTasksForMainlineArchive(
       filename: t.filename,
       bucket: t.bucket,
       display_status: String(t.fm.display_status ?? "").trim() || undefined,
+      reason: openReason(t),
     };
 
     if (isClosedParentResidueMarked(t.fm)) continue;

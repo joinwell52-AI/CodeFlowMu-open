@@ -597,8 +597,14 @@ async function main(): Promise<void> {
     logger: consoleLogger,
     ...(mcpBridgeCfg.pythonBin && mcpBridgeCfg.projectRoot
       ? {
-          resolveMcpServers: ({ agentId, layer, sessionId }) =>
-            mcpServersForAgentLayer(mcpBridgeCfg, layer, agentId, sessionId),
+          resolveMcpServers: ({ agentId, layer, sessionId, currentTaskId }) =>
+            mcpServersForAgentLayer(
+              mcpBridgeCfg,
+              layer,
+              agentId,
+              sessionId,
+              currentTaskId,
+            ),
         }
       : {}),
     ...(fcopClient ? { fcopClient } : {}),

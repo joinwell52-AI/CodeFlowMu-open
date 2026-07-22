@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   absorbOrphanLedgerRows,
   buildThreadMembersFromLedger,
+  buildMainTaskSelectionModels,
   classifyTask,
   countAdminMainlinesForThreadMembers,
   countAdminMainlinesInPool,
@@ -10,6 +11,7 @@ import {
   countAdminMainlinesInReportTaskTree,
   countBranchTasksInPool,
   collectPmTeamDispatchTasksForThread,
+  collectPmTeamDispatchTasksForRoot,
   collectPmTeamDispatchTasksForVisibleThreads,
   countVisibleTaskBreakdown,
   filterTaskPageVisiblePool,
@@ -40,6 +42,134 @@ import {
   filterReportPageVisibleItems,
   reportUnifiedSearchHaystack,
 } from "../panel-task-thread-visibility.ts";
+
+test("task page selector keeps reused thread_key roots independent", () => {
+  const root040 = {
+    filename: "TASK-20260714-040-ADMIN-to-PM.md",
+    thread_key: "reused-mainline",
+    physical_scope: "done",
+  };
+  const child040 = {
+    filename: "TASK-20260716-002-PM-to-OPS.md",
+    parent: "TASK-20260714-040",
+    thread_key: "reused-mainline",
+    physical_scope: "done",
+  };
+  const root002 = {
+    filename: "TASK-20260720-002-ADMIN-to-PM.md",
+    thread_key: "reused-mainline",
+    physical_scope: "active",
+  };
+  const child002 = {
+    filename: "TASK-20260720-003-PM-to-DEV.md",
+    parent: "TASK-20260720-002",
+    thread_key: "reused-mainline",
+    physical_scope: "active",
+  };
+  const rows = [
+    {
+      thread_key: "reused-mainline",
+      root_task_id: "TASK-20260714-040",
+      task_ids: ["TASK-20260714-040", "TASK-20260716-002"],
+    },
+    {
+      thread_key: "reused-mainline",
+      root_task_id: "TASK-20260720-002",
+      task_ids: ["TASK-20260720-002", "TASK-20260720-003"],
+    },
+  ];
+  const all = [root040, child040, root002, child002];
+  const models = buildMainTaskSelectionModels(all, rows);
+  assert.deepEqual(
+    models.map((model) => model.id).sort(),
+    ["TASK-20260714-040", "TASK-20260720-002"],
+  );
+  assert.deepEqual(
+    models
+      .find((model) => model.id === "TASK-20260714-040")!
+      .members.map((task) => task.filename),
+    [root040.filename, child040.filename],
+  );
+  assert.deepEqual(
+    collectPmTeamDispatchTasksForRoot(
+      all,
+      rows,
+      "TASK-20260714-040",
+      null,
+    ).map((task) => task.filename),
+    [child040.filename],
+  );
+});
+
+test("task page selector uses thread_key only when root candidate is unique", () => {
+  const root = {
+    filename: "TASK-20260714-040-ADMIN-to-PM.md",
+    thread_key: "unique-mainline",
+  };
+  const legacyChild = {
+    filename: "TASK-20260716-002-PM-to-OPS.md",
+    thread_key: "unique-mainline",
+  };
+  const model = buildMainTaskSelectionModels([root, legacyChild], [])[0]!;
+  assert.deepEqual(
+    model.members.map((task) => task.filename),
+    [root.filename, legacyChild.filename],
+  );
+});
+
+test("explicit parent wins over conflicting ledger, reference and thread_key", () => {
+  const rootA = {
+    filename: "TASK-20260714-040-ADMIN-to-PM.md",
+    thread_key: "root-a",
+  };
+  const rootB = {
+    filename: "TASK-20260720-002-ADMIN-to-PM.md",
+    thread_key: "root-b",
+  };
+  const child = {
+    filename: "TASK-20260720-003-PM-to-DEV.md",
+    parent: "TASK-20260714-040",
+    references: ["TASK-20260720-002"],
+    thread_key: "root-b",
+  };
+  const models = buildMainTaskSelectionModels(
+    [rootA, rootB, child],
+    [
+      {
+        root_task_id: "TASK-20260720-002",
+        task_ids: ["TASK-20260720-003"],
+      },
+    ],
+  );
+  assert.ok(
+    models
+      .find((model) => model.id === "TASK-20260714-040")!
+      .members.includes(child),
+  );
+  assert.equal(
+    models
+      .find((model) => model.id === "TASK-20260720-002")!
+      .members.includes(child),
+    false,
+  );
+});
+
+test("references compatibility links a legacy child when ledger is missing", () => {
+  const root = {
+    filename: "TASK-20260714-040-ADMIN-to-PM.md",
+    thread_key: "root-a",
+  };
+  const legacy = {
+    filename: "TASK-20260716-002-PM-to-OPS.md",
+    references: "TASK-20260714-040",
+    thread_key: "different-key",
+  };
+  const model = buildMainTaskSelectionModels([root, legacy], [])[0]!;
+  assert.deepEqual(
+    model.members.map((task) => task.filename),
+    [root.filename, legacy.filename],
+  );
+});
 
 const task005 = {
   filename: "TASK-20260604-005-ADMIN-to-PM.md",

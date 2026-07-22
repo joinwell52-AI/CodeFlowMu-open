@@ -6325,10 +6325,28 @@ export function buildWebPanelApp(
     }
   });
 
+  const planningFailureByTask = new Map<
+    string,
+    { code: string; recovery: string; failed_at: string }
+  >();
+  const rememberPlanningFailure = (
+    taskId: string,
+    code: string,
+    recovery: string,
+  ): void => {
+    if (!taskId) return;
+    planningFailureByTask.set(taskId, {
+      code,
+      recovery,
+      failed_at: new Date().toISOString(),
+    });
+  };
+
   const validateRuntimePlanningIdentity = async (
     sessionId: string,
     callerRole: string,
     taskId: string,
+    agentId?: string,
   ): Promise<{ ok: true } | { ok: false; code: string; message: string }> => {
     if (!sessionId || !callerRole) {
       return { ok: false, code: "INVALID_PLANNING_ARTIFACT_CALL", message: "Runtime session identity is required" };
@@ -6347,11 +6365,20 @@ export function buildWebPanelApp(
         message: `caller_role does not match SessionStore agent_id for ${sessionId}`,
       };
     }
-    if (session.protocol.task_id !== taskId) {
+    if (agentId && session.protocol.agent_id !== agentId) {
+      return {
+        ok: false,
+        code: "RUNTIME_CONTEXT_MISMATCH",
+        message: `agent_id does not match SessionStore agent_id for ${sessionId}`,
+      };
+    }
+    const sessionRootTaskId =
+      session.runtime_root_task_id || session.protocol.task_id;
+    if (sessionRootTaskId !== taskId) {
       return {
         ok: false,
         code: "RUNTIME_TASK_MISMATCH",
-        message: `task_id does not match SessionStore task_id for ${sessionId}`,
+        message: `current root task_id does not match SessionStore context for ${sessionId}`,
       };
     }
     return { ok: true };
@@ -6362,13 +6389,31 @@ export function buildWebPanelApp(
       const body = (req.body ?? {}) as Record<string, unknown>;
       const sessionId = String(body["session_id"] ?? "").trim();
       if (!sessionId) {
+        rememberPlanningFailure(
+          String(body["task_id"] ?? body["current_task_id"] ?? "").trim(),
+          "SESSION_REQUIRED",
+          "请从当前 PM Runtime 会话调用规划工具；会话身份会自动注入。",
+        );
         sendError(res, 400, "SESSION_REQUIRED", "真实规划技能证据必须关联 Runtime session_id");
         return;
       }
       const callerRole = String(body["caller_role"] ?? "").trim();
-      const taskId = String(body["task_id"] ?? "").trim();
-      const identity = await validateRuntimePlanningIdentity(sessionId, callerRole, taskId);
+      const taskId = String(
+        body["task_id"] ?? body["current_task_id"] ?? "",
+      ).trim();
+      const agentId = String(body["agent_id"] ?? "").trim();
+      const identity = await validateRuntimePlanningIdentity(
+        sessionId,
+        callerRole,
+        taskId,
+        agentId,
+      );
       if (!identity.ok) {
+        rememberPlanningFailure(
+          taskId,
+          identity.code,
+          "确认 PM Runtime 会话仍在运行且绑定当前根任务后重试。",
+        );
         sendError(res, 409, identity.code, identity.message);
         return;
       }
@@ -6388,6 +6433,7 @@ export function buildWebPanelApp(
           ? { thread_key: String(body["thread_key"]).trim() }
           : {}),
       });
+      planningFailureByTask.delete(taskId);
       res.json({ ok: true, invocation: record });
     } catch (err) {
       sendError(res, 400, "INVALID_PLANNING_SKILL_EVIDENCE", String(err));
@@ -6397,10 +6443,13 @@ export function buildWebPanelApp(
   app.post("/api/v2/pm/governance/planning-artifact", async (req: Request, res: Response) => {
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
-      const taskId = String(body["task_id"] ?? "").trim();
+      const taskId = String(
+        body["task_id"] ?? body["current_task_id"] ?? "",
+      ).trim();
       const threadKey = String(body["thread_key"] ?? "").trim();
       const sessionId = String(body["session_id"] ?? "").trim();
       const callerRole = String(body["caller_role"] ?? "").trim();
+      const agentId = String(body["agent_id"] ?? "").trim();
       const bodyMarkdown = String(body["body_markdown"] ?? "");
       const status = String(body["status"] ?? "ready").trim().toLowerCase();
       if (
@@ -6408,15 +6457,35 @@ export function buildWebPanelApp(
         !/^[A-Za-z0-9._:-]+$/.test(sessionId) ||
         !/^PM(?:[-.][A-Za-z0-9_-]+)?$/i.test(callerRole)
       ) {
+        rememberPlanningFailure(
+          taskId,
+          "INVALID_PLANNING_ARTIFACT_CALL",
+          "请从当前 PM Runtime 会话调用；会话、角色和根任务上下文会自动注入。",
+        );
         sendError(res, 400, "INVALID_PLANNING_ARTIFACT_CALL", "PM task_id, Runtime session_id and caller_role are required");
         return;
       }
-      const identity = await validateRuntimePlanningIdentity(sessionId, callerRole, taskId);
+      const identity = await validateRuntimePlanningIdentity(
+        sessionId,
+        callerRole,
+        taskId,
+        agentId,
+      );
       if (!identity.ok) {
+        rememberPlanningFailure(
+          taskId,
+          identity.code,
+          "确认 PM Runtime 会话仍在运行且绑定当前根任务后重试。",
+        );
         sendError(res, 409, identity.code, identity.message);
         return;
       }
       if (!bodyMarkdown.trim() || !["draft", "ready"].includes(status)) {
+        rememberPlanningFailure(
+          taskId,
+          "INVALID_PLANNING_ARTIFACT",
+          "补齐 Product Brief 正文并使用 status=draft 或 ready 后重试。",
+        );
         sendError(res, 400, "INVALID_PLANNING_ARTIFACT", "body_markdown and status=draft|ready are required");
         return;
       }
@@ -6456,8 +6525,15 @@ export function buildWebPanelApp(
         taskBody: ctx.root_body ?? "",
         taskFrontmatter: rootTask?.yaml,
       });
+      planningFailureByTask.delete(ctx.root_task_id);
       res.json({ ok: true, artifact, gate });
     } catch (err) {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      rememberPlanningFailure(
+        String(body["task_id"] ?? body["current_task_id"] ?? "").trim(),
+        "PLANNING_ARTIFACT_WRITE_FAILED",
+        "根据错误详情修复后，从同一 PM Runtime 会话重试；不要手工写规划文件。",
+      );
       sendError(res, 400, "PLANNING_ARTIFACT_WRITE_FAILED", String(err));
     }
   });
@@ -6541,7 +6617,11 @@ export function buildWebPanelApp(
         planning_label: product.classification.planning_label,
         classification_reason: product.classification.classification_reason,
         classification_override: product.classification.override_by === "ADMIN",
-        planning_status: product.planning_status,
+        planning_status: planningFailureByTask.has(ctx.root_task_id)
+          ? "failed"
+          : product.planning_status,
+        planning_failure:
+          planningFailureByTask.get(ctx.root_task_id) ?? null,
         planning_artifact_path: product.planning_artifact_path,
         planning_artifact_revision: product.planning_artifact_revision,
         product_brief: product.product_brief_ready ? "completed" : product.planning_status,
@@ -11354,10 +11434,13 @@ export function buildWebPanelApp(
     }
     const status = result.authority ? 403 : 400;
     if (result.code === "CHILD_TASKS_OPEN") {
+      const childIds = (result.child_tasks ?? [])
+        .map((child) => child.task_id)
+        .filter(Boolean)
+        .join(", ");
       res.status(400).json({
         ...result,
-        message:
-          "不能归档：仍有未收口子任务。请先让 PM 收口子任务，或由 ADMIN 执行「强制归档并终止子任务」。",
+        message: `不能归档：仍有未收口子任务${childIds ? `（${childIds}）` : ""}。请先处理这些任务，或由 ADMIN 执行「强制归档并终止子任务」。`,
         child_tasks: result.child_tasks ?? [],
       });
       return;

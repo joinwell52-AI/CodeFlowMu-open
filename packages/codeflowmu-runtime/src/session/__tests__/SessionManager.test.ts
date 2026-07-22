@@ -162,7 +162,12 @@ test("TS-4.2a: resolveMcpServers receives the minted Runtime session id", async 
       const sdk = new InMemorySdkAdapter();
       const registry = new AgentRegistry({ store: agentStore, sdk });
       let resolved:
-        | { agentId: string; layer: string; sessionId: string }
+        | {
+            agentId: string;
+            layer: string;
+            sessionId: string;
+            currentTaskId: string;
+          }
         | undefined;
       const manager = new SessionManager({
         registry,
@@ -185,6 +190,7 @@ test("TS-4.2a: resolveMcpServers receives the minted Runtime session id", async 
           agentId: "DEV-01",
           layer: "worker",
           sessionId: "session-pm-planning-001",
+          currentTaskId: "TASK-20260712-002",
         });
       } finally {
         await transcriptWriter.closeAll().catch(() => undefined);

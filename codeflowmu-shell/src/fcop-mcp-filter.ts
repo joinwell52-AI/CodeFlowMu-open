@@ -64,6 +64,9 @@ const allowedTools = new Set<string>(
 const hasFilter = allowedTools.size > 0;
 const runtimeAgentId = (process.env["CODEFLOWMU_AGENT_ID"] ?? "").trim();
 const runtimeSessionId = (process.env["CODEFLOWMU_SESSION_ID"] ?? "").trim();
+const runtimeCurrentTaskId = (
+  process.env["CODEFLOWMU_CURRENT_TASK_ID"] ?? ""
+).trim();
 const isPmRuntimeAgent = /^PM(?:[-.]|$)/i.test(runtimeAgentId);
 
 const pythonBin =
@@ -331,6 +334,7 @@ parentRl.on("line", (line) => {
           args,
           agentId: runtimeAgentId,
           sessionId: runtimeSessionId,
+          currentTaskId: runtimeCurrentTaskId,
         })
           .then((result) => {
             writeJsonRpcLine({

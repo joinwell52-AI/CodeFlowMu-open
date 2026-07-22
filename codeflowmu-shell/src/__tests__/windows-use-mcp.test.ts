@@ -48,8 +48,10 @@ test("Cursor capability bus mounts the Windows Use stdio server", async () => {
   await withHostFixture(async (root, host) => {
     const previousEnabled = process.env.CODEFLOW_WINDOWS_USE_ENABLED;
     const previousAllowed = process.env.CODEFLOW_WINDOWS_USE_ALLOW_APPS;
+    const previousHost = process.env.CODEFLOW_WINDOWS_USE_HOST;
     process.env.CODEFLOW_WINDOWS_USE_ENABLED = "1";
     process.env.CODEFLOW_WINDOWS_USE_ALLOW_APPS = "notepad.exe";
+    process.env.CODEFLOW_WINDOWS_USE_HOST = host;
     try {
       assert.equal(resolveWindowsUseHostPath(root), host);
       const config = buildWindowsUseMcpServer("python", root);
@@ -72,6 +74,8 @@ test("Cursor capability bus mounts the Windows Use stdio server", async () => {
       else process.env.CODEFLOW_WINDOWS_USE_ENABLED = previousEnabled;
       if (previousAllowed === undefined) delete process.env.CODEFLOW_WINDOWS_USE_ALLOW_APPS;
       else process.env.CODEFLOW_WINDOWS_USE_ALLOW_APPS = previousAllowed;
+      if (previousHost === undefined) delete process.env.CODEFLOW_WINDOWS_USE_HOST;
+      else process.env.CODEFLOW_WINDOWS_USE_HOST = previousHost;
     }
   });
 });
@@ -122,6 +126,7 @@ test("PM capability bus exposes Runtime governance tools and keeps them off work
       "leader",
       "PM-01",
       "session-pm-planning-001",
+      "TASK-20260712-001",
     );
     const pmEnv = (pm?.fcop as { env?: Record<string, string> })?.env ?? {};
     const pmTools = new Set((pmEnv.FCOP_ALLOWED_TOOLS ?? "").split(","));
@@ -129,6 +134,7 @@ test("PM capability bus exposes Runtime governance tools and keeps them off work
     assert(pmTools.has("pm.detect_thread_stall"));
     assert.equal(pmEnv.CODEFLOWMU_AGENT_ID, "PM-01");
     assert.equal(pmEnv.CODEFLOWMU_SESSION_ID, "session-pm-planning-001");
+    assert.equal(pmEnv.CODEFLOWMU_CURRENT_TASK_ID, "TASK-20260712-001");
     assert.equal(pmEnv.CODEFLOWMU_PANEL_URL, "http://127.0.0.1:3199");
 
     const dev = mcpServersForAgentLayer(

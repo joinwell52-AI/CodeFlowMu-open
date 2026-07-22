@@ -29,7 +29,7 @@ This is a CodeFlowMu development-team workflow above FCoP, not an FCoP core-prot
 
 CodeFlowMu Open Dev Team Edition 是 FCoP 协议治理下、通过 Cursor SDK 接口驱动的多 Agent 开发团队应用，面向本地安装、体验、二次开发和贡献。
 
-当前开源版本：`V1.1.24-open`
+当前开源版本：`V1.1.25-open`
 
 它不是母体私有仓库的完整镜像，也不是用来开发 CodeFlowMu 自身的目录。开发执行团队固定为 PM / DEV / OPS / QA；EVAL 作为独立观察者评估质量、风险与交付信号，不属于开发执行团队。
 
@@ -183,7 +183,7 @@ GitHub 仓库 About / topics 建议见 [docs/open/github-repo-about.md](docs/ope
 
 CodeFlowMu Open Dev Team Edition is an FCoP-governed multi-agent development team application driven through Cursor SDK interfaces. It is the public open-source edition for local installation, hands-on evaluation, development, and contribution.
 
-Current open edition version: `V1.1.24-open`
+Current open edition version: `V1.1.25-open`
 
 It is not a full mirror of the private mother repository, and it is not meant to develop CodeFlowMu itself. The execution team is fixed to PM / DEV / OPS / QA. EVAL is an independent observer for quality, risk, and delivery signals, not a member of the development execution chain.
 

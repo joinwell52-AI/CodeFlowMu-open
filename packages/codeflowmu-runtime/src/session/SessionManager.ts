@@ -136,6 +136,7 @@ export interface SessionManagerOptions {
     agentId: string;
     layer: AgentLayer;
     sessionId: string;
+    currentTaskId: string;
   }) => Record<string, unknown> | undefined;
   /**
    * Max SDK `tool_call` rounds per doorbell session (default 5).
@@ -335,6 +336,7 @@ export class SessionManager {
         agentId,
         layer: freshRecord.protocol.layer,
         sessionId,
+        currentTaskId: canonicalRootTaskId,
       });
     } catch (error) {
       await this._releaseLease(sessionId);
@@ -478,6 +480,7 @@ export class SessionManager {
       ...(typeof payload.context?.thread_key === "string"
         ? { runtime_thread_key: payload.context.thread_key }
         : {}),
+      runtime_root_task_id: canonicalRootTaskId,
     };
 
     // Step (e): attach TranscriptWriter + bridge events to onEvent fan-out

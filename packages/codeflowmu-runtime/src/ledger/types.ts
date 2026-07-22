@@ -30,6 +30,8 @@ export interface LedgerTaskRecord {
   parent_task_id?: string;
   related?: string[];
   state?: string;
+  lifecycle_projection?: string;
+  lifecycle_path?: string;
   /** Lifecycle / hot-path review projection (e.g. rejected after ADMIN reject). */
   review_status?: string;
   /** ADMIN reject / reopen only — not PM `review_note` from virtual auto-approve. */

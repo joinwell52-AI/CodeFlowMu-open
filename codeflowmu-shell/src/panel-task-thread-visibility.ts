@@ -44,6 +44,13 @@ export type ThreadRow = {
   report_ids?: string[];
 };
 
+export type MainTaskSelectionModel = {
+  id: string;
+  name: string;
+  root: TaskLike;
+  members: TaskLike[];
+};
+
 const LIFECYCLE_STAGE_RE =
   /[/\\]_lifecycle[/\\](inbox|active|review|done|archive)(?:[/\\]|$)/i;
 
@@ -120,6 +127,125 @@ const PM_TEAM_DISPATCH_RE = /-PM-to-(DEV|OPS|QA)/i;
 
 export function isPmTeamDispatchTask(filename: string): boolean {
   return PM_TEAM_DISPATCH_RE.test(filename || "");
+}
+
+/**
+ * 任务页专用的根任务模型。
+ *
+ * 与协作总线的 thread 模型不同，这里永远以 ADMIN→PM 根 task_id 为主键；
+ * thread_key 只在同名根任务唯一时兜底，不能把复用 thread_key 的历史主线合并。
+ */
+export function buildMainTaskSelectionModels(
+  allTasks: TaskLike[],
+  ledgerRows: ThreadRow[] = [],
+): MainTaskSelectionModel[] {
+  const tasks = (allTasks ?? []).filter((task) =>
+    String(task.filename ?? "").startsWith("TASK-"),
+  );
+  const byId = buildTaskByIdMap(tasks);
+  const roots = tasks.filter(
+    (task) =>
+      isAdminMainline(task.filename ?? "") && !taskStrongParentId(task),
+  );
+  const rootById = new Map(
+    roots
+      .map((root) => [taskIdFromFilename(root.filename ?? ""), root] as const)
+      .filter(([id]) => Boolean(id)),
+  );
+  const rootsByThread = new Map<string, string[]>();
+  for (const [rootId, root] of rootById) {
+    const key = bareThreadKey(String(root.thread_key ?? "").trim());
+    if (!key) continue;
+    rootsByThread.set(key, [...(rootsByThread.get(key) ?? []), rootId]);
+  }
+
+  const membersByRoot = new Map<string, TaskLike[]>();
+  for (const rootId of rootById.keys()) membersByRoot.set(rootId, []);
+
+  const ledgerRootsForTask = (taskId: string): string[] => {
+    const matches = new Set<string>();
+    for (const row of ledgerRows ?? []) {
+      const ids = (row.task_ids ?? []).map((id) =>
+        taskIdFromFilename(String(id)),
+      );
+      if (!ids.includes(taskId)) continue;
+      const rootId = taskIdFromFilename(String(row.root_task_id ?? ""));
+      if (rootById.has(rootId)) matches.add(rootId);
+    }
+    return [...matches];
+  };
+
+  for (const task of tasks) {
+    const taskId = taskIdFromFilename(task.filename ?? "");
+    if (!taskId) continue;
+
+    let rootId = rootById.has(taskId) ? taskId : "";
+
+    // 1. parent / recursive parent
+    if (!rootId && taskStrongParentId(task)) {
+      const parentRoot = resolveAdminRootIdForTask(task, byId);
+      if (rootById.has(parentRoot)) rootId = parentRoot;
+    }
+
+    // 2. ledger root_task_id / task_ids
+    if (!rootId) {
+      const ledgerRoots = ledgerRootsForTask(taskId);
+      if (ledgerRoots.length === 1) rootId = ledgerRoots[0]!;
+    }
+
+    // 3. references compatibility
+    if (!rootId) {
+      const referenceRoots = taskReferenceIds(task).filter((id) =>
+        rootById.has(id),
+      );
+      if (referenceRoots.length === 1) rootId = referenceRoots[0]!;
+    }
+
+    // 4. thread_key is a unique-only fallback
+    if (!rootId) {
+      const thread = bareThreadKey(String(task.thread_key ?? "").trim());
+      const candidates = rootsByThread.get(thread) ?? [];
+      if (thread && candidates.length === 1) rootId = candidates[0]!;
+    }
+
+    if (rootId) membersByRoot.get(rootId)?.push(task);
+  }
+
+  return [...rootById.entries()]
+    .map(([id, root]) => {
+      const members = membersByRoot.get(id) ?? [];
+      if (!members.some((task) => taskIdFromFilename(task.filename ?? "") === id)) {
+        members.unshift(root);
+      }
+      return {
+        id,
+        name: String(root.subject ?? root.filename ?? id),
+        root,
+        members,
+      };
+    })
+    .sort((a, b) => b.id.localeCompare(a.id));
+}
+
+export function collectPmTeamDispatchTasksForRoot(
+  allTasks: TaskLike[],
+  ledgerRows: ThreadRow[],
+  rootTaskId: string,
+  roleFilter?: string | null,
+): TaskLike[] {
+  const rootId = taskIdFromFilename(rootTaskId);
+  const model = buildMainTaskSelectionModels(allTasks, ledgerRows).find(
+    (item) => item.id === rootId,
+  );
+  if (!model) return [];
+  const role = String(roleFilter ?? "").trim().toUpperCase();
+  return model.members.filter((task) => {
+    if (!isPmTeamDispatchTask(task.filename ?? "")) return false;
+    if (!role || role === "ALL") return true;
+    return new RegExp(`-PM-to-${role}(?:\\.|-)`, "i").test(
+      task.filename ?? "",
+    );
+  });
 }
 
 /**

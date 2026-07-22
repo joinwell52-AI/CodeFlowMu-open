@@ -178,6 +178,7 @@ export function mcpServersForAgentLayer(
   layer: AgentLayer,
   agentId?: string,
   sessionId?: string,
+  currentTaskId?: string,
 ): CursorSdkAdapterOptions["mcpServers"] | undefined {
   if (!cfg.pythonBin || !cfg.projectRoot) return undefined;
   const profile = agentId ? profileForAgent(agentId, layer) : profileForLayer(layer);
@@ -188,6 +189,7 @@ export function mcpServersForAgentLayer(
       agentId ? toolsForAgent(agentId, layer) : toolsForProfile(profile),
       agentId,
       sessionId,
+      currentTaskId,
     ),
     buildWindowsUseMcpServer(cfg.pythonBin, cfg.projectRoot),
     buildBrowserUseMcpServer(cfg.projectRoot),
@@ -266,11 +268,15 @@ export function buildFcopMcpServer(
   allowedTools?: readonly string[],
   agentId?: string,
   sessionId?: string,
+  currentTaskId?: string,
 ): NonNullable<CursorSdkAdapterOptions["mcpServers"]> {
   const baseEnv: Record<string, string> = {
     FCOP_PROJECT_DIR: projectRoot,
     ...(agentId ? { CODEFLOWMU_AGENT_ID: agentId } : {}),
     ...(sessionId ? { CODEFLOWMU_SESSION_ID: sessionId } : {}),
+    ...(currentTaskId
+      ? { CODEFLOWMU_CURRENT_TASK_ID: currentTaskId }
+      : {}),
     ...(process.env["CODEFLOWMU_PANEL_URL"]
       ? { CODEFLOWMU_PANEL_URL: process.env["CODEFLOWMU_PANEL_URL"] }
       : {}),

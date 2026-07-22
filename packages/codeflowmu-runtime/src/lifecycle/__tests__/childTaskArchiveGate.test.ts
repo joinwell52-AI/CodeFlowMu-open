@@ -93,6 +93,87 @@ describe("childTaskArchiveGate mainline archive classification", () => {
     });
   });
 
+  it("physical done wins over stale review projection", async () => {
+    await withTempLifecycle(async ({ rootDir, lifecycleRoot }) => {
+      const mainId = "TASK-20260714-040-ADMIN-to-PM";
+      const childId = "TASK-20260716-002-PM-to-OPS";
+      await writeTaskAt(lifecycleRoot, "done", `${mainId}.md`, {
+        task_id: mainId,
+        thread_key: "reused-mainline",
+      });
+      await writeTaskAt(lifecycleRoot, "done", `${childId}.md`, {
+        task_id: childId,
+        parent: "TASK-20260714-040",
+        state: "done",
+        review_status: "approved",
+        lifecycle_projection: "review",
+        display_status: "waiting_pm_review",
+      });
+
+      const classified = await classifyRelatedChildTasksForMainlineArchive({
+        lifecycleRoot,
+        projectRoot: rootDir,
+        mainTaskId: mainId,
+        mainFilename: `${mainId}.md`,
+      });
+      assert.equal(classified.blockingOpen.length, 0);
+
+      const builder = new LedgerBuilder({ projectRoot: rootDir });
+      await builder.rebuild();
+      const ledgerChild = (await builder.listTasks(undefined, {
+        pendingOnly: false,
+      })).find((task) => task.task_id === "TASK-20260716-002");
+      assert.equal(ledgerChild?.state, "done");
+      assert.equal(ledgerChild?.lifecycle_projection, "done");
+      assert.equal(ledgerChild?.display_status, "done");
+      assert.equal(ledgerChild?.review_status, "approved");
+      assert.equal(ledgerChild?.lifecycle_path, "fcop/_lifecycle/done");
+    });
+  });
+
+  it("recursively blocks a grandchild and returns task id, bucket and reason", async () => {
+    await withTempLifecycle(async ({ rootDir, lifecycleRoot }) => {
+      const mainId = "TASK-20260714-040-ADMIN-to-PM";
+      const childId = "TASK-20260716-002-PM-to-OPS";
+      const grandchildId = "TASK-20260716-003-OPS-to-QA";
+      await writeTaskAt(lifecycleRoot, "done", `${mainId}.md`, {
+        task_id: mainId,
+      });
+      await writeTaskAt(lifecycleRoot, "done", `${childId}.md`, {
+        task_id: childId,
+        parent: "TASK-20260714-040",
+      });
+      await writeTaskAt(lifecycleRoot, "active", `${grandchildId}.md`, {
+        task_id: grandchildId,
+        parent: "TASK-20260716-002",
+      });
+
+      await assert.rejects(
+        () =>
+          assertMainlineArchiveChildrenReady({
+            lifecycleRoot,
+            projectRoot: rootDir,
+            mainTaskId: mainId,
+            mainFilename: `${mainId}.md`,
+          }),
+        (err: unknown) => {
+          assert.ok(err instanceof ChildTasksOpenError);
+          assert.deepEqual(err.children, [
+            {
+              task_id: "TASK-20260716-003",
+              filename: `${grandchildId}.md`,
+              bucket: "active",
+              display_status: undefined,
+              reason: "physical_bucket=active",
+            },
+          ]);
+          assert.match(err.message, /TASK-20260716-003/);
+          return true;
+        },
+      );
+    });
+  });
+
   it("classifies done child with review pass as settled without auto-archive", async () => {
     await withTempLifecycle(async ({ rootDir, lifecycleRoot }) => {
       const mainId = "TASK-20260610-220-ADMIN-to-PM";
