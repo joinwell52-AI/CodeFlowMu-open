@@ -542,6 +542,59 @@ test("TS-MODEL-8 (BUG-SDK-007 regression guard): defaultModel-only → Agent.res
   }
 });
 
+test("TS-MODEL-9: Auto defaults to Cursor Router Cost params on resume and send", async () => {
+  const { captured, restore } = patchAgentResumeForSeamTest();
+  try {
+    const adapter = new CursorSdkAdapter({
+      apiKey: "fake-key-not-validated-in-stub",
+      defaultModel: "auto-smart",
+    });
+    await assert.rejects(
+      () => adapter.send(baseSendSpec(), "stub-sdk-id-auto-cost-test"),
+      new RegExp(SEAM_TEST_HALT),
+    );
+
+    const expectedModel = {
+      id: "auto-smart",
+      params: [{ id: "optimize_for", value: "cost" }],
+    };
+    assert.deepEqual(
+      (captured.lastResumeOpts as { model?: unknown } | null)?.model,
+      expectedModel,
+    );
+    assert.deepEqual(
+      (captured.lastSendOpts as { model?: unknown } | null)?.model,
+      expectedModel,
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("TS-MODEL-10: legacy default alias normalizes to Auto Cost", async () => {
+  const { captured, restore } = patchAgentResumeForSeamTest();
+  try {
+    const adapter = new CursorSdkAdapter({
+      apiKey: "fake-key-not-validated-in-stub",
+      defaultModel: "default",
+    });
+    await assert.rejects(
+      () => adapter.send(baseSendSpec(), "stub-sdk-id-auto-cost-legacy-test"),
+      new RegExp(SEAM_TEST_HALT),
+    );
+
+    assert.deepEqual(
+      (captured.lastResumeOpts as { model?: unknown } | null)?.model,
+      {
+        id: "auto-smart",
+        params: [{ id: "optimize_for", value: "cost" }],
+      },
+    );
+  } finally {
+    restore();
+  }
+});
+
 test("local send materializes a lazy sdk_agent_id when resume reports agent_not_found", async () => {
   const realResume = (Agent as unknown as { resume: typeof Agent.resume }).resume;
   const realCreate = (Agent as unknown as { create: typeof Agent.create }).create;

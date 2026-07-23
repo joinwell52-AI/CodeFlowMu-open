@@ -5480,7 +5480,7 @@ export function buildWebPanelApp(
   });
 
   app.get("/api/v2/models", async (_req: Request, res: Response) => {
-    const fallback = ["default"];
+    const fallback = ["auto-smart"];
     try {
       const root = resolveAppConfigRoot();
       const envPath = join(root, ".env");
@@ -5509,7 +5509,7 @@ export function buildWebPanelApp(
 
       const { Cursor } = await import("@cursor/sdk");
       const listed = await Cursor.models.list({ apiKey });
-      const models = new Set<string>(["default"]);
+      const models = new Set<string>();
       for (const model of listed as Array<{ id?: unknown; aliases?: unknown }>) {
         const id = String(model?.id ?? "").trim();
         if (id) models.add(id);
@@ -5520,7 +5520,12 @@ export function buildWebPanelApp(
           }
         }
       }
-      res.json({ ok: true, source: "cursor", models: Array.from(models) });
+      res.json({
+        ok: true,
+        source: "cursor",
+        models: Array.from(models),
+        modelItems: listed,
+      });
     } catch (err: any) {
       console.warn(`[web-panel] Failed to list Cursor models:`, err.message || err);
       res.json({

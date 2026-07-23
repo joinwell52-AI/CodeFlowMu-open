@@ -3989,7 +3989,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
         <div style="display:flex;flex-direction:column;gap:6px">
           <label style="font-size:14px;color:var(--text3)" data-i18n="api.cursor.model">默认模型 (CURSOR_DEFAULT_MODEL)</label>
           <select id="cursor-default-model" style="background:#0b0f19;color:var(--text);border:1px solid rgba(255,255,255,0.12);padding:8px 12px;border-radius:6px;font-size:15px;outline:none">
-            <option value="default">default</option>
+            <option value="auto-smart">Auto Cost (auto-smart)</option>
           </select>
           <div id="cursor-model-source-hint" style="font-size:13px;color:var(--text3);line-height:1.4"></div>
         </div>
@@ -7605,7 +7605,7 @@ let _modelEditAgentId=null;
 const agentLastSeen=new Map(); // agentId → Date (last any sdk.* event)
 
 // 🔌 全局默认托底模型变量
-let cursorDefaultModel = 'default';
+let cursorDefaultModel = 'auto-smart';
 
 /** 获取 Agent 的真实模型，若没有配置或为 auto，则由默认模型托底 */
 function getAgentModel(agentId) {
@@ -10759,8 +10759,10 @@ async function loadAll(){
     await loadEditionConfig();
     const settings = await fetch('/api/v2/config/api-settings').then(r => r.json());
     if (settings.ok || settings.provider) {
-      activeProvider = 'cursor';
-      cursorDefaultModel = settings.cursorDefaultModel || 'default';
+      activeProvider = settings.provider || 'cursor';
+      googleDefaultModel = settings.googleDefaultModel || 'gemini-2.5-flash';
+      cursorDefaultModel = settings.cursorDefaultModel || 'auto-smart';
+      claudeDefaultSonnetModel = settings.anthropicDefaultSonnetModel || 'anthropic/claude-sonnet-4.5';
       promptOpenEditionCursorKeyIfNeeded(settings);
     }
   } catch (e) {}
@@ -22043,8 +22045,7 @@ const MODEL_PRESETS=[
 let activeProvider = 'cursor';
 
 let CURSOR_TC_MODELS = [
-  'auto',
-  'default',
+  'auto-smart',
   'composer-latest',
   'claude-3-5-sonnet',
   'claude-3-opus',
@@ -22076,7 +22077,7 @@ async function loadCursorModelsForUi(){
     if(data&&Array.isArray(data.models)){
       _cursorModelsSource=data.source||'cursor';
       window._cursorModelsLastError=data.error||'';
-      CURSOR_TC_MODELS=_uniqueModelList(['auto','default',...data.models]);
+      CURSOR_TC_MODELS=_uniqueModelList(data.models);
       return CURSOR_TC_MODELS;
     }
   }catch(e){
@@ -22090,16 +22091,19 @@ async function loadCursorModelsForUi(){
 
 function setModelSelectOptions(select, values, selected){
   if(!select)return;
-  const chosen=selected||select.value||'default';
+  const chosen=selected||select.value||'auto-smart';
   const opts=_uniqueModelList([chosen,...values]);
-  select.innerHTML=opts.map(m=>`<option value="${esc(m)}"${m===chosen?' selected':''}>${esc(m)}</option>`).join('');
+  select.innerHTML=opts.map(m=>{
+    const label=m==='auto-smart'?'Auto Cost (auto-smart)':m;
+    return `<option value="${esc(m)}"${m===chosen?' selected':''}>${esc(label)}</option>`;
+  }).join('');
   select.value=chosen;
 }
 
 function refreshCursorDefaultModelSelect(selected){
   const select=document.getElementById('cursor-default-model');
   const hint=document.getElementById('cursor-model-source-hint');
-  setModelSelectOptions(select,_uniqueModelList(['default',...CURSOR_TC_MODELS.filter(m=>m!=='auto')]),selected||'default');
+  setModelSelectOptions(select,CURSOR_TC_MODELS,selected||'auto-smart');
   updateCursorKeyVerificationState();
   if(hint){
     const live=_cursorModelsSource==='cursor';
@@ -22139,11 +22143,11 @@ function updateCursorKeyVerificationState(){
 }
 
 const TC_AGENTS=[
-  {id:'PM-01', role:'PM', defaultModel:'auto'},
-  {id:'DEV-01',role:'DEV',defaultModel:'auto'},
-  {id:'OPS-01',role:'OPS',defaultModel:'auto'},
-  {id:'QA-01', role:'QA', defaultModel:'auto'},
-  {id:'EVAL-01', role:'EVAL', defaultModel:'auto'},
+  {id:'PM-01', role:'PM', defaultModel:'auto-smart'},
+  {id:'DEV-01',role:'DEV',defaultModel:'auto-smart'},
+  {id:'OPS-01',role:'OPS',defaultModel:'auto-smart'},
+  {id:'QA-01', role:'QA', defaultModel:'auto-smart'},
+  {id:'EVAL-01', role:'EVAL', defaultModel:'auto-smart'},
 ];
 
 const TC_SKILLS_DEFS=[
@@ -25779,7 +25783,7 @@ async function renderSettingsPage(){
     if (settings.ok) {
       activeProvider = isOpenDevTeamEdition() ? 'cursor' : settings.provider;
       googleDefaultModel = settings.googleDefaultModel || 'gemini-2.5-flash';
-      cursorDefaultModel = settings.cursorDefaultModel || 'default';
+      cursorDefaultModel = settings.cursorDefaultModel || 'auto-smart';
       claudeDefaultSonnetModel = settings.anthropicDefaultSonnetModel || 'anthropic/claude-sonnet-4.5';
       await loadCursorModelsForUi();
 
@@ -25790,7 +25794,7 @@ async function renderSettingsPage(){
       }
       const cursorKeyInp = document.getElementById('cursor-api-key');
       if (cursorKeyInp) cursorKeyInp.value = settings.cursorApiKey || '';
-      refreshCursorDefaultModelSelect(settings.cursorDefaultModel || 'default');
+      refreshCursorDefaultModelSelect(settings.cursorDefaultModel || 'auto-smart');
       
       if (isOpenDevTeamEdition()) {
         window._openCursorKeyMissing = !openEditionHasCursorKey(settings);

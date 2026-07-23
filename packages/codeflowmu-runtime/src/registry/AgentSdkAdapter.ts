@@ -122,7 +122,11 @@
  */
 
 import { Agent, Cursor, CursorAgentError } from "@cursor/sdk";
-import type { ListAgentsOptions, McpServerConfig } from "@cursor/sdk";
+import type {
+  ListAgentsOptions,
+  McpServerConfig,
+  ModelSelection,
+} from "@cursor/sdk";
 
 import type { AgentLayer, AgentRuntime } from "@codeflowmu/protocol";
 
@@ -136,6 +140,16 @@ import type { UiLang } from "../panel/PanelUiLang.ts";
 
 const CURSOR_TOOL_SCHEMA_TOKEN_ESTIMATE = 430;
 const CURSOR_FALLBACK_TOOL_COUNT = 28;
+const CURSOR_AUTO_MODEL_ID = "auto-smart";
+const CURSOR_AUTO_COST_PARAMS = [
+  { id: "optimize_for", value: "cost" },
+] satisfies NonNullable<ModelSelection["params"]>;
+
+function cursorModelSelection(modelId: string): ModelSelection {
+  return modelId === CURSOR_AUTO_MODEL_ID
+    ? { id: modelId, params: CURSOR_AUTO_COST_PARAMS.map((param) => ({ ...param })) }
+    : { id: modelId };
+}
 
 function isAgentNotFoundLike(error: unknown): boolean {
   const code =
@@ -534,17 +548,18 @@ export class CursorSdkAdapter implements AgentSdkAdapter {
     // sends without an explicit model fail with "Local SDK agents
     // require an explicit model"; this layer feeds the SDK either the
     // per-task `spec.modelId` hint or the adapter-level defaultModel.
-    let modelId = spec.modelId ?? this._opts.defaultModel;
+    let modelId = spec.modelId ?? this._opts.defaultModel ?? CURSOR_AUTO_MODEL_ID;
     if (modelId) {
       modelId = await this._normalizeModelId(modelId, apiKey);
     }
+    const modelSelection = modelId ? cursorModelSelection(modelId) : undefined;
 
     const effectiveCwd = spec.workspace ?? this._opts.defaultCwd ?? process.cwd();
     let agent;
     try {
       agent = await Agent.resume(sdkAgentId, {
         apiKey,
-        ...(modelId ? { model: { id: modelId } } : {}),
+        ...(modelSelection ? { model: modelSelection } : {}),
         local: {
           cwd: effectiveCwd,
           ...this._cursorSandboxOptions(),
@@ -642,7 +657,7 @@ export class CursorSdkAdapter implements AgentSdkAdapter {
     } catch (err) {
       // Fallback in case of error or key-level ACL issues
       return [
-        "default",
+        CURSOR_AUTO_MODEL_ID,
         "composer-2.5",
         "composer-2.5-fast",
         "claude-3-5-sonnet",
@@ -658,7 +673,14 @@ export class CursorSdkAdapter implements AgentSdkAdapter {
   }
 
   private async _normalizeModelId(modelId: string, apiKey: string): Promise<string> {
-    if (!modelId || modelId === "auto" || modelId === "default") return modelId;
+    if (!modelId) return modelId;
+    if (
+      modelId === CURSOR_AUTO_MODEL_ID ||
+      modelId === "auto" ||
+      modelId === "default"
+    ) {
+      return CURSOR_AUTO_MODEL_ID;
+    }
 
     const clean = (s: string) => s.toLowerCase()
       .trim()
@@ -733,12 +755,12 @@ export class CursorSdkAdapter implements AgentSdkAdapter {
    * without touching the send call site.
    */
   private _buildSendOptions(spec?: AgentSendSpec, modelId?: string): {
-    model?: { id: string };
+    model?: ModelSelection;
     local?: { force: true };
     mcpServers?: Record<string, McpServerConfig>;
   } {
     const opts: {
-      model?: { id: string };
+      model?: ModelSelection;
       local?: { force: true };
       mcpServers?: Record<string, McpServerConfig>;
     } = {};
@@ -747,7 +769,7 @@ export class CursorSdkAdapter implements AgentSdkAdapter {
     // recovered above has not gone through resume({ model }), and the Cursor
     // SDK requires an explicit model on its first send.
     if (modelId) {
-      opts.model = { id: modelId };
+      opts.model = cursorModelSelection(modelId);
     }
     if (this._opts.listScope !== "cloud") {
       opts.local = { force: true };

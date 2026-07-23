@@ -133,6 +133,10 @@ export function makeRealCursorSdkAdapter(
 ): AgentSdkAdapter | null {
   const apiKey = cfg.apiKey ?? process.env["CURSOR_API_KEY"];
   if (!apiKey) return null;
+  const defaultModel =
+    cfg.defaultModel?.trim() ||
+    process.env["CURSOR_DEFAULT_MODEL"]?.trim() ||
+    "auto-smart";
 
   const mcpServers: CursorSdkAdapterOptions["mcpServers"] | undefined =
     cfg.pythonBin && cfg.projectRoot
@@ -150,7 +154,7 @@ export function makeRealCursorSdkAdapter(
     // Open keeps full project capability. Tool-code immutability is enforced
     // by the Open install-integrity shell instead of an SDK permission sandbox.
     sandboxEnabled: false,
-    ...(cfg.defaultModel ? { defaultModel: cfg.defaultModel } : {}),
+    defaultModel,
     ...(mcpServers ? { mcpServers } : {}),
   });
 }
