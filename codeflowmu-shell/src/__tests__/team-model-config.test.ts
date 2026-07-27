@@ -18,6 +18,7 @@ import {
   resolveEffectiveModel,
   type CursorModelCatalog,
 } from "../team-model-config.ts";
+import { startOpenInstallIntegrityGuard } from "../open-install-integrity.ts";
 
 function writeTeam(root: string, model = "auto"): void {
   writeFileSync(
@@ -192,16 +193,21 @@ test("TM-04: GET/PATCH/GET round trip returns persisted and next-session values"
   const businessRoot = mkdtempSync(join(tmpdir(), "cf-business-"));
   const runtime = runtimeMock();
   writeTeam(installRoot);
+  const integrityGuard = await startOpenInstallIntegrityGuard(installRoot, {
+    auditIntervalMs: 60_000,
+  });
   const { app, cleanup } = buildTeamApp({ installRoot, businessRoot, runtime });
   try {
     assert.equal((await request(app).get("/api/v2/team")).body.members[0].model.id, "auto");
     assert.equal((await request(app).patch("/api/v2/team/DEV-01/model").send({
       model_id: "claude-sonnet-4-6",
     })).status, 200);
+    await integrityGuard.auditNow();
     const after = await request(app).get("/api/v2/team");
     assert.equal(after.body.members[0].model_status.persisted_model_id, "claude-sonnet-4-6");
     assert.equal(after.body.members[0].model_status.next_session_model_id, "claude-sonnet-4-6");
   } finally {
+    integrityGuard.stop();
     cleanup();
   }
 });

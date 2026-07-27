@@ -2511,6 +2511,7 @@ function wpGitCommandErrorMessage(error: unknown): string {
 function wpIsMotherRuntimeLedgerPath(file: string): boolean {
   const value = file.replace(/\\/g, "/");
   return (
+    value === "codeflowmu.team.json" ||
     value === "fcop" ||
     value === "fcop/" ||
     value.startsWith("fcop/ledger/") ||

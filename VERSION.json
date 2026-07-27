@@ -3,16 +3,16 @@
   "productName": "CodeFlowMu Open Dev Team Edition",
   "positioning": "A multi-agent development team application governed by the FCoP protocol and driven through Cursor SDK interfaces.",
   "edition": "open-dev-team",
-  "version": "V1.1.28-open",
-  "npmVersion": "1.1.28-open",
+  "version": "V1.1.29-open",
+  "npmVersion": "1.1.29-open",
   "releaseChannel": "open",
   "status": "public-open",
   "sourceRepository": "joinwell52-AI/codeflowmu",
   "targetRepository": "joinwell52-AI/CodeFlowMu-open",
-  "builtAt": "2026-07-27T06:29:12.635Z",
-  "sourceGitCommit": "b5dc059deacb66548f79990ad37af7bdf8700e79",
+  "builtAt": "2026-07-27T06:42:34.328Z",
+  "sourceGitCommit": "c6d1233ef6ef58cd7cc17b29d1c72d88987f4ff2",
   "sourceDirty": false,
-  "motherVersion": "V1.1.28",
+  "motherVersion": "V1.1.29",
   "features": [
     {
       "id": "fcop-development-team",
@@ -158,8 +158,10 @@
   "releaseApproval": {
     "policy": "deny_unregistered_mother_changes",
     "approvedBy": "ADMIN",
-    "taskId": "TASK-20260727-003",
-    "approvedFeatureIds": [],
+    "taskId": "TASK-20260727-005",
+    "approvedFeatureIds": [
+      "team-model-runtime-persistence"
+    ],
     "changeGroups": [
       {
         "id": "project-root-hot-switch",
@@ -387,6 +389,8 @@
           "codeflowmu-shell/src/main.ts",
           "codeflowmu-shell/src/web-panel.ts",
           "codeflowmu-shell/src/analytics-ledger.ts",
+          "codeflowmu-shell/src/open-install-integrity.ts",
+          "codeflowmu-shell/src/__tests__/open-install-integrity.test.ts",
           "codeflowmu-shell/src/__tests__/team-model-config.test.ts",
           "codeflowmu-desktop/panel/index.html",
           "packages/codeflowmu-runtime/src/registry/AgentRegistry.ts",

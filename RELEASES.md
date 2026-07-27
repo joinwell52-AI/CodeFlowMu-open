@@ -1,11 +1,11 @@
 # CodeFlowMu Open Dev Team Edition Releases
 
-## V1.1.28-open (public-open)
+## V1.1.29-open (public-open)
 
 - Edition: open-dev-team
 - Channel: open
-- Built at: 2026-07-27T06:29:12.635Z
-- Source commit: b5dc059deacb66548f79990ad37af7bdf8700e79
+- Built at: 2026-07-27T06:42:34.328Z
+- Source commit: c6d1233ef6ef58cd7cc17b29d1c72d88987f4ff2
 - Source: joinwell52-AI/codeflowmu
 - Public repository: joinwell52-AI/CodeFlowMu-open
 - Update strategy: full replacement of application files and install-level product configuration; preserve Git history, dependencies, virtualenv, projects, legacy workspace projects, and external project roots.

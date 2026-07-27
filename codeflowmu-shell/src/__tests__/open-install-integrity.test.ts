@@ -14,6 +14,7 @@ test("Open integrity shell restores tool code but leaves projects and legacy wor
   const injectedFile = join(root, "packages", "runtime", "injected.ts");
   const runtimeLedgerFile = join(root, "fcop", "ledger", "views", "PM.todo.md");
   const adoptedFile = join(root, "fcop", "adopted", "policy.md");
+  const teamConfigFile = join(root, "codeflowmu.team.json");
   await mkdir(join(root, "packages", "runtime"), { recursive: true });
   await mkdir(join(root, "projects", "中文 Project"), { recursive: true });
   await mkdir(join(root, "workspace", "legacy demo"), { recursive: true });
@@ -22,6 +23,7 @@ test("Open integrity shell restores tool code but leaves projects and legacy wor
   await writeFile(projectFile, "before", "utf8");
   await writeFile(legacyProjectFile, "legacy before", "utf8");
   await writeFile(adoptedFile, "protected policy\n", "utf8");
+  await writeFile(teamConfigFile, '{"members":[{"agent_id":"DEV-01","model":{"id":"auto"}}]}\n', "utf8");
 
   const observed: Array<{ action: string }> = [];
   const guard = await startOpenInstallIntegrityGuard(root, {
@@ -36,6 +38,11 @@ test("Open integrity shell restores tool code but leaves projects and legacy wor
     await mkdir(join(root, "fcop", "ledger", "views"), { recursive: true });
     await writeFile(runtimeLedgerFile, "runtime view\n", "utf8");
     await writeFile(adoptedFile, "tampered policy\n", "utf8");
+    await writeFile(
+      teamConfigFile,
+      '{"members":[{"agent_id":"DEV-01","model":{"id":"claude-sonnet-5"}}]}\n',
+      "utf8",
+    );
     await guard.auditNow();
 
     assert.equal(await readFile(toolFile, "utf8"), "export const safe = true;\n");
@@ -44,6 +51,10 @@ test("Open integrity shell restores tool code but leaves projects and legacy wor
     assert.equal(await readFile(legacyProjectFile, "utf8"), "legacy after");
     assert.equal(await readFile(runtimeLedgerFile, "utf8"), "runtime view\n");
     assert.equal(await readFile(adoptedFile, "utf8"), "protected policy\n");
+    assert.equal(
+      await readFile(teamConfigFile, "utf8"),
+      '{"members":[{"agent_id":"DEV-01","model":{"id":"claude-sonnet-5"}}]}\n',
+    );
     assert.ok(observed.some((event) => event.action === "restored"));
     assert.ok(observed.some((event) => event.action === "removed_untrusted"));
   } finally {

@@ -14,7 +14,11 @@ const PROTECTED_DIRS = [
   "skills",
   "templates",
 ] as const;
-const PROTECTED_ROOT_FILE = /^(?:AGENTS\.md|CLAUDE\.md|CODE_OF_CONDUCT\.md|CONTRIBUTING\.md|INSTALL\.md|LICENSE|OPEN-BOUNDARY\.md|README(?:\.zh)?\.md|RELEASES\.md|RELEASE_MANIFEST\.json|SECURITY\.md|SHA256SUMS|START-CODEFLOWMU-OPEN\.bat|UPDATE\.md|VERSION(?:_HISTORY)?\.json|codeflowmu\.team\.json|package(?:-lock)?\.json)$/i;
+// codeflowmu.team.json is intentionally excluded: it is installation-scoped
+// mutable configuration (including per-agent model selection), not executable
+// release code. Protecting it would silently roll successful PATCH writes back
+// to the startup baseline.
+const PROTECTED_ROOT_FILE = /^(?:AGENTS\.md|CLAUDE\.md|CODE_OF_CONDUCT\.md|CONTRIBUTING\.md|INSTALL\.md|LICENSE|OPEN-BOUNDARY\.md|README(?:\.zh)?\.md|RELEASES\.md|RELEASE_MANIFEST\.json|SECURITY\.md|SHA256SUMS|START-CODEFLOWMU-OPEN\.bat|UPDATE\.md|VERSION(?:_HISTORY)?\.json|package(?:-lock)?\.json)$/i;
 const PROTECTED_NEW_FILE = /\.(?:bat|cjs|css|html|js|json|md|mjs|py|sh|ts|tsx|yaml|yml)$/i;
 const SKIP_DIR_NAMES = new Set([".git", ".venv", "node_modules", "venv"]);
 
