@@ -29,7 +29,10 @@
       "layer": "leader",
       "skills": [
         "fcop"
-      ]
+      ],
+      "model": {
+        "id": "auto"
+      }
     },
     {
       "agent_id": "DEV-01",
@@ -39,7 +42,10 @@
       "skills": [
         "fcop",
         "git"
-      ]
+      ],
+      "model": {
+        "id": "auto"
+      }
     },
     {
       "agent_id": "OPS-01",
@@ -48,7 +54,10 @@
       "layer": "worker",
       "skills": [
         "fcop"
-      ]
+      ],
+      "model": {
+        "id": "auto"
+      }
     },
     {
       "agent_id": "QA-01",
@@ -57,7 +66,10 @@
       "layer": "worker",
       "skills": [
         "fcop"
-      ]
+      ],
+      "model": {
+        "id": "auto"
+      }
     },
     {
       "agent_id": "EVAL-01",
@@ -66,7 +78,10 @@
       "layer": "observer",
       "skills": [
         "fcop"
-      ]
+      ],
+      "model": {
+        "id": "auto"
+      }
     }
   ]
 }

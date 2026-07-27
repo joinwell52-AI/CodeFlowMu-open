@@ -13,28 +13,18 @@
  * single-EXE double-click.
  */
 
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { Runtime } from "@codeflowmu/runtime";
+import {
+  readCursorDefaultModel,
+  readTeamConfig,
+  resolveEffectiveModel,
+  type TeamConfig,
+} from "./team-model-config.ts";
 
 // ── Team config loader ────────────────────────────────────────────────────
-
-interface TeamMemberConfig {
-  agent_id: string;
-  role: string;
-  display?: string;
-  layer: "leader" | "worker" | "governance" | "admin";
-  skills: string[];
-  model?: { id: string; params?: { id: string; value: string | number | boolean }[] };
-}
-
-interface TeamConfig {
-  team_name?: string;
-  /** Port for the web panel. Default 18766. Each project should use a unique port. */
-  panel_port?: number;
-  members: TeamMemberConfig[];
-}
 
 /** Read panel_port + team_name from codeflowmu.team.json without full bootstrap. */
 export async function readTeamMeta(projectRoot: string): Promise<{ panelPort: number; teamName?: string } | null> {
@@ -51,10 +41,8 @@ export async function readTeamMeta(projectRoot: string): Promise<{ panelPort: nu
  * Returns null if the file does not exist (fall back to DEFAULT_AGENT_KIT).
  */
 async function loadTeamConfig(projectRoot: string): Promise<TeamConfig | null> {
-  const configPath = join(projectRoot, "codeflowmu.team.json");
   try {
-    const raw = await readFile(configPath, "utf-8");
-    return JSON.parse(raw) as TeamConfig;
+    return readTeamConfig(projectRoot);
   } catch {
     return null;
   }
@@ -229,15 +217,10 @@ export async function registerDefaultAgentKitIfEmpty(
   };
 }
 
-function isOpaqueModelId(modelId: string | undefined): boolean {
-  const t = modelId?.trim();
-  return !t || t === "default" || t === "auto";
-}
-
 /**
- * When agents.json was created under Cursor routing, model ids may still be
- * `default`. Sync explicit `gemini-*` ids from codeflowmu.team.json without
- * overwriting agents that already have a concrete model.
+ * Synchronize every persisted per-agent team model into agents.json.
+ * The configured id remains under protocol.model.id while an `auto` selection
+ * is resolved separately for the next new session.
  */
 export async function syncTeamModelsFromConfig(
   opts: BootstrapKitOptions,
@@ -249,17 +232,25 @@ export async function syncTeamModelsFromConfig(
   const teamConfig = await loadTeamConfig(configRoot);
   if (!teamConfig) return { updated: 0 };
 
+  const cursorDefaultModel = readCursorDefaultModel(configRoot);
   let updated = 0;
   for (const member of teamConfig.members) {
     const teamModel = member.model?.id?.trim();
-    if (!teamModel || !teamModel.startsWith("gemini-")) continue;
+    if (!teamModel) continue;
 
     try {
       const rec = await runtime.registry.get(member.agent_id);
       if (!rec) continue;
-      const current = rec.protocol.model?.id?.trim();
-      if (!isOpaqueModelId(current)) continue;
-      await runtime.registry.updateModel(member.agent_id, teamModel);
+      const resolved = resolveEffectiveModel(teamModel, cursorDefaultModel);
+      const configuredMatches = rec.protocol.model?.id?.trim() === teamModel;
+      const effectiveMatches =
+        rec.runtime_effective_model_id?.trim() === resolved.effective_model_id;
+      if (configuredMatches && effectiveMatches) continue;
+      await runtime.registry.updateModel(
+        member.agent_id,
+        teamModel,
+        resolved.effective_model_id,
+      );
       updated++;
     } catch {
       // skip missing or invalid agents

@@ -427,7 +427,11 @@ export class AgentRegistry {
    *
    * @throws `AgentNotFoundError` if `agentId` is not registered.
    */
-  async updateModel(agentId: string, modelId: string): Promise<void> {
+  async updateModel(
+    agentId: string,
+    modelId: string,
+    effectiveModelId: string = modelId,
+  ): Promise<void> {
     const record = await this._loadOrThrow(agentId);
     const now = new Date().toISOString();
     const updated: AgentRecord = {
@@ -438,6 +442,8 @@ export class AgentRegistry {
         last_active_at: now,
       },
       runtime_last_reconciled_at: now,
+      runtime_effective_model_id: effectiveModelId,
+      runtime_model_applies_from: "next_session",
     };
     await this._store.upsert(updated);
   }

@@ -59,6 +59,18 @@ import {
 } from "./project-registry.ts";
 import { formatDevelopmentProjectContextBlock } from "./project-context-prompt.ts";
 import {
+  listCursorModels,
+  readCursorDefaultModel,
+  readTeamConfig,
+  resolveEffectiveModel,
+  resolveTeamConfigRoot,
+  teamConfigPath,
+  validateCursorModelId,
+  writeTeamConfigAtomic,
+  type CursorModelCatalog,
+  type TeamConfigRootType,
+} from "./team-model-config.ts";
+import {
   executeSingleWorkspaceMigration,
   listWorkspaceSlugs,
   planSingleWorkspaceMigration,
@@ -982,12 +994,13 @@ const ALLOWED_PANEL_ORIGIN_RE =
 
 /** Error response shape for all /api/v2/ endpoints. */
 interface ApiError {
+  ok: false;
   error: string;
   code: string;
 }
 
 function sendError(res: Response, status: number, code: string, msg: string) {
-  const body: ApiError = { error: msg, code };
+  const body: ApiError = { ok: false, error: msg, code };
   res.status(status).json(body);
 }
 
@@ -3786,6 +3799,11 @@ export function buildWebPanelApp(
     adminTasksDir?: string;
     /** Project root directory (parent of docs/, fcop/, etc.). Auto-derived if omitted. */
     projectRoot?: string;
+    /** Install/team root that owns codeflowmu.team.json; never follows active projects. */
+    teamConfigRoot?: string;
+    teamConfigRootType?: TeamConfigRootType;
+    /** Test seam for Cursor model availability. */
+    teamModelCatalog?: () => Promise<CursorModelCatalog>;
     /** Root dir for fcop reports (fcop/reports/). */
     fcopReportsDir?: string;
     /** Root dir for fcop reviews (fcop/reviews/). */
@@ -3930,6 +3948,20 @@ export function buildWebPanelApp(
 
   function resolveAppConfigRoot(): string {
     return openEditionProtectedHostRoot() ?? resolveProjectRoot();
+  }
+
+  let frozenTeamConfigScope: ReturnType<typeof resolveTeamConfigRoot> | null = null;
+  function resolveTeamConfigScope(): ReturnType<typeof resolveTeamConfigRoot> {
+    if (frozenTeamConfigScope) return frozenTeamConfigScope;
+    frozenTeamConfigScope = resolveTeamConfigRoot({
+      explicitRoot: opts.teamConfigRoot,
+      explicitType: opts.teamConfigRootType,
+      openEditionHostRoot: openEditionProtectedHostRoot(),
+      codeflowmuHostRoot: process.env["CODEFLOWMU_HOST_ROOT"],
+      bootstrapRoot: resolveBootstrapProjectRoot(),
+      fallbackRoot: opts.projectRoot,
+    });
+    return frozenTeamConfigScope;
   }
 
   /** Task write + dedup must share the same project root and inbox after project store sync. */
@@ -5480,61 +5512,14 @@ export function buildWebPanelApp(
   });
 
   app.get("/api/v2/models", async (_req: Request, res: Response) => {
-    const fallback = ["auto-smart"];
-    try {
-      const root = resolveAppConfigRoot();
-      const envPath = join(root, ".env");
-      let apiKey = process.env["CURSOR_API_KEY"] || "";
-      if (existsSync(envPath)) {
-        const content = readFileSync(envPath, "utf-8");
-        for (const rawLine of content.split(/\r?\n/)) {
-          const line = rawLine.trim();
-          if (!line || line.startsWith("#")) continue;
-          const eq = line.indexOf("=");
-          if (eq < 1) continue;
-          const key = line.slice(0, eq).trim();
-          if (key !== "CURSOR_API_KEY") continue;
-          let value = line.slice(eq + 1).trim();
-          if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-            value = value.slice(1, -1);
-          }
-          apiKey = value;
-        }
-      }
-
-      if (!apiKey) {
-        res.json({ ok: true, source: "fallback-no-key", models: fallback });
-        return;
-      }
-
-      const { Cursor } = await import("@cursor/sdk");
-      const listed = await Cursor.models.list({ apiKey });
-      const models = new Set<string>();
-      for (const model of listed as Array<{ id?: unknown; aliases?: unknown }>) {
-        const id = String(model?.id ?? "").trim();
-        if (id) models.add(id);
-        if (Array.isArray(model?.aliases)) {
-          for (const alias of model.aliases) {
-            const value = String(alias ?? "").trim();
-            if (value) models.add(value);
-          }
-        }
-      }
-      res.json({
-        ok: true,
-        source: "cursor",
-        models: Array.from(models),
-        modelItems: listed,
-      });
-    } catch (err: any) {
-      console.warn(`[web-panel] Failed to list Cursor models:`, err.message || err);
-      res.json({
-        ok: false,
-        source: "fallback-error",
-        error: err.message || String(err),
-        models: fallback,
-      });
-    }
+    const scope = resolveTeamConfigScope();
+    const catalog = opts.teamModelCatalog
+      ? await opts.teamModelCatalog()
+      : await listCursorModels(scope.root);
+    res.status(catalog.ok || catalog.source === "fallback-no-key" ? 200 : 503).json({
+      ...catalog,
+      config_path_type: scope.type,
+    });
   });
 
   /**
@@ -7657,17 +7642,62 @@ export function buildWebPanelApp(
   });
 
   /**
-   * GET /api/v2/team — read codeflowmu.team.json from project root.
+   * GET /api/v2/team — read codeflowmu.team.json from the immutable team root.
    */
   app.get("/api/v2/team", async (_req: Request, res: Response) => {
     try {
-      const { readFileSync } = await import("node:fs");
-      const projectRoot = resolveProjectRoot();
-      const teamPath = join(projectRoot, "codeflowmu.team.json");
-      if (!existsSync(teamPath)) { res.json({}); return; }
-      res.json(JSON.parse(readFileSync(teamPath, "utf-8")));
-    } catch (err) {
-      sendError(res, 500, "TEAM_READ_FAILED", String(err));
+      const scope = resolveTeamConfigScope();
+      const team = readTeamConfig(scope.root);
+      const [records, activeSessions] = await Promise.all([
+        runtime.registry.list(),
+        runtime.sessionManager.listActive(),
+      ]);
+      const recordsById = new Map(
+        records.map((record) => [record.protocol.agent_id, record]),
+      );
+      const activeByAgent = new Map(
+        activeSessions.map((session) => [session.protocol.agent_id, session]),
+      );
+      const cursorDefaultModel = readCursorDefaultModel(scope.root);
+      const members = team.members.map((member) => {
+        const persisted = member.model?.id?.trim() || "";
+        const resolved = persisted
+          ? resolveEffectiveModel(persisted, cursorDefaultModel)
+          : null;
+        const record = recordsById.get(member.agent_id);
+        const active = activeByAgent.get(member.agent_id);
+        const nextSessionModel =
+          record?.runtime_effective_model_id?.trim() ||
+          resolved?.effective_model_id ||
+          "";
+        const currentSessionModel =
+          active?.runtime_effective_model_id?.trim() || null;
+        return {
+          ...member,
+          model_status: {
+            persisted_model_id: persisted || null,
+            next_session_model_id: nextSessionModel || null,
+            current_session_model_id: currentSessionModel,
+            applies_from: "next_session",
+            auto_resolution: resolved?.source ?? null,
+          },
+        };
+      });
+      res.json({
+        ...team,
+        ok: true,
+        members,
+        config_source: {
+          type: scope.type,
+          path: teamConfigPath(scope.root),
+        },
+      });
+    } catch (err: any) {
+      if (err?.code === "TEAM_NOT_FOUND") {
+        sendError(res, 404, "TEAM_NOT_FOUND", "codeflowmu.team.json not found in team config root");
+        return;
+      }
+      sendError(res, 500, "TEAM_READ_FAILED", err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -7735,36 +7765,102 @@ export function buildWebPanelApp(
    * Body: { model_id: string }
    */
   app.patch("/api/v2/team/:agentId/model", async (req: Request, res: Response) => {
+    const scope = resolveTeamConfigScope();
+    let previousTeam: ReturnType<typeof readTeamConfig> | null = null;
+    let teamWritten = false;
     try {
-      const { readFileSync, writeFileSync } = await import("node:fs");
-      const projectRoot = resolveProjectRoot();
-      const teamPath = join(projectRoot, "codeflowmu.team.json");
-      if (!existsSync(teamPath)) { sendError(res, 404, "TEAM_NOT_FOUND", "codeflowmu.team.json not found"); return; }
       const agentId = req.params["agentId"];
       if (typeof agentId !== "string") { sendError(res, 400, "MISSING_AGENT_ID", "agentId is required"); return; }
       const { model_id } = req.body as { model_id?: string };
-      if (!model_id) { sendError(res, 400, "MISSING_MODEL_ID", "model_id is required"); return; }
-      const team = JSON.parse(readFileSync(teamPath, "utf-8"));
-      const member = (team.members as { agent_id: string; model?: { id: string } }[])
-        .find((m) => m.agent_id === agentId);
-      if (!member) { sendError(res, 404, "AGENT_NOT_FOUND", `Agent ${agentId} not in team config`); return; }
-      member.model = { id: model_id };
-      writeFileSync(teamPath, JSON.stringify(team, null, 2), "utf-8");
-      await runtime.registry.updateModel(agentId, model_id);
-      try {
-        const rec = await runtime.registry.get(agentId);
-        analyticsLedger?.noteAgentRecord(
-          agentId,
-          rec?.protocol.role ?? "unknown",
-          model_id,
-        );
-      } catch {
-        analyticsLedger?.noteAgentRecord(agentId, "unknown", model_id);
+      if (typeof model_id !== "string" || !model_id.trim()) {
+        sendError(res, 400, "MISSING_MODEL_ID", "model_id is required");
+        return;
       }
-      sseEmit("codeflowmu.team_updated", { agent_id: agentId, model_id });
-      res.json({ ok: true, agent_id: agentId, model_id });
-    } catch (err) {
-      sendError(res, 500, "TEAM_UPDATE_FAILED", String(err));
+      const normalizedModelId = model_id.trim();
+      const catalog = opts.teamModelCatalog
+        ? await opts.teamModelCatalog()
+        : await listCursorModels(scope.root);
+      const validation = validateCursorModelId(normalizedModelId, catalog);
+      if (!validation.ok) {
+        res.status(validation.code === "MODEL_NOT_AVAILABLE" ? 422 : 503).json({
+          ok: false,
+          code: validation.code,
+          error: validation.message,
+          available_models: catalog.models,
+        });
+        return;
+      }
+      previousTeam = readTeamConfig(scope.root);
+      const team = structuredClone(previousTeam);
+      const member = team.members.find((m) => m.agent_id === agentId);
+      if (!member) { sendError(res, 404, "AGENT_NOT_FOUND", `Agent ${agentId} not in team config`); return; }
+      const previousRecord = await runtime.registry.get(agentId);
+      if (!previousRecord) {
+        sendError(res, 409, "RUNTIME_AGENT_NOT_FOUND", `Agent ${agentId} is not registered in Runtime`);
+        return;
+      }
+      const effective = resolveEffectiveModel(
+        normalizedModelId,
+        readCursorDefaultModel(scope.root),
+      );
+      member.model = { ...(member.model ?? {}), id: normalizedModelId };
+      writeTeamConfigAtomic(scope.root, team);
+      teamWritten = true;
+      try {
+        await runtime.registry.updateModel(
+          agentId,
+          normalizedModelId,
+          effective.effective_model_id,
+        );
+        teamWritten = false;
+      } catch (runtimeError) {
+        writeTeamConfigAtomic(scope.root, previousTeam);
+        teamWritten = false;
+        throw runtimeError;
+      }
+      analyticsLedger?.noteAgentRecord(
+        agentId,
+        previousRecord.protocol.role,
+        effective.effective_model_id,
+      );
+      sseEmit("codeflowmu.team_updated", {
+        agent_id: agentId,
+        model_id: normalizedModelId,
+        effective_model_id: effective.effective_model_id,
+        applies_from: "next_session",
+      });
+      res.json({
+        ok: true,
+        agent_id: agentId,
+        model_id: normalizedModelId,
+        persisted_model: normalizedModelId,
+        effective_model: effective.effective_model_id,
+        applies_from: "next_session",
+        auto_resolution: effective.source,
+        config_source: {
+          type: scope.type,
+          path: teamConfigPath(scope.root),
+        },
+      });
+    } catch (err: any) {
+      if (teamWritten && previousTeam) {
+        try {
+          writeTeamConfigAtomic(scope.root, previousTeam);
+        } catch {
+          // The response remains non-2xx and explicitly reports possible divergence.
+          res.status(500).json({
+            ok: false,
+            code: "TEAM_UPDATE_ROLLBACK_FAILED",
+            error: "Runtime update failed and team config rollback also failed",
+          });
+          return;
+        }
+      }
+      if (err?.code === "TEAM_NOT_FOUND") {
+        sendError(res, 404, "TEAM_NOT_FOUND", "codeflowmu.team.json not found in team config root");
+        return;
+      }
+      sendError(res, 500, "TEAM_UPDATE_FAILED", err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -16219,6 +16315,9 @@ export async function startWebPanel(
     port?: number;
     panelDir?: string;
     projectRoot?: string;
+    teamConfigRoot?: string;
+    teamConfigRootType?: TeamConfigRootType;
+    teamModelCatalog?: () => Promise<CursorModelCatalog>;
     adminTasksDir?: string;
     fcopReportsDir?: string;
     fcopReviewsDir?: string;
@@ -16241,6 +16340,9 @@ export async function startWebPanel(
   const app = buildWebPanelApp(runtime, {
     panelDir: opts.panelDir,
     projectRoot: opts.projectRoot,
+    teamConfigRoot: opts.teamConfigRoot,
+    teamConfigRootType: opts.teamConfigRootType,
+    teamModelCatalog: opts.teamModelCatalog,
     adminTasksDir: opts.adminTasksDir,
     fcopReportsDir: opts.fcopReportsDir,
     fcopReviewsDir: opts.fcopReviewsDir,

@@ -76,6 +76,14 @@ export interface AgentRecord {
   runtime_failure?: AgentFailure;
   /** Compatibility projection used by older runtime status consumers. */
   runtime?: Record<string, unknown>;
+  /**
+   * Model id that will be sent to the SDK for the next new session.
+   * `protocol.model.id` remains the persisted user selection (including
+   * `auto`); this field records the resolved runtime value.
+   */
+  runtime_effective_model_id?: string;
+  /** Model changes never mutate an already-running session. */
+  runtime_model_applies_from?: "next_session";
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -111,6 +119,10 @@ export interface SessionRecord {
   runtime_thread_key?: string;
   /** Canonical ADMIN root task bound to this runtime session. */
   runtime_root_task_id?: string;
+  /** Team-config selection captured when this session started. */
+  runtime_configured_model_id?: string;
+  /** Final model id sent to the SDK for this immutable session. */
+  runtime_effective_model_id?: string;
 }
 
 // ───────────────────────────────────────────────────────────────────────────

@@ -298,11 +298,13 @@ export class AnalyticsLedger {
     if (event.event_type === "runtime.session_started" && sessionId) {
       const taskId = String(payload["task_id"] ?? extras?.task_id ?? "").trim();
       const threadKey = String(payload["thread_key"] ?? extras?.thread_key ?? "").trim();
+      const effectiveModelId = String(payload["effective_model_id"] ?? "").trim();
       this.noteSession({
         session_id: sessionId,
         agent_id: agentId || undefined,
         task_id: taskId || undefined,
         thread_key: threadKey || undefined,
+        model_id: effectiveModelId || undefined,
         channel: extras?.channel,
       });
     }

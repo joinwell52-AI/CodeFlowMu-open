@@ -383,6 +383,9 @@ export class SessionManager {
       ? "pm_self_report_only"
       : undefined;
 
+    const configuredModelId = freshRecord.protocol.model?.id?.trim();
+    const effectiveModelId =
+      freshRecord.runtime_effective_model_id?.trim() || configuredModelId;
     const sendSpec: AgentSendSpec = {
       sessionId,
       agentId,
@@ -391,8 +394,8 @@ export class SessionManager {
       ...(taskFilepath ? { taskFilepath } : {}),
       ...(frontmatterTaskId ? { frontmatterTaskId } : {}),
       ...(runMode ? { runMode } : {}),
-      ...(freshRecord.protocol.model?.id !== undefined
-        ? { modelId: freshRecord.protocol.model.id }
+      ...(effectiveModelId
+        ? { modelId: effectiveModelId }
         : {}),
       ...(mcpServers
         ? { mcpServers: mcpServers as AgentSendSpec["mcpServers"] }
@@ -481,6 +484,12 @@ export class SessionManager {
         ? { runtime_thread_key: payload.context.thread_key }
         : {}),
       runtime_root_task_id: canonicalRootTaskId,
+      ...(configuredModelId
+        ? { runtime_configured_model_id: configuredModelId }
+        : {}),
+      ...(effectiveModelId
+        ? { runtime_effective_model_id: effectiveModelId }
+        : {}),
     };
 
     // Step (e): attach TranscriptWriter + bridge events to onEvent fan-out
@@ -529,6 +538,12 @@ export class SessionManager {
       agent_id: agentId,
       payload: {
         task_id: taskId,
+        ...(configuredModelId
+          ? { configured_model_id: configuredModelId }
+          : {}),
+        ...(effectiveModelId
+          ? { effective_model_id: effectiveModelId }
+          : {}),
         ...(typeof payload.context?.trigger_chat_id === "string"
           ? { trigger_chat_id: payload.context.trigger_chat_id }
           : {}),

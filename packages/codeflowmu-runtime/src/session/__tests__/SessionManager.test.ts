@@ -199,6 +199,44 @@ test("TS-4.2a: resolveMcpServers receives the minted Runtime session id", async 
   );
 });
 
+test("TM-05/TM-06: new sessions use effective model while running session stays immutable", async () => {
+  await withManager(async ({ manager, registry, sdk }) => {
+    await registry.register(validAgentSpec());
+    await registry.updateModel("DEV-01", "auto", "auto-smart");
+
+    const startedEvents: RuntimeEvent[] = [];
+    const unsubscribe = manager.onEvent((event) => {
+      if (event.event_type === "runtime.session_started") startedEvents.push(event);
+    });
+    const first = await manager.startSession("DEV-01", "TASK-model-1", {
+      text: "first",
+    });
+    const firstSnapshot = await first.snapshot();
+    assert.equal(firstSnapshot.runtime_configured_model_id, "auto");
+    assert.equal(firstSnapshot.runtime_effective_model_id, "auto-smart");
+    assert.equal(sdk.calls.send[0]?.spec.modelId, "auto-smart");
+    assert.equal(
+      (startedEvents[0]?.payload as Record<string, unknown> | undefined)?.["effective_model_id"],
+      "auto-smart",
+    );
+
+    await registry.updateModel("DEV-01", "claude-sonnet-5", "claude-sonnet-5");
+    assert.equal(
+      (await first.snapshot()).runtime_effective_model_id,
+      "auto-smart",
+      "running/persisted session evidence must not be rewritten",
+    );
+
+    await manager.awaitSettled(first.session_id);
+    const second = await manager.startSession("DEV-01", "TASK-model-2", {
+      text: "second",
+    });
+    assert.equal((await second.snapshot()).runtime_effective_model_id, "claude-sonnet-5");
+    assert.equal(sdk.calls.send[1]?.spec.modelId, "claude-sonnet-5");
+    unsubscribe();
+  });
+});
+
 test("session lease rejects a duplicate before MCP resolution and SDK send", async () => {
   await withTempSessionDir(async ({ sessionStore, transcriptWriter, agentStore }) => {
     const sdk = new InMemorySdkAdapter();

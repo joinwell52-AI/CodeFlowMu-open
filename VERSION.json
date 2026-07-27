@@ -3,16 +3,16 @@
   "productName": "CodeFlowMu Open Dev Team Edition",
   "positioning": "A multi-agent development team application governed by the FCoP protocol and driven through Cursor SDK interfaces.",
   "edition": "open-dev-team",
-  "version": "V1.1.26-open",
-  "npmVersion": "1.1.26-open",
+  "version": "V1.1.27-open",
+  "npmVersion": "1.1.27-open",
   "releaseChannel": "open",
   "status": "public-open",
   "sourceRepository": "joinwell52-AI/codeflowmu",
   "targetRepository": "joinwell52-AI/CodeFlowMu-open",
-  "builtAt": "2026-07-23T16:48:13.362Z",
-  "sourceGitCommit": "99b477c6e3b1147f9db3302474d4c3de470617cf",
+  "builtAt": "2026-07-27T06:11:41.468Z",
+  "sourceGitCommit": "94e7e7c55f4bdec64ac870ff4b5f2e836c8b699c",
   "sourceDirty": false,
-  "motherVersion": "V1.1.26",
+  "motherVersion": "V1.1.27",
   "features": [
     {
       "id": "fcop-development-team",
@@ -158,7 +158,7 @@
   "releaseApproval": {
     "policy": "deny_unregistered_mother_changes",
     "approvedBy": "ADMIN",
-    "taskId": "TASK-20260720-008",
+    "taskId": "TASK-20260727-001",
     "approvedFeatureIds": [
       "project-root-hot-switch",
       "open-install-integrity",
@@ -167,7 +167,8 @@
       "qa-rework-dependency-gate",
       "product-delivery-governance-gate",
       "pre-action-approval-gate",
-      "runtime-governance-remediation"
+      "runtime-governance-remediation",
+      "team-model-runtime-persistence"
     ],
     "changeGroups": [
       {
@@ -382,6 +383,25 @@
           "packages/codeflowmu-runtime/src/session/SessionManager.ts",
           "packages/codeflowmu-runtime/src/session/index.ts",
           "packages/codeflowmu-runtime/src/session/__tests__/SessionLeaseStore.test.ts",
+          "packages/codeflowmu-runtime/src/session/__tests__/SessionManager.test.ts",
+          "packages/codeflowmu-runtime/src/types/state.ts"
+        ]
+      },
+      {
+        "id": "team-model-runtime-persistence",
+        "productPolicy": "open-core",
+        "description": "团队模型配置固定读写安装根，保存后同步 Runtime Registry，并从下一次新会话开始使用已解析模型。",
+        "paths": [
+          "codeflowmu-shell/src/team-model-config.ts",
+          "codeflowmu-shell/src/bootstrap.ts",
+          "codeflowmu-shell/src/main.ts",
+          "codeflowmu-shell/src/web-panel.ts",
+          "codeflowmu-shell/src/analytics-ledger.ts",
+          "codeflowmu-shell/src/__tests__/team-model-config.test.ts",
+          "codeflowmu-desktop/panel/index.html",
+          "packages/codeflowmu-runtime/src/registry/AgentRegistry.ts",
+          "packages/codeflowmu-runtime/src/registry/__tests__/AgentRegistry.test.ts",
+          "packages/codeflowmu-runtime/src/session/SessionManager.ts",
           "packages/codeflowmu-runtime/src/session/__tests__/SessionManager.test.ts",
           "packages/codeflowmu-runtime/src/types/state.ts"
         ]

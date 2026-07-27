@@ -7599,7 +7599,13 @@ let agents=[];
 let curTab='task', statusFilter=null, liveOn=true;
 let selFile=null;
 const runMap=new Map(); // agentId → {taskId}
-const teamModelMap=new Map(); // agentId → model id
+const teamModelMap=new Map(); // agentId → current session model, otherwise next-session model
+const teamPersistedModelMap=new Map();
+const teamNextSessionModelMap=new Map();
+const teamCurrentSessionModelMap=new Map();
+const teamAutoResolutionMap=new Map();
+let teamConfigReadOk=false;
+let teamConfigReadError='';
 let teamRoster=[]; // codeflowmu.team.json members (authoritative roster)
 let _modelEditAgentId=null;
 const agentLastSeen=new Map(); // agentId → Date (last any sdk.* event)
@@ -7609,11 +7615,11 @@ let cursorDefaultModel = 'auto-smart';
 
 /** 获取 Agent 的真实模型，若没有配置或为 auto，则由默认模型托底 */
 function getAgentModel(agentId) {
-  const model = teamModelMap.get(agentId) || '';
-  if (!model || model === 'auto') {
-    return cursorDefaultModel;
-  }
-  return model;
+  return teamCurrentSessionModelMap.get(agentId)
+    || teamNextSessionModelMap.get(agentId)
+    || teamPersistedModelMap.get(agentId)
+    || teamModelMap.get(agentId)
+    || '';
 }
 
 // ════════════════════════════════════════════
@@ -12153,10 +12159,29 @@ const KNOWN_MODELS=[
 async function loadTeam(){
   try{
     await loadCursorModelsForUi();
-    const d=await fetch('/api/v2/team').then(r=>r.json());
+    const response=await fetch('/api/v2/team',{cache:'no-store'});
+    let d={};
+    try{d=await response.json();}catch{}
+    if(!response.ok||d.ok!==true||!Array.isArray(d.members)){
+      throw new Error(d.error||('HTTP '+response.status));
+    }
+    teamConfigReadOk=true;
+    teamConfigReadError='';
     teamRoster=Array.isArray(d.members)?d.members:[];
+    teamModelMap.clear();
+    teamPersistedModelMap.clear();
+    teamNextSessionModelMap.clear();
+    teamCurrentSessionModelMap.clear();
+    teamAutoResolutionMap.clear();
     for(const m of teamRoster){
-      if(m.model?.id)teamModelMap.set(m.agent_id,m.model.id);
+      const persisted=m.model_status?.persisted_model_id||m.model?.id||'';
+      const next=m.model_status?.next_session_model_id||persisted;
+      const current=m.model_status?.current_session_model_id||'';
+      if(persisted)teamPersistedModelMap.set(m.agent_id,persisted);
+      if(next)teamNextSessionModelMap.set(m.agent_id,next);
+      if(current)teamCurrentSessionModelMap.set(m.agent_id,current);
+      if(m.model_status?.auto_resolution)teamAutoResolutionMap.set(m.agent_id,m.model_status.auto_resolution);
+      if(current||next||persisted)teamModelMap.set(m.agent_id,current||next||persisted);
     }
     // Update model chips on existing cards
     for(const[id,mid] of teamModelMap){
@@ -12169,9 +12194,24 @@ async function loadTeam(){
     if(typeof curPage !== 'undefined' && curPage === 'chat'){
       renderActiveSessions();
     }
-  }catch{}
-  // Sprint-A4: restore git backup settings
-  loadGitBackupSettings();
+    loadGitBackupSettings();
+    return true;
+  }catch(e){
+    teamConfigReadOk=false;
+    teamConfigReadError=String(e&&e.message||e||'unknown error');
+    teamRoster=[];
+    teamModelMap.clear();
+    teamPersistedModelMap.clear();
+    teamNextSessionModelMap.clear();
+    teamCurrentSessionModelMap.clear();
+    teamAutoResolutionMap.clear();
+    const hint=document.getElementById('ts-saved-hint');
+    if(hint){
+      hint.textContent='未读取到服务端配置：'+teamConfigReadError;
+      hint.style.color='#fca5a5';
+    }
+    return false;
+  }
 }
 function shortModel(id){
   if(!id)return'?';
@@ -12206,13 +12246,15 @@ async function saveModelFromModal(){
       method:'PATCH',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({model_id:modelId})
     });
-    const d=await r.json();
-    if(d.ok){
-      teamModelMap.set(agentId,modelId);
+    const d=await r.json().catch(()=>({}));
+    if(r.ok&&d.ok){
+      await loadTeam();
       const chip=document.getElementById('am-'+agentId);
-      if(chip){const tag=chip.querySelector('.ag-model-tag');if(tag)tag.textContent=shortModel(modelId);}
+      if(chip){const tag=chip.querySelector('.ag-model-tag');if(tag)tag.textContent=shortModel(getAgentModel(agentId));}
+    }else{
+      throw new Error(d.error||('HTTP '+r.status));
     }
-  }catch{}
+  }catch(e){showToast('模型保存失败：'+String(e&&e.message||e),'#fca5a5');}
   closeModelModal();
 }
 
@@ -22045,6 +22087,7 @@ const MODEL_PRESETS=[
 let activeProvider = 'cursor';
 
 let CURSOR_TC_MODELS = [
+  'auto',
   'auto-smart',
   'composer-latest',
   'claude-3-5-sonnet',
@@ -22166,6 +22209,46 @@ function _tcLoadConfig(){
   try{return JSON.parse(localStorage.getItem('tc-config')||'{}');}catch{return {};}
 }
 
+function _tcLoadModelDrafts(){
+  try{return JSON.parse(localStorage.getItem('tc-model-drafts-v2')||'{}');}catch{return {};}
+}
+
+function _tcSaveModelDrafts(drafts){
+  const clean={};
+  Object.entries(drafts||{}).forEach(([id,value])=>{
+    const model=String(value||'').trim();
+    if(model)clean[id]=model;
+  });
+  if(Object.keys(clean).length)localStorage.setItem('tc-model-drafts-v2',JSON.stringify(clean));
+  else localStorage.removeItem('tc-model-drafts-v2');
+}
+
+function tcModelDraftChanged(agentId,modelId){
+  const drafts=_tcLoadModelDrafts();
+  drafts[agentId]=modelId;
+  _tcSaveModelDrafts(drafts);
+  const hint=document.getElementById('ts-saved-hint');
+  if(hint){
+    hint.textContent='未提交草稿（尚未应用）';
+    hint.style.color='var(--amber)';
+  }
+}
+
+function _tcRefreshModelStatusDom(){
+  TC_AGENTS.forEach(agent=>{
+    const id=agent.id;
+    const persisted=teamPersistedModelMap.get(id)||'未配置';
+    const next=teamNextSessionModelMap.get(id)||'未配置';
+    const current=teamCurrentSessionModelMap.get(id)||'无运行中会话';
+    const p=document.getElementById('tc-persisted-'+id);
+    const n=document.getElementById('tc-next-'+id);
+    const c=document.getElementById('tc-current-'+id);
+    if(p)p.textContent=persisted;
+    if(n)n.textContent=next;
+    if(c)c.textContent=current;
+  });
+}
+
 /** Generate one Agent model-selection row HTML. */
 function _tcModelRow(agentId, currentModel){
   const agent=TC_AGENTS.find(a=>a.id===agentId)||{role:'?'};
@@ -22184,13 +22267,25 @@ function _tcModelRow(agentId, currentModel){
   const opts=modelOpts.map(m=>
     `<option value="${esc(m)}"${m===model?' selected':''}>${esc(m)}</option>`
   ).join('');
-  return`<div class="tc-model-row" style="display:flex;align-items:center;height:36px;gap:8px">
+  const persisted=teamPersistedModelMap.get(agentId)||'未配置';
+  const next=teamNextSessionModelMap.get(agentId)||'未配置';
+  const current=teamCurrentSessionModelMap.get(agentId)||'无运行中会话';
+  const autoSource=teamAutoResolutionMap.get(agentId);
+  const autoHint=persisted==='auto'
+    ?(autoSource==='cursor_default_model'?'（来自 CURSOR_DEFAULT_MODEL）':'（Cursor 自动路由）')
+    :'';
+  return`<div class="tc-model-row" style="display:grid;grid-template-columns:38px 54px minmax(150px,1fr);align-items:center;gap:8px;padding:5px 0">
     <span style="font-size:14px;font-weight:700;padding:2px 7px;border-radius:8px;background:${color}22;color:${color};flex-shrink:0;width:38px;text-align:center">${esc(agent.role)}</span>
     <span style="font-size:14px;color:var(--text2);width:54px;flex-shrink:0">${esc(agentId)}</span>
     <select class="tc-model-select" id="tcm-${esc(agentId)}"
-            onchange="teamModelMap.set('${esc(agentId)}',this.value)">
+            onchange="tcModelDraftChanged('${esc(agentId)}',this.value)">
       ${opts}
     </select>
+    <div style="grid-column:3;font-size:12px;line-height:1.45;color:var(--text3)">
+      <div>已持久化：<span id="tc-persisted-${esc(agentId)}" style="color:var(--text2)">${esc(persisted)}</span>${esc(autoHint)}</div>
+      <div>下一会话：<span id="tc-next-${esc(agentId)}" style="color:#93c5fd">${esc(next)}</span></div>
+      <div>当前运行会话：<span id="tc-current-${esc(agentId)}" style="color:${current==='无运行中会话'?'var(--text3)':'#86efac'}">${esc(current)}</span></div>
+    </div>
   </div>`;
 }
 
@@ -22234,10 +22329,10 @@ async function tcSaveConfig(){
   if(btn){btn.textContent=t('team.saving');btn.disabled=true;}
   const cfg=_tcLoadConfig();
   // Collect model selections
-  cfg.models={};
+  const submitted={};
   TC_AGENTS.forEach(a=>{
     const sel=document.getElementById('tcm-'+a.id);
-    if(sel)cfg.models[a.id]=sel.value;
+    if(sel)submitted[a.id]=sel.value;
   });
   // Collect git settings
   cfg.git={
@@ -22247,19 +22342,35 @@ async function tcSaveConfig(){
   const thInp=document.getElementById('tc-recycle-threshold');
   const thN=parseInt(thInp?.value,10);
   if(thN>=5&&thN<=500)cfg.recycleThreshold=thN;
+  delete cfg.models;
   localStorage.setItem('tc-config',JSON.stringify(cfg));
-  // Push model updates to API (best-effort)
-  let apiOk=true;
-  for(const [id,modelId] of Object.entries(cfg.models||{})){
+  _tcSaveModelDrafts(submitted);
+  const failures=[];
+  for(const [id,modelId] of Object.entries(submitted)){
     try{
       const r=await fetch('/api/v2/team/'+encodeURIComponent(id)+'/model',{
         method:'PATCH',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({model_id:modelId})
       });
-      const d=await r.json();
-      if(d.ok)teamModelMap.set(id,modelId);
-    }catch{apiOk=false;}
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok||d.ok!==true){
+        failures.push({id,reason:d.error||d.code||('HTTP '+r.status)});
+      }
+    }catch(e){
+      failures.push({id,reason:String(e&&e.message||e)});
+    }
   }
+  const readbackOk=await loadTeam();
+  if(!readbackOk){
+    failures.push({id:'GET /api/v2/team',reason:teamConfigReadError||'未读取到服务端配置'});
+  }else{
+    for(const [id,modelId] of Object.entries(submitted)){
+      if(teamPersistedModelMap.get(id)!==modelId){
+        failures.push({id,reason:'回读值不一致（服务端='+String(teamPersistedModelMap.get(id)||'未配置')+'）'});
+      }
+    }
+  }
+  _tcRefreshModelStatusDom();
   // Also update gitBackupDirty path
   localStorage.setItem('cf_git_backup',JSON.stringify({
     remoteUrl:cfg.git.remoteUrl,branch:cfg.git.branch,
@@ -22268,9 +22379,21 @@ async function tcSaveConfig(){
   }));
   gitBackupDirty=false;
   if(btn){btn.disabled=false;btn.textContent=t('team.saved');}
-  if(hint){hint.textContent='';hint.style.color='';}
-  showToast(t('toast.configSaved'),'#4ade80');
+  if(failures.length){
+    const unique=[];
+    const seen=new Set();
+    failures.forEach(f=>{const key=f.id+':'+f.reason;if(!seen.has(key)){seen.add(key);unique.push(f);}});
+    const message=unique.map(f=>f.id+'：'+f.reason).join('；');
+    if(hint){hint.textContent='保存失败：'+message;hint.style.color='#fca5a5';}
+    if(btn)btn.textContent='保存失败';
+    showToast('保存失败：'+message,'#fca5a5');
+  }else{
+    _tcSaveModelDrafts({});
+    if(hint){hint.textContent='已由服务端回读核验；从下一次新会话生效';hint.style.color='#86efac';}
+    showToast(t('toast.configSaved'),'#4ade80');
+  }
   setTimeout(()=>{if(btn)btn.textContent=t('team.saveCfg');},2200);
+  return failures.length===0;
 }
 
 /** Trigger git backup via API. */
@@ -22509,6 +22632,7 @@ async function renderTeamPage(){
   }
   await loadTeam();
   const cfg=_tcLoadConfig();
+  const modelDrafts=_tcLoadModelDrafts();
   tcSetPanelOperator(_panelOperatorRole());
   const thInp=document.getElementById('tc-recycle-threshold');
   if(thInp)thInp.value=String(_tcGetSwapThreshold());
@@ -22531,17 +22655,23 @@ async function renderTeamPage(){
 
   const modelList=document.getElementById('tc-model-list');
   if(modelList){
-    const savedModels=cfg.models||{};
     const teamAgents = TC_AGENTS;
-    const rows=teamAgents.map(a=>{
-      const liveModel=teamModelMap.get(a.id)||'';
-      const model=liveModel||savedModels[a.id]||a.defaultModel||'auto';
-      return _tcModelRow(a.id, model);
-    });
-    const openNote = isOpenDevTeamEdition()
-      ? '<div class="home-meta" style="margin-bottom:8px;color:var(--text3)">公开版团队固定为 PM / DEV / OPS / QA / EVAL；EVAL 只观察当前开发项目的质量、风险和交付信号，不观察 CodeFlowMu 母体。</div>'
-      : '';
-    modelList.innerHTML=openNote+rows.join('');
+    if(!teamConfigReadOk){
+      modelList.innerHTML='<div class="home-meta empty error">未读取到服务端配置：'+esc(teamConfigReadError||'未知错误')+'</div>';
+    }else{
+      const rows=teamAgents.map(a=>{
+        const persisted=teamPersistedModelMap.get(a.id)||'auto';
+        const model=modelDrafts[a.id]||(persisted==='default'?'auto':persisted);
+        return _tcModelRow(a.id, model);
+      });
+      const openNote = isOpenDevTeamEdition()
+        ? '<div class="home-meta" style="margin-bottom:8px;color:var(--text3)">公开版团队固定为 PM / DEV / OPS / QA / EVAL；EVAL 只观察当前开发项目的质量、风险和交付信号，不观察 CodeFlowMu 母体。</div>'
+        : '';
+      const draftNote=Object.keys(modelDrafts).length
+        ?'<div class="home-meta" style="margin-bottom:8px;color:#fbbf24">已恢复未提交草稿；草稿尚未应用，以下状态仍以服务端回读为准。</div>'
+        :'';
+      modelList.innerHTML=openNote+draftNote+rows.join('');
+    }
   }
   // ── v3: Render skill grid ─────────────────────────────────
   const skillGrid=document.getElementById('tc-skill-grid');

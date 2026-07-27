@@ -3,7 +3,7 @@
   "edition": "open-dev-team",
   "productName": "CodeFlowMu Open Dev Team Edition",
   "positioning": "A multi-agent development team application governed by the FCoP protocol and driven through Cursor SDK interfaces.",
-  "motherVersion": "V1.1.26",
+  "motherVersion": "V1.1.27",
   "features": [
     {
       "id": "fcop-development-team",
@@ -149,7 +149,7 @@
   "releaseApproval": {
     "policy": "deny_unregistered_mother_changes",
     "approvedBy": "ADMIN",
-    "taskId": "TASK-20260720-008",
+    "taskId": "TASK-20260727-001",
     "approvedFeatureIds": [
       "project-root-hot-switch",
       "open-install-integrity",
@@ -158,7 +158,8 @@
       "qa-rework-dependency-gate",
       "product-delivery-governance-gate",
       "pre-action-approval-gate",
-      "runtime-governance-remediation"
+      "runtime-governance-remediation",
+      "team-model-runtime-persistence"
     ],
     "changeGroups": [
       {
@@ -378,6 +379,25 @@
         ]
       },
       {
+        "id": "team-model-runtime-persistence",
+        "productPolicy": "open-core",
+        "description": "团队模型配置固定读写安装根，保存后同步 Runtime Registry，并从下一次新会话开始使用已解析模型。",
+        "paths": [
+          "codeflowmu-shell/src/team-model-config.ts",
+          "codeflowmu-shell/src/bootstrap.ts",
+          "codeflowmu-shell/src/main.ts",
+          "codeflowmu-shell/src/web-panel.ts",
+          "codeflowmu-shell/src/analytics-ledger.ts",
+          "codeflowmu-shell/src/__tests__/team-model-config.test.ts",
+          "codeflowmu-desktop/panel/index.html",
+          "packages/codeflowmu-runtime/src/registry/AgentRegistry.ts",
+          "packages/codeflowmu-runtime/src/registry/__tests__/AgentRegistry.test.ts",
+          "packages/codeflowmu-runtime/src/session/SessionManager.ts",
+          "packages/codeflowmu-runtime/src/session/__tests__/SessionManager.test.ts",
+          "packages/codeflowmu-runtime/src/types/state.ts"
+        ]
+      },
+      {
         "id": "provider-boundary-enforcement",
         "kind": "release-system",
         "selectable": false,
@@ -446,8 +466,8 @@
   },
   "sourceRepository": "joinwell52-AI/codeflowmu",
   "targetRepository": "joinwell52-AI/CodeFlowMu-open",
-  "version": "V1.1.26-open",
-  "npmVersion": "1.1.26-open",
+  "version": "V1.1.27-open",
+  "npmVersion": "1.1.27-open",
   "status": "public-open",
   "releaseChannel": "open",
   "updatePolicy": {
@@ -486,10 +506,10 @@
     "mustNotShareRuntimeState": true,
     "mustNotShareWorkspaceState": true
   },
-  "builtAt": "2026-07-23T16:48:13.362Z",
+  "builtAt": "2026-07-27T06:11:41.468Z",
   "sourceRoot": ".",
   "outputRoot": "release/open-dev-team/CodeFlowMu",
-  "sourceGitCommit": "99b477c6e3b1147f9db3302474d4c3de470617cf",
+  "sourceGitCommit": "94e7e7c55f4bdec64ac870ff4b5f2e836c8b699c",
   "sourceGitBranch": "main",
   "sourceDirty": false,
   "sourceDirtyPaths": [],
@@ -777,6 +797,8 @@
     "?? .codeflowmu/report-watcher/seen-reports.jsonl",
     "?? .codeflowmu/skill-invocations.jsonl",
     "?? fcop/_lifecycle/active/TASK-20260720-008-ADMIN-to-PM.md",
+    "?? fcop/_lifecycle/active/TASK-20260727-001-ADMIN-to-DEV.md",
+    "?? fcop/_lifecycle/active/TASK-20260727-002-ADMIN-to-DEV.md",
     "?? fcop/_lifecycle/archive/TASK-20260712-904-ADMIN-to-PM.md",
     "?? fcop/_lifecycle/archive/TASK-20260712-908-ADMIN-to-PM.md",
     "?? fcop/_lifecycle/archive/TASK-20260712-909-ADMIN-to-PM.md",
@@ -960,6 +982,8 @@
     "?? fcop/reports/REPORT-20260720-006-PM-to-ADMIN.md",
     "?? fcop/reports/REPORT-20260720-007-PM-to-ADMIN.md",
     "?? fcop/reports/REPORT-20260720-008-PM-to-ADMIN.md",
+    "?? fcop/reports/REPORT-20260727-001-DEV-to-ADMIN.md",
+    "?? fcop/reports/REPORT-20260727-002-DEV-to-ADMIN.md",
     "?? workspace/flowboard/.codeflowmu/agent-skills.manifest.json",
     "?? workspace/flowboard/.codeflowmu/panel-ui-lang.json",
     "?? workspace/flowboard/.codeflowmu/pm-skills.manifest.json",
@@ -1255,7 +1279,7 @@
   ],
   "buildTool": {
     "path": "scripts/build-open-dev-team.mjs",
-    "sha256": "c86fe82a98bf076444231237ff12d23c5e0d67f2f2ad87651db06ac552324d43"
+    "sha256": "464be86e56fc4c89ba7bff7574bb6afe969cc71c0c9782e197326319379e069f"
   },
   "included": [
     "LICENSE",
@@ -1415,6 +1439,7 @@
     "codeflowmu-shell/src/__tests__/task-list-transitions-summary.test.ts",
     "codeflowmu-shell/src/__tests__/task-unstick-candidates.test.ts",
     "codeflowmu-shell/src/__tests__/task-unstick.test.ts",
+    "codeflowmu-shell/src/__tests__/team-model-config.test.ts",
     "codeflowmu-shell/src/__tests__/thinking-file-logger.test.ts",
     "codeflowmu-shell/src/__tests__/ui-i18n-completeness.test.ts",
     "codeflowmu-shell/src/__tests__/windows-use-app-catalog.test.ts",
@@ -1514,6 +1539,7 @@
     "codeflowmu-shell/src/sdk-factory.ts",
     "codeflowmu-shell/src/task-unstick-candidates.ts",
     "codeflowmu-shell/src/task-unstick.ts",
+    "codeflowmu-shell/src/team-model-config.ts",
     "codeflowmu-shell/src/thinking-file-logger.ts",
     "codeflowmu-shell/src/web-panel.ts",
     "codeflowmu-shell/src/windows-use-app-catalog.ts",
@@ -2296,7 +2322,7 @@
   "approvalFiltering": {
     "policy": "deny_unregistered_mother_changes",
     "baselineRepository": "joinwell52-AI/CodeFlowMu-open",
-    "baselineCommit": "eb6c06712e310cc117d6811a81a4e12fee927319",
+    "baselineCommit": "217e5dbb71bb9f400cf22177544e593aaf6d8fa7",
     "firstRelease": false,
     "filteredCount": 23,
     "evaluatedPaths": [
@@ -2315,13 +2341,19 @@
       "codeflowmu-shell/package.json",
       "codeflowmu-shell/src/__tests__/gateway-pwa-apps.test.ts",
       "codeflowmu-shell/src/__tests__/pm-runtime-session-mcp.test.ts",
+      "codeflowmu-shell/src/__tests__/team-model-config.test.ts",
+      "codeflowmu-shell/src/analytics-ledger.ts",
+      "codeflowmu-shell/src/bootstrap.ts",
       "codeflowmu-shell/src/config.ts",
       "codeflowmu-shell/src/lifecycle-runtime-bridge.ts",
+      "codeflowmu-shell/src/main.ts",
       "codeflowmu-shell/src/mobile/gatewayPwaApps.ts",
       "codeflowmu-shell/src/mobile/mobilePanelRoutes.ts",
       "codeflowmu-shell/src/panel-runtime-identity.ts",
       "codeflowmu-shell/src/sdk-factory.ts",
+      "codeflowmu-shell/src/team-model-config.ts",
       "codeflowmu-shell/src/web-panel.ts",
+      "codeflowmu.team.json",
       "fcop_sdk/__init__.py",
       "fcop_sdk/kernel.py",
       "package-lock.json",
@@ -2338,18 +2370,21 @@
       "packages/codeflowmu-runtime/src/index.ts",
       "packages/codeflowmu-runtime/src/pm/ProductDeliveryRuntimeGate.ts",
       "packages/codeflowmu-runtime/src/pm/pmAdminRejectPrompt.ts",
+      "packages/codeflowmu-runtime/src/registry/AgentRegistry.ts",
       "packages/codeflowmu-runtime/src/registry/AgentSdkAdapter.ts",
       "packages/codeflowmu-runtime/src/registry/RoleToolPolicy.ts",
       "packages/codeflowmu-runtime/src/registry/ToolAuthorityGuard.ts",
-      "packages/codeflowmu-runtime/src/registry/__tests__/AgentSdkAdapter.test.ts",
+      "packages/codeflowmu-runtime/src/registry/__tests__/AgentRegistry.test.ts",
       "packages/codeflowmu-runtime/src/registry/index.ts",
       "packages/codeflowmu-runtime/src/registry/pmHeavyToolWrapper.ts",
       "packages/codeflowmu-runtime/src/registry/promptHotPath.ts",
       "packages/codeflowmu-runtime/src/registry/writeReportTaskIdGuard.ts",
       "packages/codeflowmu-runtime/src/scheduler/TaskDispatcher.ts",
       "packages/codeflowmu-runtime/src/session/SessionManager.ts",
+      "packages/codeflowmu-runtime/src/session/__tests__/SessionManager.test.ts",
       "packages/codeflowmu-runtime/src/session/index.ts",
       "packages/codeflowmu-runtime/src/skills/AgentSkillRouting.ts",
+      "packages/codeflowmu-runtime/src/types/state.ts",
       "templates/default-project/fcop/fcop.json"
     ],
     "filteredPaths": [
@@ -2379,5 +2414,5 @@
     ]
   },
   "checksumFile": "SHA256SUMS",
-  "checksumCount": 845
+  "checksumCount": 847
 }

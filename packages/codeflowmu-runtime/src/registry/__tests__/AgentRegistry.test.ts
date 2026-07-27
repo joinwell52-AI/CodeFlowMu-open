@@ -172,6 +172,25 @@ test("resume: SDK knows the id → record's reconciled_at is updated", async () 
   });
 });
 
+test("TM-04: updateModel persists configured/effective model across Registry restart", async () => {
+  await withTempStore(async ({ store, agentsPath }) => {
+    const sdk = new InMemorySdkAdapter();
+    const first = new AgentRegistry({ store, sdk });
+    await first.register(validAgentSpec());
+    await first.updateModel("DEV-01", "auto", "auto-smart");
+
+    const persisted = JSON.parse(readFileSync(agentsPath, "utf-8"));
+    assert.equal(persisted[0].protocol.model.id, "auto");
+    assert.equal(persisted[0].runtime_effective_model_id, "auto-smart");
+    assert.equal(persisted[0].runtime_model_applies_from, "next_session");
+
+    const restarted = new AgentRegistry({ store, sdk });
+    const record = await restarted.get("DEV-01");
+    assert.equal(record?.protocol.model?.id, "auto");
+    assert.equal(record?.runtime_effective_model_id, "auto-smart");
+  });
+});
+
 test("register: does not reject a newly-created id during SDK visibility delay", async () => {
   await withTempStore(async ({ store, agentsPath }) => {
     const sdk = new InMemorySdkAdapter();

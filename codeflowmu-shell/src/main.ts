@@ -83,6 +83,7 @@ import { startWebPanel, type WebPanelHandle } from "./web-panel.ts";
 import { readFcopJsonMeta, readShellVersion } from "./fcop-env-probe.ts";
 import { ensureAdoptedFromSource } from "./fcop-adopted-bootstrap.ts";
 import { resolveRuntimeStartupProjectRoot } from "./project-registry.ts";
+import { resolveTeamConfigRoot } from "./team-model-config.ts";
 import { fileURLToPath } from "node:url";
 
 const SHELL_PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -314,8 +315,13 @@ async function main(): Promise<void> {
     _openEditionBootstrapRoot,
     _bootstrapProjectRoot,
   );
-  const _teamConfigRoot =
-    resolveOpenEditionHostRoot() ?? _bootstrapProjectRoot ?? _earlyProjectRoot;
+  const _teamConfigRootResolution = resolveTeamConfigRoot({
+    openEditionHostRoot: resolveOpenEditionHostRoot(),
+    codeflowmuHostRoot: process.env["CODEFLOWMU_HOST_ROOT"],
+    bootstrapRoot: _bootstrapProjectRoot,
+    fallbackRoot: _earlyProjectRoot,
+  });
+  const _teamConfigRoot = _teamConfigRootResolution.root;
   const _teamMeta = _teamConfigRoot
     ? await readTeamMeta(_teamConfigRoot).catch(() => null)
     : null;
@@ -637,18 +643,16 @@ async function main(): Promise<void> {
     teamConfigRoot: _teamConfigRoot ?? undefined,
   });
 
-  if (fcopProjectRoot) {
-    const modelSync = await syncTeamModelsFromConfig({
-      dataDir,
-      runtime,
-      projectRoot: fcopProjectRoot,
-      teamConfigRoot: _teamConfigRoot ?? undefined,
-    });
-    if (modelSync.updated > 0) {
-      console.log(
-        `[bootstrap] synced gemini model ids from team config (${modelSync.updated} agent(s))`,
-      );
-    }
+  const modelSync = await syncTeamModelsFromConfig({
+    dataDir,
+    runtime,
+    projectRoot: workspaceRoot ?? undefined,
+    teamConfigRoot: _teamConfigRoot,
+  });
+  if (modelSync.updated > 0) {
+    console.log(
+      `[bootstrap] synced team model ids into runtime registry (${modelSync.updated} agent(s))`,
+    );
   }
 
   // ── 8. Start ───────────────────────────────────────────────────────
@@ -696,6 +700,8 @@ async function main(): Promise<void> {
       logger: consoleLogger,
       port: _panelPort,
       projectRoot: workspaceRoot ?? undefined,
+      teamConfigRoot: _teamConfigRoot,
+      teamConfigRootType: _teamConfigRootResolution.type,
       adminTasksDir: adminTasksDir,
       fcopReportsDir: fcopReportsDir,
       fcopReviewsDir: fcopProjectRoot ? join(fcopProjectRoot, "fcop", "reviews") : undefined,
