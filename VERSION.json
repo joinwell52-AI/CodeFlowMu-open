@@ -3,16 +3,16 @@
   "productName": "CodeFlowMu Open Dev Team Edition",
   "positioning": "A multi-agent development team application governed by the FCoP protocol and driven through Cursor SDK interfaces.",
   "edition": "open-dev-team",
-  "version": "V1.1.27-open",
-  "npmVersion": "1.1.27-open",
+  "version": "V1.1.28-open",
+  "npmVersion": "1.1.28-open",
   "releaseChannel": "open",
   "status": "public-open",
   "sourceRepository": "joinwell52-AI/codeflowmu",
   "targetRepository": "joinwell52-AI/CodeFlowMu-open",
-  "builtAt": "2026-07-27T06:11:41.468Z",
-  "sourceGitCommit": "94e7e7c55f4bdec64ac870ff4b5f2e836c8b699c",
+  "builtAt": "2026-07-27T06:29:12.635Z",
+  "sourceGitCommit": "b5dc059deacb66548f79990ad37af7bdf8700e79",
   "sourceDirty": false,
-  "motherVersion": "V1.1.27",
+  "motherVersion": "V1.1.28",
   "features": [
     {
       "id": "fcop-development-team",
@@ -158,18 +158,8 @@
   "releaseApproval": {
     "policy": "deny_unregistered_mother_changes",
     "approvedBy": "ADMIN",
-    "taskId": "TASK-20260727-001",
-    "approvedFeatureIds": [
-      "project-root-hot-switch",
-      "open-install-integrity",
-      "windows-use",
-      "browser-use",
-      "qa-rework-dependency-gate",
-      "product-delivery-governance-gate",
-      "pre-action-approval-gate",
-      "runtime-governance-remediation",
-      "team-model-runtime-persistence"
-    ],
+    "taskId": "TASK-20260727-003",
+    "approvedFeatureIds": [],
     "changeGroups": [
       {
         "id": "project-root-hot-switch",
