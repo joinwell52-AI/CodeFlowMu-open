@@ -149,6 +149,11 @@ import {
 } from "../pm/agentTaskQueueControl.ts";
 import { guardLandedPmProductWorkerTask } from "../pm/ProductDeliveryRuntimeGate.ts";
 import { recordProductTaskClassification } from "../pm/ProductDeliveryGovernance.ts";
+import {
+  evaluateTaskSpecAdmission,
+  persistTaskSpecAdmissionResult,
+  type TaskSpecAdmissionRejected,
+} from "../pm/TaskSpecAdmissionGate.ts";
 
 /** Align session/prompt task_id with LedgerBuilder.canonicalTaskId semantics. */
 function resolveCanonicalTaskId(
@@ -319,6 +324,26 @@ function _patchFmState(raw: string, val: string): string {
 }
 
 /** States eligible for explicit dispatch claim (inbox held → active → session). */
+function _patchFmScalarFields(
+  raw: string,
+  fields: Record<string, string | boolean | number>,
+): string {
+  const re = /^(---\r?\n)([\s\S]*?)(\r?\n---)/;
+  const match = raw.match(re);
+  if (!match) return raw;
+  const open = match[1] ?? "---\n";
+  const close = match[3] ?? "\n---";
+  let yamlBody = match[2] ?? "";
+  for (const [key, value] of Object.entries(fields)) {
+    const rendered = typeof value === "string" ? value : String(value);
+    const keyRe = new RegExp(`^${key}:.*$`, "m");
+    yamlBody = keyRe.test(yamlBody)
+      ? yamlBody.replace(keyRe, `${key}: ${rendered}`)
+      : `${yamlBody}\n${key}: ${rendered}`;
+  }
+  return raw.replace(re, `${open}${yamlBody}${close}`);
+}
+
 function _isDispatchClaimableState(state: string | undefined): boolean {
   const s = String(state ?? "inbox").toLowerCase();
   return s === "inbox" || s === "active";
@@ -385,6 +410,10 @@ export type DispatchOutcome =
   | { kind: "parse_failed"; reason: string }
   | { kind: "agent_not_found"; recipient: string; reason?: string }
   | { kind: "rejected_busy"; recipient: string; status: string }
+  | ({
+      kind: "task_spec_rejected";
+      result_path: string;
+    } & TaskSpecAdmissionRejected)
   | {
       kind: "retry_waiting";
       reason: string;
@@ -958,6 +987,54 @@ export class TaskDispatcher {
         at: toLocalIsoString(this._now()),
       });
       return { kind: "dispatch_skipped", reason: "invalid_task_file", detail };
+    }
+
+    if (this._projectRoot) {
+      const admission = await evaluateTaskSpecAdmission({
+        projectRoot: this._projectRoot,
+        task: parsedForGate,
+      });
+      const persisted = await persistTaskSpecAdmissionResult(
+        this._projectRoot,
+        admission,
+      );
+      if (admission.decision === "rejected") {
+        const outcome: DispatchOutcome = {
+          kind: "task_spec_rejected",
+          ...admission,
+          result_path: persisted.path,
+        };
+        if (
+          persisted.changed ||
+          this._shouldEmitDispatchWait(
+            `task-spec:${filename}:${admission.content_digest}`,
+          )
+        ) {
+          this._panelEvents?.emit("codeflowmu.task_spec_rejected", {
+            event: "task_spec_rejected",
+            ...admission,
+            result_path: persisted.path,
+            task_path: filepath,
+            filename,
+            role: recipient,
+            at: toLocalIsoString(this._now()),
+          });
+          this._logger.warn(
+            `[TaskDispatcher] task_spec_rejected ${filename}: ${admission.blocking_findings
+              .map((finding) => finding.id)
+              .join(",")}`,
+          );
+        }
+        if (persisted.changed) {
+          await this._applyDispatchOutcome(
+            filepath,
+            filename,
+            recipient,
+            outcome,
+          );
+        }
+        return outcome;
+      }
     }
 
     if (parsedForGate && !options?.bypassBusinessGates) {
@@ -1995,6 +2072,7 @@ export class TaskDispatcher {
           status?: string;
           report_written?: boolean;
           failure_code?: string;
+          failure_category?: string;
           task_id?: string;
           tool_call_count?: number;
           error?: string;
@@ -2008,7 +2086,77 @@ export class TaskDispatcher {
     if (st !== "failed" && st !== "timeout") return;
     if (payload?.report_written === true) return;
 
-    const taskId = String(payload?.task_id ?? "").trim() || filename.replace(/\.md$/i, "");
+    const rawTaskId =
+      String(payload?.task_id ?? "").trim() || filename.replace(/\.md$/i, "");
+    const taskId = resolveCanonicalTaskId(filename, { task_id: rawTaskId });
+    const failureCode = String(payload?.failure_code ?? "").trim().toUpperCase();
+    const failureCategory = String(payload?.failure_category ?? "").trim().toLowerCase();
+    const isGovernanceBlock =
+      failureCode === "CODEFLOWMU_POLICY_BLOCKED" ||
+      failureCategory === "policy_blocked" ||
+      failureCategory === "governance";
+    if (isGovernanceBlock) {
+      const retryKey = `${evt.agent_id}:${taskId}`;
+      const reason = String(
+        payload?.error ??
+          payload?.reason ??
+          "governance policy rejected this action",
+      );
+      const rec = this._dispatchRetryRegistry.recordFailure(
+        retryKey,
+        new Error(reason),
+        {
+          filepath,
+          task_id: taskId,
+          retryable: false,
+          rawCode: failureCode || "CODEFLOWMU_POLICY_BLOCKED",
+        },
+      );
+      try {
+        const resolved = await resolveTaskFileForMutation(filepath);
+        const raw = await fs.readFile(resolved, "utf-8");
+        await fs.writeFile(
+          resolved,
+          _patchFmScalarFields(raw, {
+            state: "waiting_admin_decision",
+            dispatch_state: "waiting_admin",
+            failure_code: failureCode || "CODEFLOWMU_POLICY_BLOCKED",
+            failure_category: "governance",
+            retry_policy: "manual",
+            guard_worked: true,
+            runtime_crashed: false,
+          }),
+          "utf-8",
+        );
+      } catch (err) {
+        this._logger.warn(
+          `[TaskDispatcher] failed to persist governance wait state for ${filename}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      await this._appendHistory(filepath, {
+        at: toLocalIsoString(this._now()),
+        by: "runtime",
+        from: "dispatched",
+        to: "waiting_admin_decision",
+        note: `${failureCode || "CODEFLOWMU_POLICY_BLOCKED"}: guard worked; manual decision required`,
+      }).catch(() => undefined);
+      this._panelEvents?.emit("codeflowmu.task_blocked", {
+        event: "TASK_GOVERNANCE_BLOCKED",
+        agent_id: evt.agent_id,
+        session_id: evt.session_id,
+        task_id: taskId,
+        failure_code: failureCode || "CODEFLOWMU_POLICY_BLOCKED",
+        category: "governance",
+        severity: "warning",
+        retry_policy: "manual",
+        guard_worked: true,
+        runtime_crashed: false,
+        decision_required: rec.decisionRequired,
+      });
+      return;
+    }
     const pmWaitingDownstream =
       this._pmQueueGuard?.snapshot().waiting_downstream === true;
     if (
@@ -2248,6 +2396,16 @@ export class TaskDispatcher {
           from: "inbox",
           to: "rejected_busy",
           note: `recipient=${outcome.recipient}, agent_status=${outcome.status}`,
+        };
+      case "task_spec_rejected":
+        return {
+          at,
+          by,
+          from: "inbox",
+          to: "task_spec_rejected",
+          note: `${outcome.code}: ${outcome.blocking_findings
+            .map((finding) => finding.id)
+            .join(",")} result=${outcome.result_path}`,
         };
       case "retry_waiting":
         return {

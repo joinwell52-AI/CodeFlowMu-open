@@ -38,6 +38,7 @@ import { execFile as execFileCb, exec as execCb, spawn as spawnProc } from "node
 import { promisify } from "node:util";
 import * as os from "node:os";
 import { CursorUsageSyncer } from "./cursor-usage-syncer.ts";
+import { closeHttpServerBounded } from "./bounded-server-close.ts";
 import { enrichIssueMetadata } from "./issue-enrichment.ts";
 import {
   fcopV3Paths,
@@ -115,6 +116,10 @@ import {
   ingestRuntimeAlertFromSse,
   registerRuntimeAlertRoutes,
 } from "./runtime-alerts.ts";
+import {
+  buildRootFaultFields,
+  extractStableFailureCode,
+} from "./root-fault.ts";
 import { callWindowsUseHost } from "./windows-use-host-client.ts";
 import {
   readWindowsUseSettings,
@@ -395,6 +400,7 @@ import {
   listEvalAuditFiles,
   fcopInternalEvalDir,
 } from "./fcop-governance.ts";
+import { buildEvalUnifiedSnapshot } from "./eval-snapshot.ts";
 import { formatPanelRuntimeIdentityBlock } from "./panel-runtime-identity.ts";
 import { extractSdkThinkingText } from "./chat-thinking-align.ts";
 import { collectFormalChatHistory } from "./chat-formal-history.ts";
@@ -2570,6 +2576,7 @@ function wpIsMotherRuntimeLedgerPath(file: string): boolean {
     value === "fcop/" ||
     value.startsWith("fcop/ledger/") ||
     value.startsWith("fcop/_lifecycle/") ||
+    value.startsWith("fcop/history/") ||
     value.startsWith("fcop/reports/") ||
     value.startsWith("fcop/logs/runtime/") ||
     value.startsWith("fcop/internal/eval/") ||
@@ -2599,6 +2606,8 @@ function wpIsMotherRuntimeLedgerStatusFile(file: WpGitStatusFile): boolean {
 }
 
 export const wpIsMotherRuntimeLedgerPathForTests = wpIsMotherRuntimeLedgerPath;
+export const wpIsMotherRuntimeLedgerStatusFileForTests =
+  wpIsMotherRuntimeLedgerStatusFile;
 
 async function wpReadGitStatusPayload(cwd: string): Promise<WpGitStatusPayload> {
   const opts = { cwd, timeout: 10000 };
@@ -2619,8 +2628,10 @@ async function wpReadGitStatusPayload(cwd: string): Promise<WpGitStatusPayload> 
   const hash = spaceIdx > 0 ? logLine.slice(0, spaceIdx) : logLine;
   const subject = spaceIdx > 0 ? logLine.slice(spaceIdx + 1) : "";
   const files = wpParseGitStatusPorcelainZ(statusOut.stdout as string);
-  const runtimeFiles = files.filter((file) => wpIsMotherRuntimeLedgerPath(file.path));
-  const productFiles = files.filter((file) => !wpIsMotherRuntimeLedgerPath(file.path));
+  const runtimeFiles = files.filter(wpIsMotherRuntimeLedgerStatusFile);
+  const productFiles = files.filter(
+    (file) => !wpIsMotherRuntimeLedgerStatusFile(file),
+  );
   const tracking = await wpReadGitTrackingState(cwd, branch || "main", hash);
 
   return {
@@ -10772,8 +10783,7 @@ export function buildWebPanelApp(
    */
   app.get("/api/v2/eval/reports", async (_req: Request, res: Response) => {
     try {
-      const items = listEvalAuditFiles(projectRoot(), 100);
-      res.json(items);
+      res.json(buildEvalUnifiedSnapshot(projectRoot(), 100).reports);
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
@@ -10799,6 +10809,8 @@ export function buildWebPanelApp(
    */
   app.get("/api/v2/eval/summary", async (_req: Request, res: Response) => {
     try {
+      res.json(buildEvalUnifiedSnapshot(projectRoot(), 200).summary);
+      return;
       const { readFile } = await import("node:fs/promises");
       const root = projectRoot();
       const audits = listEvalAuditFiles(root, 20);
@@ -10813,13 +10825,14 @@ export function buildWebPanelApp(
         if (!lastRun) {
           const m = latest.filename.match(/(?:AUDIT|OBSERVATION)-(\d{8})/);
           if (m) {
-            const ds = m[1]!;
+            const ds = m?.[1] ?? "";
             lastRun = new Date(+ds.slice(0, 4), +ds.slice(4, 6) - 1, +ds.slice(6, 8)).toISOString();
           }
         }
         try {
           const raw = await readFile(join(root, ...latest.rel_path.split("/")), "utf-8");
-          const matches = raw.match(/[-*]\s+\*?\*?([A-Z]+)\*?\*?:\s+(.+)/g) || [];
+          const matches: string[] =
+            String(raw).match(/[-*]\s+\*?\*?([A-Z]+)\*?\*?:\s+(.+)/g) ?? [];
           violations = matches.slice(0, 20).map((m) => {
             const sev = /HIGH|CRITICAL/i.test(m) ? "HIGH" : /MEDIUM/i.test(m) ? "MEDIUM" : "LOW";
             return { file: m.replace(/[-*]\s+/, "").slice(0, 60), severity: sev, role: "EVAL" };
@@ -10832,7 +10845,7 @@ export function buildWebPanelApp(
       // Emergence count from emergence-log.md
       const emergePath = join(root, "fcop", "internal", "emergence-log.md");
       let emergenceCount = 0;
-      let score = 85;
+      let score = 0;
       if (existsSync(emergePath)) {
         const emergRaw = await readFile(emergePath, "utf-8");
         emergenceCount = (emergRaw.match(/^[-*]\s+/gm) || []).length;
@@ -10861,6 +10874,8 @@ export function buildWebPanelApp(
    */
   app.get("/api/v2/eval/history", async (_req: Request, res: Response) => {
     try {
+      res.json(buildEvalUnifiedSnapshot(projectRoot(), 200).history);
+      return;
       const root = projectRoot();
       const audits = listEvalAuditFiles(root, 200);
       const now = Date.now();
@@ -10870,7 +10885,7 @@ export function buildWebPanelApp(
       for (const a of audits) {
         let key: string | null = null;
         if (a.created_at) {
-          const d = new Date(a.created_at);
+          const d = new Date(a.created_at!);
           if (now - d.getTime() <= sevenDays) key = d.toISOString().slice(0, 10);
         }
         if (!key) {
@@ -10878,7 +10893,9 @@ export function buildWebPanelApp(
             a.filename.match(/(?:AUDIT|OBSERVATION)-(\d{4})(\d{2})(\d{2})/) ||
             a.filename.match(/(\d{8})/);
           if (m) {
-            const ds = m[0].length === 8 ? m[0] : `${m[1]}${m[2]}${m[3]}`;
+            const ds = m![0]!.length === 8
+              ? m![0]!
+              : `${m![1]}${m![2]}${m![3]}`;
             const d = new Date(+ds.slice(0, 4), +ds.slice(4, 6) - 1, +ds.slice(6, 8));
             if (now - d.getTime() <= sevenDays) {
               key = `${ds.slice(0, 4)}-${ds.slice(4, 6)}-${ds.slice(6, 8)}`;
@@ -10886,8 +10903,9 @@ export function buildWebPanelApp(
           }
         }
         if (!key) continue;
-        if (!byDate.has(key)) byDate.set(key, []);
-        byDate.get(key)!.push(a);
+        const dateKey = key as string;
+        if (!byDate.has(dateKey)) byDate.set(dateKey, []);
+        byDate.get(dateKey)!.push(a);
       }
 
       const history = [...byDate.entries()]
@@ -10896,7 +10914,7 @@ export function buildWebPanelApp(
           const latest = dayAudits[dayAudits.length - 1]!;
           return {
             date,
-            score: latest.score ?? 75,
+            score: latest.score ?? null,
             violations: 0,
             files_checked: dayAudits.length,
             filename: latest.filename,
@@ -13958,6 +13976,10 @@ export function buildWebPanelApp(
   // Subscribe to runtime session events once and fan-out to all clients.
   // Also push qualifying event types into the doorbell ring buffer.
   const sessionLastSdkFailureDetail = new Map<string, Record<string, unknown>>();
+  const sessionRootFault = new Map<
+    string,
+    { root_fault_id: string; root_event_id: string }
+  >();
 
   function pickSdkErrorText(
     pl: Record<string, unknown>,
@@ -14182,6 +14204,32 @@ export function buildWebPanelApp(
           mergedSdk,
           upstreamErr,
         );
+        const failureCode = extractStableFailureCode(
+          mergedSdk["failure_code"] ??
+            plEnd["failure_code"] ??
+            plEnd["reason"] ??
+            detail ??
+            description,
+        );
+        const existingRoot = sessionRootFault.get(event.session_id);
+        const rootFault = buildRootFaultFields({
+          event_id: event.event_id,
+          session_id: event.session_id,
+          task_id: String(plEnd["task_id"] ?? ""),
+          thread_key: String(plEnd["thread_key"] ?? ""),
+          agent_id: event.agent_id,
+          failure_code: failureCode,
+          message: description,
+          root_fault_id: existingRoot?.root_fault_id,
+          is_root: !existingRoot,
+          parent_event_id: existingRoot?.root_event_id,
+        });
+        if (!existingRoot) {
+          sessionRootFault.set(event.session_id, {
+            root_fault_id: rootFault.root_fault_id,
+            root_event_id: event.event_id,
+          });
+        }
         sseEmit("codeflowmu.failure", {
           type: "codeflowmu.failure",
           agent_id: event.agent_id,
@@ -14195,7 +14243,6 @@ export function buildWebPanelApp(
           description,
           message: description,
           error: detail || undefined,
-          severity,
           reason: reasonLabel,
           status: st,
           tool_call_count: plEnd["tool_call_count"],
@@ -14203,6 +14250,7 @@ export function buildWebPanelApp(
           report_written: plEnd["report_written"],
           report_path: plEnd["report_path"],
           ...mergedSdk,
+          ...rootFault,
           ts: Date.now(),
         });
         sessionLastSdkFailureDetail.delete(event.session_id);
@@ -14286,6 +14334,35 @@ export function buildWebPanelApp(
         st === "delayed" ||
         isTransientSdkError(errText);
       if (!isTransient && (st === "failed" || st === "error") && errText) {
+        const failureCode = extractStableFailureCode(
+          raw["failure_code"] ??
+            pl["failure_code"] ??
+            raw["code"] ??
+            pl["code"] ??
+            errText,
+        );
+        const existingRoot = sessionRootFault.get(event.session_id);
+        const rootFault = buildRootFaultFields({
+          event_id: event.event_id,
+          session_id: event.session_id,
+          task_id: String(raw["task_id"] ?? pl["task_id"] ?? ""),
+          thread_key: String(raw["thread_key"] ?? pl["thread_key"] ?? ""),
+          agent_id: event.agent_id,
+          tool_call_id: String(
+            raw["tool_call_id"] ?? raw["call_id"] ?? pl["tool_call_id"] ?? "",
+          ),
+          failure_code: failureCode,
+          message: errText,
+          root_fault_id: existingRoot?.root_fault_id,
+          is_root: !existingRoot,
+          parent_event_id: existingRoot?.root_event_id,
+        });
+        if (!existingRoot) {
+          sessionRootFault.set(event.session_id, {
+            root_fault_id: rootFault.root_fault_id,
+            root_event_id: event.event_id,
+          });
+        }
         sseEmit("codeflowmu.failure", {
           agent_id: event.agent_id,
           failure_type: "tool_error",
@@ -14294,6 +14371,7 @@ export function buildWebPanelApp(
           recovered: false,
           session_id: event.session_id,
           run_id: event.run_id,
+          ...rootFault,
           ts: Date.now(),
         });
       }
@@ -16698,14 +16776,17 @@ export async function startWebPanel(
       resolve({
         port,
         url,
-        close: () => {
+        close: async () => {
           stopMobileGatewayClient();
           // Cleanup SSE subscriptions + heartbeat timer before closing HTTP server.
           const cleanup = (app as unknown as { _sseCleanup?: () => void })._sseCleanup;
           cleanup?.();
-          return new Promise<void>((res, rej) =>
-            server.close((e) => (e ? rej(e) : res())),
-          );
+          const result = await closeHttpServerBounded(server);
+          if (result.forced) {
+            log.warn(
+              `[web-panel] forced remaining HTTP connections closed after shutdown timeout`,
+            );
+          }
         },
       });
     });

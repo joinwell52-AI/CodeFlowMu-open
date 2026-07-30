@@ -6,10 +6,11 @@
   "use strict";
 
   /** 本机当前运行的 PWA 包版本（发版时与 version.json / index.html ?v= 对齐） */
-  var BUNDLE_VERSION = "V1.0.54";
-  var PWA_CACHE_BUST = "1.0.54";
+  var BUNDLE_VERSION = "V1.0.55";
+  var PWA_CACHE_BUST = "1.0.55";
   var PWA_VERSION_STORAGE_KEY = "cfm_pwa_installed_version";
   var PWA_LEGACY_CACHE_NAMES = [
+    "codeflowmu-pwa-v1.0.54",
     "codeflowmu-pwa-v1.0.52",
     "codeflowmu-pwa-v1.0.51",
     "codeflowmu-pwa-v1.0.50",
@@ -1255,6 +1256,7 @@
       updated_at: row.updated_at || row.mtime || "",
       parent: row.parent || row.parent_task_id || (row.yaml && row.yaml.parent) || "",
       parent_task_id: row.parent_task_id || row.parent || (row.yaml && row.yaml.parent) || "",
+      task_spec_admission: row.task_spec_admission || null,
       body: row.body || "",
     };
   }
@@ -1671,7 +1673,7 @@
   function statusBadgeClass(st, kind) {
     st = (st || "todo").toLowerCase();
     if (st === "blocked") return "blocked";
-    if (st === "failed") return "failed";
+    if (st === "failed" || st === "task_spec_rejected") return "failed";
     if (kind === "approval") {
       if (st === "approved") return "done";
       if (st === "rejected") return "failed";
@@ -1930,7 +1932,7 @@
     var id = item.filename || item.id || "—";
     var title = item.title || id;
     var st = item.status || item.bucket || "todo";
-    var alertCls = st === "blocked" || st === "failed" ? " card-alert" : "";
+    var alertCls = st === "blocked" || st === "failed" || st === "task_spec_rejected" ? " card-alert" : "";
     var sender = item.sender || taskSenderCode(item) || "—";
     var recipient = item.recipient || taskRecipientCode(item) || "—";
     var timeStr = formatTaskTimeMinute(item.updated_at || item.created_at, item);
@@ -2072,7 +2074,7 @@
     if (filter === "review") return bucket === "review" || st === "review";
     if (filter === "done") return st === "done" || st === "completed" || bucket === "done";
     if (filter === "archive") return bucket === "archive" || bucket === "archived" || st === "archived";
-    if (filter === "exception") return st === "blocked" || st === "failed";
+    if (filter === "exception") return st === "blocked" || st === "failed" || st === "task_spec_rejected";
     return true;
   }
   function reportRoute(report) {
@@ -2795,10 +2797,19 @@
     var st = (task.status || "").toLowerCase();
     var alert = $("fpStatusAlert");
     if (alert) {
-      if (st === "blocked" || st === "failed") {
+      if (st === "blocked" || st === "failed" || st === "task_spec_rejected") {
         alert.classList.remove("hidden");
-        alert.className = "detail-alert " + st;
-        alert.textContent = t("reportNeedsAction") + " (" + st + ")";
+        alert.className = "detail-alert failed";
+        if (st === "task_spec_rejected") {
+          var admission = task.task_spec_admission || {};
+          var findingIds = (admission.blocking_findings || [])
+            .map(function (finding) { return finding && finding.id; })
+            .filter(Boolean)
+            .join(", ");
+          alert.textContent = t("taskSpecRejected") + (findingIds ? "：" + findingIds : "");
+        } else {
+          alert.textContent = t("reportNeedsAction") + " (" + st + ")";
+        }
       } else {
         alert.classList.add("hidden");
       }

@@ -178,4 +178,65 @@ describe("EvalObservationGenerator", () => {
       assert.equal(second, null);
     });
   });
+
+  it("excludes archived child chains from active EVAL violations", () => {
+    const rootId = "TASK-20260610-300";
+    const analysis = buildEvalObservationAnalysisFromRows({
+      pmReportFilename: "REPORT-20260610-301-PM-to-ADMIN.md",
+      pmReportContent: `---
+task_id: ${rootId}
+thread_key: panel-task-300
+status: done
+sender: PM
+recipient: ADMIN
+final: true
+---
+# Final summary
+${rootId}`,
+      pmReportFm: {
+        task_id: rootId,
+        thread_key: "panel-task-300",
+        status: "done",
+        sender: "PM",
+        recipient: "ADMIN",
+        final: true,
+      },
+      tasks: [
+        {
+          task_id: rootId,
+          filename: "TASK-20260610-300-ADMIN-to-PM.md",
+          sender: "ADMIN",
+          recipient: "PM",
+          thread_key: "panel-task-300",
+          bucket: "review",
+        },
+        {
+          task_id: "TASK-20260610-302",
+          filename: "TASK-20260610-302-PM-to-DEV.md",
+          sender: "PM",
+          recipient: "DEV",
+          parent: rootId,
+          thread_key: "panel-task-300",
+          bucket: "archive",
+          yaml: { archive_mode: "force" },
+        },
+      ] as unknown as LedgerTaskRecord[],
+      reports: [],
+      reviews: [],
+      actionEvidence: [],
+      issueCount: 0,
+    });
+    assert.ok(analysis);
+    assert.equal(analysis!.pm_summary_consistency.covers_open_items, true);
+    assert.deepEqual(
+      analysis!.pm_summary_consistency.missing_child_task_ids,
+      [],
+    );
+    assert.equal(analysis!.evidence_gaps.length, 0);
+    assert.ok(
+      analysis!.findings.every(
+        (finding) => !finding.includes("TASK-20260610-302"),
+      ),
+    );
+  });
 });

@@ -966,6 +966,10 @@ describe("TaskDispatcher", () => {
       const rootId = "TASK-20260713-001";
       const devId = "TASK-20260713-002";
       await writeFile(
+        join(activeDir, `${rootId}-ADMIN-to-PM.md`),
+        `---\nprotocol: fcop\ntask_id: ${rootId}\nsender: ADMIN\nrecipient: PM\nthread_key: panel-task-001\nstate: active\n---\n# Root task\n`,
+      );
+      await writeFile(
         join(activeDir, `${devId}-PM-to-DEV.md`),
         `---\ntask_id: ${devId}\nsender: PM\nrecipient: DEV\nparent: ${rootId}\nthread_key: panel-task-001\nstate: active\n---\n`,
       );
@@ -1173,6 +1177,86 @@ status: pending
 
         const queuePath = agentTaskQueuePath(rootDir);
         await access(queuePath);
+      } finally {
+        await pipeline.shutdown();
+      }
+    });
+  });
+
+  it("rejects an invalid ADMIN task before PM claim even with business-gate override", async () => {
+    await withTempScheduler(async ({ rootDir, inboxDir, stateDir }) => {
+      const pipeline = await buildPipeline({
+        inboxDir,
+        stateDir,
+        projectRoot: rootDir,
+      });
+      try {
+        await pipeline.registry.register(
+          makeAgentSpec({ agent_id: "PM-01", role: "PM", layer: "leader" }),
+        );
+        const taskId = "TASK-20260730-050";
+        const filepath = join(inboxDir, `${taskId}-ADMIN-to-PM.md`);
+        await writeFile(
+          filepath,
+          `---
+protocol: fcop
+task_id: ${taskId}
+sender: ADMIN
+recipient: PM
+thread_key: invalid-spec
+planning_level: 0
+override_by: ADMIN
+override_reason: body says inspection
+state: inbox
+---
+
+# Long-running cross-module inspection
+
+Implement and deliver a cross-module architecture refactor.
+Stop and wait for approval, while continuing to dispatch downstream tasks.
+`,
+        );
+
+        const outcome = await pipeline.dispatcher.dispatchTaskFromControlPlane(
+          filepath,
+          `${taskId}-ADMIN-to-PM.md`,
+          "PM",
+          "test",
+          { bypassBusinessGates: true },
+        );
+
+        assert.equal(outcome.kind, "task_spec_rejected");
+        if (outcome.kind !== "task_spec_rejected") return;
+        assert.equal(outcome.decision, "rejected");
+        assert.equal(outcome.code, "TASK_SPEC_INVALID");
+        assert.ok(
+          outcome.blocking_findings.some(
+            (finding) => finding.id === "CLASSIFICATION_CONFLICT",
+          ),
+        );
+        assert.ok(
+          outcome.blocking_findings.some(
+            (finding) => finding.id === "LIFECYCLE_CONFLICT",
+          ),
+        );
+        assert.equal(
+          pipeline.events.filter(
+            (event) => event.event_type === "runtime.session_started",
+          ).length,
+          0,
+        );
+        assert.equal(frontmatterState(await readFile(filepath, "utf8")), "inbox");
+        await access(outcome.result_path);
+        await assert.rejects(() =>
+          access(
+            join(
+              rootDir,
+              ".codeflowmu",
+              "product-governance",
+              `${taskId}.json`,
+            ),
+          ),
+        );
       } finally {
         await pipeline.shutdown();
       }

@@ -715,6 +715,169 @@ def _read_file_frontmatter_fields(path: str) -> dict[str, str]:
     return _parse_yaml_frontmatter_fields(stripped[3:end])
 
 
+class _TaskResolutionError(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def _canonical_task_prefix(value: object) -> str:
+    match = re.search(r"TASK-\d{8}-\d{3,}", str(value or ""), re.IGNORECASE)
+    return match.group(0).upper() if match else ""
+
+
+def _task_candidate_matches(path: str, task_id: str) -> bool:
+    fields = _read_file_frontmatter_fields(path)
+    from_fm = _canonical_task_prefix(fields.get("task_id"))
+    from_name = _canonical_task_prefix(os.path.basename(path))
+    return task_id in {from_fm, from_name}
+
+
+def _resolve_lifecycle_task(
+    project_root: str,
+    task_token: object,
+) -> tuple[str, str, dict[str, str]]:
+    """Resolve one TASK from the five lifecycle buckets (legacy is fallback).
+
+    A lifecycle copy is authoritative over a legacy ``fcop/tasks`` mirror.
+    More than one lifecycle candidate is corruption/ambiguity and must fail
+    loudly instead of selecting whichever directory happens to be scanned first.
+    """
+    task_id = _canonical_task_prefix(task_token)
+    if not task_id:
+        raise _TaskResolutionError(
+            "TASK_ID_INVALID",
+            f"invalid task id: {task_token!r}",
+        )
+
+    fcop_root = os.path.join(project_root, "fcop")
+    lifecycle_hits: list[tuple[str, str]] = []
+    for stage in _LIFECYCLE_STAGES:
+        stage_dir = os.path.join(fcop_root, "_lifecycle", stage)
+        if not os.path.isdir(stage_dir):
+            continue
+        for path in glob.glob(os.path.join(stage_dir, f"{task_id}*.md")):
+            if os.path.isfile(path) and _task_candidate_matches(path, task_id):
+                lifecycle_hits.append((os.path.normpath(path), stage))
+
+    # Same path can be reached by overlapping glob/case rules on Windows.
+    lifecycle_hits = list(dict.fromkeys(lifecycle_hits))
+    if len(lifecycle_hits) > 1:
+        paths = ", ".join(path for path, _ in lifecycle_hits)
+        raise _TaskResolutionError(
+            "TASK_AMBIGUOUS",
+            f"multiple lifecycle tasks match {task_id}: {paths}",
+        )
+    if lifecycle_hits:
+        path, stage = lifecycle_hits[0]
+        return path, stage, _read_file_frontmatter_fields(path)
+
+    legacy_dir = os.path.join(fcop_root, "tasks")
+    legacy_hits = [
+        os.path.normpath(path)
+        for path in glob.glob(os.path.join(legacy_dir, f"{task_id}*.md"))
+        if os.path.isfile(path) and _task_candidate_matches(path, task_id)
+    ]
+    legacy_hits = list(dict.fromkeys(legacy_hits))
+    if len(legacy_hits) > 1:
+        raise _TaskResolutionError(
+            "TASK_AMBIGUOUS",
+            f"multiple legacy tasks match {task_id}: {', '.join(legacy_hits)}",
+        )
+    if legacy_hits:
+        path = legacy_hits[0]
+        return path, "tasks", _read_file_frontmatter_fields(path)
+
+    raise _TaskResolutionError(
+        "TASK_NOT_FOUND",
+        f"no task matches {task_id}",
+    )
+
+
+def _validate_write_report_target(
+    project_root: str,
+    args: dict,
+    original_args: dict | None = None,
+) -> tuple[str, str, dict[str, str]]:
+    original = original_args or args
+    task_token = _pick_alias(args, "task_id", "taskId", "filename", "id")
+    path, stage, fields = _resolve_lifecycle_task(project_root, task_token)
+
+    state = str(
+        fields.get("state")
+        or fields.get("status")
+        or stage
+    ).strip().lower()
+    if stage == "archive" or state in {"archive", "archived"}:
+        raise _TaskResolutionError(
+            "TASK_ARCHIVED",
+            f"task {_canonical_task_prefix(task_token)} is archived and cannot receive a report",
+        )
+    if stage in {"inbox", "review", "done"} or state in {
+        "inbox",
+        "review",
+        "done",
+        "completed",
+        "frozen",
+    }:
+        raise _TaskResolutionError(
+            "TASK_STATE_DISALLOWS_REPORT",
+            f"task {_canonical_task_prefix(task_token)} in state {stage}/{state} cannot receive a report",
+        )
+
+    reporter = (_pick_alias(args, "reporter", "sender") or "").upper()
+    recipient = (_pick_alias(args, "recipient") or "").upper()
+    task_recipient = str(
+        fields.get("recipient") or fields.get("to") or ""
+    ).strip().upper()
+    task_sender = str(
+        fields.get("sender") or fields.get("from") or ""
+    ).strip().upper()
+    if not reporter or not recipient:
+        raise _TaskResolutionError(
+            "REPORT_PARTICIPANTS_REQUIRED",
+            "write_report requires reporter and recipient",
+        )
+    if task_recipient and reporter != task_recipient:
+        raise _TaskResolutionError(
+            "REPORTER_MISMATCH",
+            f"reporter {reporter} does not match task recipient {task_recipient}",
+        )
+    if task_sender and recipient != task_sender:
+        raise _TaskResolutionError(
+            "REPORT_RECIPIENT_MISMATCH",
+            f"report recipient {recipient} does not match task sender {task_sender}",
+        )
+
+    requested_thread = _pick_alias(original, "thread_key", "threadKey") or ""
+    task_thread = str(fields.get("thread_key") or "").strip()
+    if requested_thread and requested_thread != task_thread:
+        raise _TaskResolutionError(
+            "THREAD_KEY_MISMATCH",
+            f"thread_key {requested_thread} does not match task thread_key {task_thread}",
+        )
+    return path, stage, fields
+
+
+def _error_envelope(
+    code: str,
+    message: str,
+    *,
+    tool: str,
+) -> dict:
+    return {
+        "status": "error",
+        "isError": True,
+        "error": {
+            "code": code,
+            "message": message,
+        },
+        "tool": tool,
+        "file_created": False,
+        "ledger_appended": False,
+    }
+
+
 def _first_task_prefix_in_text(text: str) -> str | None:
     # `_TASK_PREFIX_RE` is anchored for validating a single token. References
     # may be a YAML/JSON list, so extraction must search anywhere in the text.
@@ -1249,25 +1412,23 @@ def _report_history_paths(project_root: str) -> list[str]:
     return sorted(set(os.path.normpath(path) for path in paths))
 
 
-def _fallback_write_report(project_root: str, args: dict, reason: Exception) -> dict:
-    reporter = (_pick_alias(args, "reporter", "sender") or "PM").upper()
-    recipient = (_pick_alias(args, "recipient") or "ADMIN").upper()
+def _write_validated_report(
+    project_root: str,
+    args: dict,
+    original_args: dict | None = None,
+) -> dict:
+    resolved_task_path, _, task_fields = _validate_write_report_target(
+        project_root,
+        args,
+        original_args,
+    )
+    reporter = (_pick_alias(args, "reporter", "sender") or "").upper()
+    recipient = (_pick_alias(args, "recipient") or "").upper()
     task_id_raw = (_pick_alias(args, "task_id", "taskId", "filename", "id") or "").replace(".md", "")
     task_match = re.search(r"TASK-\d{8}-\d{3,}", task_id_raw, re.IGNORECASE)
     task_id = task_match.group(0).upper() if task_match else task_id_raw
     status = _normalize_report_status(_pick_alias(args, "status")) or "in_progress"
     body = str(args.get("body") or "")
-    resolved_task_path = _resolve_write_report_task_id(project_root, task_id)
-    if not task_id or not os.path.isfile(resolved_task_path):
-        return {
-            "ok": False,
-            "fallback": "write_report",
-            "reason": "task_not_found",
-            "detail": str(reason),
-            "task_id": task_id,
-        }
-
-    task_fields = _read_file_frontmatter_fields(resolved_task_path)
     try:
         rework_round = max(0, int(task_fields.get("reopened_count") or 0))
     except (TypeError, ValueError):
@@ -1312,9 +1473,10 @@ def _fallback_write_report(project_root: str, args: dict, reason: Exception) -> 
                 continue
             return {
                 "ok": True,
-                "fallback": "write_report",
+                "status": "success",
+                "isError": False,
+                "writer": "validated_lifecycle_writer",
                 "deduplicated": True,
-                "reason": str(reason),
                 "filename": os.path.basename(existing_path),
                 "path": existing_path,
                 "rework_round": rework_round,
@@ -1341,8 +1503,12 @@ def _fallback_write_report(project_root: str, args: dict, reason: Exception) -> 
         "submission_attempt": revision,
         "content_hash": content_hash,
         "created_at": _now_iso(),
-        "writer": "codeflowmu-one-shot-fallback",
+        "writer": "codeflowmu-validated-lifecycle-writer",
     }
+    thread_key = str(task_fields.get("thread_key") or "").strip()
+    if thread_key:
+        fields["thread_key"] = thread_key
+    fields["references"] = [task_id]
     session_id = _pick_alias(args, "session_id", "sessionId")
     run_id = _pick_alias(args, "run_id", "runId")
     evidence_refs = args.get("evidence_refs") or args.get("evidenceRefs")
@@ -1361,7 +1527,13 @@ def _fallback_write_report(project_root: str, args: dict, reason: Exception) -> 
     if previous_id:
         fields["revision_of"] = previous_id
         fields["supersedes"] = previous_id
-    _write_frontmatter_file(path, fields, body)
+    tmp_path = f"{path}.tmp-{os.getpid()}"
+    try:
+        _write_frontmatter_file(tmp_path, fields, body)
+        os.replace(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
     try:
         _enrich_pm_admin_report_frontmatter(project_root, path, args)
     except Exception as exc:
@@ -1369,10 +1541,12 @@ def _fallback_write_report(project_root: str, args: dict, reason: Exception) -> 
     _ledger_rebuild(project_root)
     return {
         "ok": True,
-        "fallback": "write_report",
-        "reason": str(reason),
+        "status": "success",
+        "isError": False,
+        "writer": "validated_lifecycle_writer",
         "filename": filename,
         "path": path,
+        "task_path": resolved_task_path,
         "revision": revision,
         "rework_round": rework_round,
         **({"revision_of": previous_id, "supersedes": previous_id} if previous_id else {}),
@@ -1603,6 +1777,7 @@ def main() -> None:
     if not isinstance(args, dict):
         print(json.dumps({"error": "arguments must be an object"}))
         sys.exit(2)
+    original_args = dict(args)
 
     if tool == "create_task":
         tool = "write_task"
@@ -1618,6 +1793,35 @@ def main() -> None:
         if tid:
             _quarantine_corrupt_inbox_stub(project_root, tid)
         args = normalize_write_report_args(project_root, args)
+        args.update(report_runtime_metadata)
+
+        try:
+            print(
+                json.dumps(
+                    _write_validated_report(project_root, args, original_args),
+                    ensure_ascii=False,
+                    default=str,
+                )
+            )
+        except _TaskResolutionError as exc:
+            print(
+                json.dumps(
+                    _error_envelope(exc.code, str(exc), tool=tool),
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        except Exception as exc:
+            print(
+                json.dumps(
+                    _error_envelope("REPORT_WRITE_FAILED", str(exc), tool=tool),
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return
 
     if tool == "write_task":
         args = normalize_write_task_args(project_root, args)
@@ -1646,7 +1850,36 @@ def main() -> None:
             print(_handle_list_tasks(project_root, args))
         except Exception as exc:
             print(
-                json.dumps({"error": str(exc), "tool": tool, "args": args}, ensure_ascii=False),
+                json.dumps(
+                    _error_envelope("LIST_TASKS_FAILED", str(exc), tool=tool),
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return
+
+    if tool == "read_task":
+        try:
+            token = _pick_alias(args, "task_id", "taskId", "filename", "id")
+            task_path, _, _ = _resolve_lifecycle_task(project_root, token)
+            with open(task_path, encoding="utf-8") as fh:
+                print(fh.read())
+        except _TaskResolutionError as exc:
+            print(
+                json.dumps(
+                    _error_envelope(exc.code, str(exc), tool=tool),
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        except Exception as exc:
+            print(
+                json.dumps(
+                    _error_envelope("READ_TASK_FAILED", str(exc), tool=tool),
+                    ensure_ascii=False,
+                ),
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -1688,19 +1921,7 @@ def main() -> None:
 
     try:
         out = fn(**args)
-        if tool in ("write_report", "write_task") and isinstance(out, str):
-            text = out.strip()
-            if "TaskNotFoundError" in text or text.lower().startswith("错误 / error"):
-                fallback = (
-                    _fallback_write_report(project_root, {**args, **report_runtime_metadata}, RuntimeError(text))
-                    if tool == "write_report"
-                    else _fallback_write_task(project_root, args, RuntimeError(text))
-                )
-                print(json.dumps(fallback, ensure_ascii=False, default=str))
-                return
-        if tool == "write_report":
-            _post_write_report(project_root, {**args, **report_runtime_metadata}, out)
-        elif tool == "write_task":
+        if tool == "write_task":
             _post_write_task(project_root, args, out)
         elif tool in _LIFECYCLE_MUTATION_TOOLS and tool not in _KERNEL_EXCLUSIVE_TOOLS:
             _ledger_rebuild(project_root)
@@ -1709,9 +1930,6 @@ def main() -> None:
         else:
             print(json.dumps(out, ensure_ascii=False, default=str))
     except TypeError as exc:
-        if tool == "write_report":
-            print(json.dumps(_fallback_write_report(project_root, {**args, **report_runtime_metadata}, exc), ensure_ascii=False, default=str))
-            return
         if tool == "write_task":
             print(json.dumps(_fallback_write_task(project_root, args, exc), ensure_ascii=False, default=str))
             return
@@ -1725,9 +1943,6 @@ def main() -> None:
         )
         sys.exit(1)
     except Exception as exc:
-        if tool == "write_report":
-            print(json.dumps(_fallback_write_report(project_root, {**args, **report_runtime_metadata}, exc), ensure_ascii=False, default=str))
-            return
         if tool == "write_task":
             print(json.dumps(_fallback_write_task(project_root, args, exc), ensure_ascii=False, default=str))
             return

@@ -27,6 +27,7 @@ export const PANEL_EVENT_TYPES = [
   "codeflowmu.report_gate.waiting_report",
   "codeflowmu.sdk.cooldown",
   "codeflowmu.downstream_auto_nudge",
+  "codeflowmu.task_spec_rejected",
 ] as const;
 
 export type PanelEventType = (typeof PANEL_EVENT_TYPES)[number];

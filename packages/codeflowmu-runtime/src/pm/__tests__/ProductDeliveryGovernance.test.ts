@@ -69,6 +69,14 @@ test("classifies Level 0-3 without over-planning", () => {
 
   assert.equal(classifyProductTask("为现有模块新增普通导出功能").planning_level, 2);
   assert.equal(classifyProductTask("查询当前运行状态，不做实现").planning_level, 0);
+  assert.equal(
+    classifyProductTask("跨模块架构重构的长期巡检，需要完成实现和交付").planning_level,
+    3,
+  );
+  assert.equal(
+    classifyProductTask("只读调研 PWA 与 UI 方案，不做实现").planning_level,
+    0,
+  );
 });
 
 test("ADMIN override is scoped and audited in classification", () => {

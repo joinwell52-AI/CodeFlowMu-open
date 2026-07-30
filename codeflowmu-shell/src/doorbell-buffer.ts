@@ -109,6 +109,10 @@ export interface DoorbellEvent {
   duration_ms?: number;
   /** Full original payload (pass-through, opaque). */
   payload: unknown;
+  /** Stable incident identity. Derived failure events share this value. */
+  root_fault_id?: string;
+  /** Whether this row is the independently countable root incident. */
+  is_root?: boolean;
 }
 
 export interface DoorbellQueryOpts {
@@ -156,19 +160,8 @@ export class DoorbellBuffer {
    */
   push(event_type: string, payload: unknown): void {
     if (!DOORBELL_BUFFERED_TYPES.has(event_type)) return;
-    const p = (payload ?? {}) as Record<string, unknown>;
-    if (
-      event_type === "codeflowmu.failure" ||
-      event_type === "codeflowmu.failure_recorded"
-    ) {
-      const key = this._failureDedupeKey(p);
-      if (key && this._hasFailureKey(key)) return;
-    }
     const entry = this._extract(event_type, payload);
-    this._buf.push(entry);
-    if (this._buf.length > this._max) {
-      this._buf.shift();
-    }
+    this._upsert(entry);
   }
 
   /**
@@ -186,10 +179,7 @@ export class DoorbellBuffer {
       entry.ts = ts;
       entry.at = new Date(ts).toISOString();
     }
-    this._buf.push(entry);
-    if (this._buf.length > this._max) {
-      this._buf.shift();
-    }
+    this._upsert(entry);
   }
 
   /**
@@ -241,6 +231,11 @@ export class DoorbellBuffer {
   // ── private ──────────────────────────────────────────────────────────
 
   private _failureDedupeKey(p: Record<string, unknown>): string | null {
+    const rootFaultId =
+      typeof p["root_fault_id"] === "string"
+        ? p["root_fault_id"].trim()
+        : "";
+    if (rootFaultId) return `root:${rootFaultId}`;
     const sid =
       (typeof p["session_id"] === "string" && p["session_id"]) ||
       (typeof p["sessionId"] === "string" && p["sessionId"]) ||
@@ -251,7 +246,7 @@ export class DoorbellBuffer {
     return sid ? `${sid}|${ft}` : null;
   }
 
-  private _hasFailureKey(key: string): boolean {
+  private _findFailureIndex(key: string): number {
     for (let i = this._buf.length - 1; i >= 0; i--) {
       const e = this._buf[i]!;
       if (
@@ -266,9 +261,64 @@ export class DoorbellBuffer {
         session_id: e.session_id ?? ep["session_id"],
         failure_type: ep["failure_type"],
       });
-      if (ek === key) return true;
+      if (ek === key) return i;
     }
-    return false;
+    return -1;
+  }
+
+  private _upsert(entry: DoorbellEvent): void {
+    const isFailure =
+      entry.event_type === "codeflowmu.failure" ||
+      entry.event_type === "codeflowmu.failure_recorded";
+    if (isFailure) {
+      const payload = (entry.payload ?? {}) as Record<string, unknown>;
+      const key = this._failureDedupeKey(payload);
+      const existingIndex = key ? this._findFailureIndex(key) : -1;
+      if (existingIndex >= 0) {
+        const existing = this._buf[existingIndex]!;
+        const existingPayload = (existing.payload ?? {}) as Record<string, unknown>;
+        const derived = Array.isArray(existingPayload["derived_events"])
+          ? [...(existingPayload["derived_events"] as unknown[])]
+          : [];
+        const incomingFaultId = String(payload["fault_id"] ?? "").trim();
+        const alreadyTracked = derived.some(
+          (item) =>
+            item &&
+            typeof item === "object" &&
+            String((item as Record<string, unknown>)["fault_id"] ?? "") ===
+              incomingFaultId,
+        );
+        if (
+          incomingFaultId &&
+          incomingFaultId !== String(existingPayload["fault_id"] ?? "") &&
+          !alreadyTracked
+        ) {
+          derived.push({
+            fault_id: incomingFaultId,
+            event_type: entry.event_type,
+            parent_event_id: payload["parent_event_id"],
+            failure_type: payload["failure_type"],
+            at: entry.at,
+          });
+        }
+        const incomingIsRoot = payload["is_root"] === true;
+        const existingIsRoot = existingPayload["is_root"] === true;
+        const primary = incomingIsRoot && !existingIsRoot ? entry : existing;
+        const primaryPayload =
+          incomingIsRoot && !existingIsRoot ? payload : existingPayload;
+        primary.payload = {
+          ...primaryPayload,
+          ...(derived.length > 0 ? { derived_events: derived } : {}),
+          occurrence_count: 1,
+        };
+        this._buf[existingIndex] = primary;
+        return;
+      }
+    }
+    this._buf.push(entry);
+    if (this._buf.length > this._max) {
+      this._buf.shift();
+    }
   }
 
   private _extract(event_type: string, payload: unknown): DoorbellEvent {
@@ -347,6 +397,11 @@ export class DoorbellBuffer {
 
     const durationMs =
       typeof p["duration_ms"] === "number" ? p["duration_ms"] : undefined;
+    const rootFaultId =
+      typeof p["root_fault_id"] === "string" && p["root_fault_id"].trim()
+        ? p["root_fault_id"].trim()
+        : undefined;
+    const isRoot = typeof p["is_root"] === "boolean" ? p["is_root"] : undefined;
 
     const pickStr = (obj: Record<string, unknown>, ...keys: string[]): string | undefined => {
       for (const k of keys) {
@@ -384,6 +439,8 @@ export class DoorbellBuffer {
       ...(argsPreview !== undefined ? { args_preview: argsPreview } : {}),
       ...(status !== undefined ? { status } : {}),
       ...(durationMs !== undefined ? { duration_ms: durationMs } : {}),
+      ...(rootFaultId !== undefined ? { root_fault_id: rootFaultId } : {}),
+      ...(isRoot !== undefined ? { is_root: isRoot } : {}),
       payload,
     };
   }

@@ -125,6 +125,10 @@ export interface LedgerReportRecord {
   qa_browser_verified?: boolean;
   /** Waiting for an upstream REPORT; not a terminal child outcome. */
   dependency_pending?: boolean;
+  /** Lifecycle-effective status; archived parents make old open reports historical. */
+  effective_status?: "active" | "resolved" | "historical";
+  parent_task_state?: LedgerLifecycleBucket;
+  inactive_reason?: "parent_archived" | "parent_force_archived";
 }
 
 export interface LedgerThreadRecord {

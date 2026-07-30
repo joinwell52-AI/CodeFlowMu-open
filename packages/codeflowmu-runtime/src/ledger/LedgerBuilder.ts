@@ -573,6 +573,26 @@ export class LedgerBuilder {
       taskBodies,
     });
     reports = applyCanonicalPmFinalReportKinds(reports, tasks, reportBodies);
+    reports = reports.map((report) => {
+      const parentTask = tasks.find((task) =>
+        taskIdMatchesReportTask(
+          task,
+          report.parent_task_id || report.task_id,
+        ),
+      );
+      if (parentTask?.bucket !== "archive") return report;
+      const forceArchived =
+        String(parentTask.yaml?.archive_mode ?? "").toLowerCase() === "force" ||
+        String(parentTask.yaml?.force_archived ?? "").toLowerCase() === "true";
+      return {
+        ...report,
+        effective_status: "historical" as const,
+        parent_task_state: "archive" as const,
+        inactive_reason: forceArchived
+          ? ("parent_force_archived" as const)
+          : ("parent_archived" as const),
+      };
+    });
     const reviewApproved = await this.#loadHotPathReviewApproved(
       tasks,
       layout.reviewsDir,
@@ -1116,6 +1136,7 @@ export class LedgerBuilder {
       if (!rec.report_ids.includes(r.report_id)) rec.report_ids.push(r.report_id);
 
       if (
+        r.effective_status !== "historical" &&
         r.recipient.toUpperCase() === "PM" &&
         (r.status === "done" || r.status === "completed")
       ) {

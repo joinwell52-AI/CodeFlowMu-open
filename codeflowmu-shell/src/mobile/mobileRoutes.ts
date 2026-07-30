@@ -71,6 +71,40 @@ import { normalizeMobileUiLang, type MobileUiLang } from "./mobileUiLocale.ts";
 
 export type MobileLiveActivityEvent = ThinkConsoleEvent;
 
+function canonicalAdmissionTaskId(value: unknown): string {
+  const raw = String(value ?? "").replace(/\.md$/i, "").trim();
+  return raw.match(/^TASK-\d{8}-\d{3,}/i)?.[0].toUpperCase() ?? raw.toUpperCase();
+}
+
+export function readTaskSpecAdmissionForMobile(
+  projectRoot: string,
+  taskId: unknown,
+): Record<string, unknown> | null {
+  const canonical = canonicalAdmissionTaskId(taskId);
+  if (!canonical) return null;
+  const path = join(
+    projectRoot,
+    ".codeflowmu",
+    "task-spec-admission",
+    `${canonical.replace(/[^A-Z0-9._-]/g, "-")}.json`,
+  );
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      parsed.decision === "rejected" &&
+      parsed.code === "TASK_SPEC_INVALID"
+    ) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // No current rejection for this task.
+  }
+  return null;
+}
+
 function activityMatchesTaskFilter(
   event: MobileLiveActivityEvent,
   taskId: string,
@@ -585,7 +619,18 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
       const filtered = filterTasksForRecipient(tasks as Record<string, unknown>[], recipient);
       const slim = filtered.slice(0, limit).map((t) => {
         const title = enrichTaskTitle(projectRoot, ctx.getAdminTasksDir(), t);
-        const item = slimMobileTask(t);
+        const admission = readTaskSpecAdmissionForMobile(
+          projectRoot,
+          t.task_id ?? t.filename,
+        );
+        const projected = admission
+          ? {
+              ...t,
+              display_status: "task_spec_rejected",
+              task_spec_admission: admission,
+            }
+          : t;
+        const item = slimMobileTask(projected);
         return title ? { ...item, title } : item;
       });
       res.json({ tasks: slim, filtered_by: recipient ?? null });
@@ -615,6 +660,10 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
       const { tasks } = await listTasksFromLedgerAuto(projectRoot, { limit: 2000 });
       const taskRow = tasks.find((row) => String(row.filename ?? "") === filename) ?? {};
       const taskId = String(doc.task_id ?? taskRow.task_id ?? filename);
+      const taskSpecAdmission = readTaskSpecAdmissionForMobile(
+        projectRoot,
+        taskId,
+      );
       const { reports } = await listReportsFromLedgerAuto(projectRoot, { limit: 2000 });
       const relatedReports = reports
         .filter((row) => rowLinksTask(row, taskId))
@@ -636,8 +685,18 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
       const mergedTask = {
         ...doc,
         ...taskRow,
+        ...(taskSpecAdmission
+          ? {
+              display_status: "task_spec_rejected",
+              task_spec_admission: taskSpecAdmission,
+            }
+          : {}),
         title: titleFromTaskDoc(doc) || String(taskRow.subject ?? doc.subject ?? doc.title ?? filename),
-        status: taskRow.display_status ?? doc.status ?? taskRow.bucket,
+        status:
+          (taskSpecAdmission ? "task_spec_rejected" : undefined) ??
+          taskRow.display_status ??
+          doc.status ??
+          taskRow.bucket,
         bucket: taskRow.scope ?? taskRow.bucket ?? taskRow._state,
         from: taskRow.sender ?? doc.sender,
         to: taskRow.recipient ?? doc.recipient,
@@ -672,6 +731,7 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
       });
       res.json({
         task: mergedTask,
+        task_spec_admission: taskSpecAdmission,
         related_reports: relatedReports,
         related_issues: issues,
         transitions,

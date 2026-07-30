@@ -1,6 +1,6 @@
 {
   "name": "codeflowmu-shell",
-  "version": "1.2.1-open",
+  "version": "1.2.2-open",
   "private": false,
   "description": "codeflowmu Shell CLI for running the local codeflowmu runtime, web panel, and collaboration bridge.",
   "type": "module",
@@ -8,8 +8,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "start": "tsx src/open-start.ts",
-    "start:daemon": "tsx src/main.ts --no-panel",
-    "start:no-ui": "tsx src/main.ts --no-panel",
+    "start:daemon": "node scripts/runtime-preflight.cjs --no-panel",
+    "start:no-ui": "node scripts/runtime-preflight.cjs --no-panel",
     "test": "node --import tsx --test --test-concurrency=1 \"src/__tests__/*.test.ts\"",
     "build": "tsc --noEmit && esbuild src/main.ts --bundle --platform=node --target=node22 --format=esm --loader:.map=empty --external:@cursor/sdk --external:@anysphere/* --external:playwright --external:playwright/* --external:playwright-core --external:playwright-core/* --banner:js=\"#!/usr/bin/env node\" --outfile=dist/main.bundle.js",
     "pack:win": "pack.cmd"
@@ -21,7 +21,9 @@
     "@types/express": "^5.0.6",
     "codeflowmu": "file:..",
     "express": "^5.2.1",
-    "playwright": "^1.61.1"
+    "playwright": "^1.61.1",
+    "tsx": "^4.21.0",
+    "yaml": "^2.8.4"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -29,7 +31,6 @@
     "esbuild": "^0.25.0",
     "postject": "^1.0.0-alpha.6",
     "supertest": "^7.2.2",
-    "tsx": "^4.21.0",
     "typescript": "^5.6.0"
   },
   "license": "MIT",
@@ -50,6 +51,7 @@
     "package.json",
     "dist/**",
     "examples/**",
+    "scripts/runtime-preflight.cjs",
     "src/**/*.ts",
     "!src/**/__tests__/**"
   ],

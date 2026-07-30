@@ -354,6 +354,20 @@ export {
   qaGateToDispatchSkipReason,
 } from "./qaDispatchGate.ts";
 export {
+  evaluateTaskSpecAdmission,
+  persistTaskSpecAdmissionResult,
+  taskSpecAdmissionRecordPath,
+  TASK_SPEC_INVALID,
+  TASK_SPEC_VALID,
+  type TaskSpecAdmissionAccepted,
+  type TaskSpecAdmissionFinding,
+  type TaskSpecAdmissionFindingId,
+  type TaskSpecAdmissionInput,
+  type TaskSpecAdmissionRejected,
+  type TaskSpecAdmissionResult,
+} from "./TaskSpecAdmissionGate.ts";
+
+export {
   PM_RUNTIME_CONTROL_TOOL_NAMES,
   PM_RUNTIME_CONTROL_TOOL_DEFINITIONS,
   isPmRuntimeControlTool,

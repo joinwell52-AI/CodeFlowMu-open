@@ -46,6 +46,8 @@ export interface LogCenterRow {
   reason?: string;
   call_id?: string;
   normalized_error_code?: string;
+  root_fault_id?: string;
+  is_root?: boolean;
   message?: string;
   tool_name?: string;
   args_preview?: string;
@@ -240,6 +242,12 @@ function doorbellToRow(e: DoorbellEvent): LogCenterRow {
         : typeof merged.settlement_reason === "string"
           ? merged.settlement_reason
           : undefined;
+  const rootFaultId =
+    typeof merged.root_fault_id === "string" && merged.root_fault_id.trim()
+      ? merged.root_fault_id.trim()
+      : e.root_fault_id;
+  const isRoot =
+    typeof merged.is_root === "boolean" ? merged.is_root : e.is_root;
 
   let message = "";
   if (eventType === "codeflowmu.failure") {
@@ -274,6 +282,8 @@ function doorbellToRow(e: DoorbellEvent): LogCenterRow {
     ...(reason ? { reason } : {}),
     ...(callId ? { call_id: callId } : {}),
     ...(normalizedErrorCode ? { normalized_error_code: normalizedErrorCode } : {}),
+    ...(rootFaultId ? { root_fault_id: rootFaultId } : {}),
+    ...(isRoot !== undefined ? { is_root: isRoot } : {}),
     message: message.slice(0, 500),
     ...(e.tool_name ? { tool_name: e.tool_name } : {}),
     ...(e.args_preview ? { args_preview: e.args_preview } : {}),
@@ -455,6 +465,7 @@ export function queryLogCenter(
   const jsonl = logger?.tailRecent(800) ?? [];
 
   const seen = new Set<string>();
+  const seenRootFaults = new Set<string>();
   const merged: LogCenterRow[] = [];
   // Query-local dedupe keeps repeated/concurrent API reads deterministic.
   // A process-global registry would make the second request temporarily lose rows.
@@ -470,10 +481,16 @@ export function queryLogCenter(
       event_type: row.event_type,
       message: row.message,
     });
+  const passRootFaultDedupe = (row: LogCenterRow): boolean => {
+    if (!row.root_fault_id) return true;
+    if (seenRootFaults.has(row.root_fault_id)) return false;
+    seenRootFaults.add(row.root_fault_id);
+    return true;
+  };
 
   for (const e of door.events) {
     const row = doorbellToRow(e);
-    if (!seen.has(row.id) && passDisplayDedupe(row)) {
+    if (!seen.has(row.id) && passRootFaultDedupe(row) && passDisplayDedupe(row)) {
       seen.add(row.id);
       merged.push(row);
     }
@@ -481,7 +498,7 @@ export function queryLogCenter(
   for (const rec of jsonl) {
     const row = recordToRow(rec);
     const key = `${row.ts}:${row.event_type}:${row.session_id ?? ""}`;
-    if (!seen.has(key) && passDisplayDedupe(row)) {
+    if (!seen.has(key) && passRootFaultDedupe(row) && passDisplayDedupe(row)) {
       seen.add(key);
       merged.push(row);
     }

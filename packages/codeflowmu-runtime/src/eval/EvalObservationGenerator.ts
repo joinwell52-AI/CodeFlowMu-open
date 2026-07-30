@@ -1,12 +1,12 @@
 import { promises as fs } from "node:fs";
 import { basename, isAbsolute, join, relative } from "node:path";
+import { stringify as stringifyYaml } from "yaml";
 
 import { isWorkerReportToPm } from "../fcop/governance.ts";
 import { bodyAfterFrontmatter } from "../ledger/leaderLedgerContextPack.ts";
 import {
   listField,
   parseMarkdownFrontmatter,
-  renderFrontmatter,
 } from "../ledger/frontmatter.ts";
 import { taskParentMatchesRoot } from "../ledger/lifecycleProjection.ts";
 import { resolveLedgerLayout } from "../ledger/paths.ts";
@@ -40,6 +40,20 @@ export type EvalObservationInput = {
 };
 
 export type EvalRiskLevel = "low" | "medium" | "high";
+export type EvalFindingPriority = "P0" | "P1" | "P2" | "P3";
+
+export type StructuredEvalFinding = {
+  id: string;
+  priority: EvalFindingPriority;
+  message: string;
+  root_key: string;
+};
+
+export type EvalScore = {
+  value: number | null;
+  status: "scored" | "insufficient_evidence";
+  formula_version: "eval-v2.0";
+};
 
 export type PmSummaryConsistency = {
   covers_all_child_tasks: boolean;
@@ -60,7 +74,16 @@ export type EvalObservationAnalysis = {
   source_report_id: string;
   risk_level: EvalRiskLevel;
   findings: string[];
+  finding_items: StructuredEvalFinding[];
   evidence_gaps: string[];
+  scan: {
+    files_checked: number;
+    assets_checked: number;
+    completed: boolean;
+    parse_failures: number;
+  };
+  score: EvalScore;
+  review: { status: "draft"; reviewed_by: null };
   pm_summary_consistency: PmSummaryConsistency;
   recommended_admin_attention: string[];
 };
@@ -244,6 +267,35 @@ function bumpRisk(current: EvalRiskLevel, next: EvalRiskLevel): EvalRiskLevel {
   return order.indexOf(next) > order.indexOf(current) ? next : current;
 }
 
+function calculateEvalScore(
+  findings: StructuredEvalFinding[],
+  evidenceGapCount: number,
+  scan: EvalObservationAnalysis["scan"],
+): EvalScore {
+  if (!scan.completed || scan.files_checked <= 0) {
+    return {
+      value: null,
+      status: "insufficient_evidence",
+      formula_version: "eval-v2.0",
+    };
+  }
+  const penalties: Record<EvalFindingPriority, number> = {
+    P0: 30,
+    P1: 15,
+    P2: 6,
+    P3: 2,
+  };
+  const deducted =
+    findings.reduce((sum, finding) => sum + penalties[finding.priority], 0) +
+    evidenceGapCount * 8 +
+    scan.parse_failures * 5;
+  return {
+    value: Math.max(0, Math.min(100, 100 - deducted)),
+    status: "scored",
+    formula_version: "eval-v2.0",
+  };
+}
+
 function parsePmSummaryConsistencyFromDoc(
   fm: Record<string, unknown>,
   content: string,
@@ -302,7 +354,11 @@ export function buildEvalObservationAnalysisFromRows(input: {
     input.tasks.find((t) => t.task_id === rootId)?.thread_key ||
     "";
 
-  const children = pmDownstreamChildren(rootId, input.tasks);
+  // Active EVAL findings never revive force-/historically archived work.
+  // Historical analysis must opt into a separate history surface.
+  const children = pmDownstreamChildren(rootId, input.tasks).filter(
+    (child) => child.bucket !== "archive",
+  );
   const workerReports = workerReportsForThread(input.reports, children);
   const findings: string[] = [];
   const evidenceGaps: string[] = [];
@@ -348,7 +404,9 @@ export function buildEvalObservationAnalysisFromRows(input: {
     risk = "high";
   }
 
-  const openChildren = children.filter((c) => c.bucket !== "done");
+  const openChildren = children.filter((child) =>
+    ["inbox", "active", "review", "tasks", "unknown"].includes(child.bucket),
+  );
   const missingChildIds = children
     .map((c) => c.task_id)
     .filter((id) => !bodyMentionsId(pmBody, id));
@@ -397,6 +455,33 @@ export function buildEvalObservationAnalysisFromRows(input: {
       : risk === "medium"
         ? ["hold"]
         : ["approve_close"];
+  const findingPriority: EvalFindingPriority =
+    risk === "high" ? "P1" : risk === "medium" ? "P2" : "P3";
+  const findingItems = findings.map((message, index) => ({
+    id: `finding-${index + 1}`,
+    priority: findingPriority,
+    message,
+    root_key:
+      message.match(/TASK-\d{8}-\d{3,}/i)?.[0].toUpperCase() ??
+      `${rootId}:finding-${index + 1}`,
+  }));
+  const scan = {
+    files_checked:
+      1 +
+      input.tasks.length +
+      input.reports.length +
+      (input.reviews?.length ?? 0) +
+      (input.issueCount ?? 0),
+    assets_checked: [
+      input.tasks.length,
+      input.reports.length,
+      input.actionEvidence?.length ?? 0,
+      input.reviews?.length ?? 0,
+      input.issueCount ?? 0,
+    ].filter((count) => count > 0).length + 1,
+    completed: true,
+    parse_failures: 0,
+  };
 
   return {
     main_task_id: rootId,
@@ -404,7 +489,11 @@ export function buildEvalObservationAnalysisFromRows(input: {
     source_report_id: basename(input.pmReportFilename, ".md"),
     risk_level: risk,
     findings,
+    finding_items: findingItems,
     evidence_gaps: evidenceGaps,
+    scan,
+    score: calculateEvalScore(findingItems, evidenceGaps.length, scan),
+    review: { status: "draft", reviewed_by: null },
     pm_summary_consistency: pmSummaryConsistency,
     recommended_admin_attention: recommended,
   };
@@ -591,7 +680,7 @@ function renderObservationDoc(
 ): string {
   const c = analysis.pm_summary_consistency;
   return [
-    renderFrontmatter({
+    `---\n${stringifyYaml({
       protocol: "fcop",
       version: 1,
       kind: "eval-observation",
@@ -603,14 +692,27 @@ function renderObservationDoc(
       internal_only: true,
       bypass_observation: true,
       drives_lifecycle: false,
-      findings: analysis.findings,
+      scan: analysis.scan,
+      findings: {
+        total: analysis.finding_items.length,
+        by_priority: {
+          P0: analysis.finding_items.filter((item) => item.priority === "P0").length,
+          P1: analysis.finding_items.filter((item) => item.priority === "P1").length,
+          P2: analysis.finding_items.filter((item) => item.priority === "P2").length,
+          P3: analysis.finding_items.filter((item) => item.priority === "P3").length,
+        },
+        items: analysis.finding_items,
+      },
+      legacy_findings: analysis.findings,
       evidence_gaps: analysis.evidence_gaps,
+      score: analysis.score,
+      review: analysis.review,
       recommended_admin_attention: analysis.recommended_admin_attention,
       pm_summary_missing_child_tasks: c.missing_child_task_ids,
       pm_summary_missing_worker_reports: c.missing_worker_report_ids,
       pm_summary_missing_reviews: c.missing_review_ids,
       pm_summary_consistency_summary: c.summary,
-    }),
+    }).trim()}\n---`,
     "",
     internalOnlyBlock(),
     `# EVAL 任务观察 / Task Observation`,
@@ -704,7 +806,13 @@ export async function maybeWriteEvalObservation(
   }
 
   const doc = renderObservationDoc(analysis, obsId);
-  await fs.writeFile(path, doc, "utf-8");
+  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    await fs.writeFile(tmpPath, doc, "utf-8");
+    await fs.rename(tmpPath, path);
+  } finally {
+    await fs.rm(tmpPath, { force: true }).catch(() => undefined);
+  }
   return path;
 }
 
@@ -754,6 +862,15 @@ function obsRecordToEvalPayload(
   obs: EvalObservationRecord,
 ): NonNullable<AdminTaskCloseout["eval_observation"]> {
   const c = parsePmSummaryConsistencyFromDoc(obs.fm, obs.content);
+  const structuredFindings =
+    obs.fm.findings &&
+    typeof obs.fm.findings === "object" &&
+    !Array.isArray(obs.fm.findings) &&
+    Array.isArray((obs.fm.findings as Record<string, unknown>).items)
+      ? ((obs.fm.findings as Record<string, unknown>).items as Array<Record<string, unknown>>)
+          .map((item) => str(item.message))
+          .filter(Boolean)
+      : [];
   return {
     observation_id: str(obs.fm.observation_id) || basename(obs.filename, ".md"),
     filename: obs.filename,
@@ -765,7 +882,12 @@ function obsRecordToEvalPayload(
     drives_lifecycle: false,
     content: obs.content,
     frontmatter: obs.fm,
-    findings: listField(obs.fm, "findings"),
+    findings:
+      structuredFindings.length > 0
+        ? structuredFindings
+        : listField(obs.fm, "legacy_findings").length > 0
+          ? listField(obs.fm, "legacy_findings")
+          : listField(obs.fm, "findings"),
     evidence_gaps: listField(obs.fm, "evidence_gaps"),
     pm_summary_consistency: c,
     recommended_admin_attention: listField(

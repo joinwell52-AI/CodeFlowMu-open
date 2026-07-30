@@ -232,6 +232,9 @@ export {
   getAdminTaskCloseout,
   type EvalObservationInput,
   type EvalRiskLevel,
+  type EvalFindingPriority,
+  type StructuredEvalFinding,
+  type EvalScore,
   type PmSummaryConsistency,
   type EvalObservationAnalysis,
   type AdminTaskCloseout,
@@ -853,6 +856,12 @@ export {
   type PmEvaluateResult,
   pmEvaluate,
 } from "./pm/pmEvaluate.ts";
+
+export {
+  classifyFcopToolOutcome,
+  type ClassifiedToolOutcome,
+  type ToolOutcomeKind,
+} from "./registry/FcopToolOutcome.ts";
 
 export {
   type DispatchGateReportRef,

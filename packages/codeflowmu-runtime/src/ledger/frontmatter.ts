@@ -57,6 +57,23 @@ export function listField(fm: Record<string, unknown>, key: string): string[] {
   if (Array.isArray(v)) {
     return v.map((x) => String(x).trim()).filter(Boolean);
   }
+  // Structured EVAL fields keep their human-readable entries under `items`.
+  // Accept that shape here so legacy callers that used listField(fm, "findings")
+  // continue to receive the finding messages.
+  if (v && typeof v === "object") {
+    const items = (v as Record<string, unknown>).items;
+    if (Array.isArray(items)) {
+      return items
+        .map((item) => {
+          if (typeof item === "string") return item.trim();
+          if (!item || typeof item !== "object") return "";
+          const record = item as Record<string, unknown>;
+          const message = record.message ?? record.title ?? record.description;
+          return message == null ? "" : String(message).trim();
+        })
+        .filter(Boolean);
+    }
+  }
   if (typeof v === "string" && v.trim()) return [v.trim()];
   return [];
 }

@@ -930,6 +930,30 @@ test("mobile API: tasks recipient filter and admin PM detail", async () => {
   const { root, reviews } = makeV3ProjectRoot();
   seedMinimalRule45ForTeam(root);
   seedMobileRoleTaskFixture(root);
+  mkdirSync(join(root, ".codeflowmu", "task-spec-admission"), {
+    recursive: true,
+  });
+  writeFileSync(
+    join(
+      root,
+      ".codeflowmu",
+      "task-spec-admission",
+      "TASK-20260617-001.json",
+    ),
+    JSON.stringify({
+      decision: "rejected",
+      code: "TASK_SPEC_INVALID",
+      task_id: "TASK-20260617-001",
+      blocking_findings: [
+        {
+          id: "CLASSIFICATION_CONFLICT",
+          expected_level: 3,
+          detected_level: 0,
+        },
+      ],
+    }),
+    "utf8",
+  );
   const dataDir = mkdtempSync(join(tmpdir(), "cf-mobile-role-data-"));
   const app = buildMobilePanel(root, reviews, dataDir) as MobileApp;
 
@@ -944,6 +968,12 @@ test("mobile API: tasks recipient filter and admin PM detail", async () => {
     assert.equal(pmList.body.filtered_by, "PM");
     const pmFiles = pmList.body.tasks.map((t: { filename: string }) => t.filename);
     assert.ok(pmFiles.includes("TASK-20260617-001-ADMIN-to-PM.md"));
+    const rejectedRoot = pmList.body.tasks.find(
+      (t: { filename: string }) =>
+        t.filename === "TASK-20260617-001-ADMIN-to-PM.md",
+    );
+    assert.equal(rejectedRoot.status, "task_spec_rejected");
+    assert.equal(rejectedRoot.task_spec_admission.code, "TASK_SPEC_INVALID");
     assert.equal(
       pmFiles.some((f: string) => f.includes("PM-to-DEV") || f.includes("PM-to-QA")),
       false,
@@ -974,6 +1004,11 @@ test("mobile API: tasks recipient filter and admin PM detail", async () => {
     assert.ok(detail.body.flow_overview.length >= 2);
     assert.ok(Array.isArray(detail.body.available_actions));
     assert.ok(detail.body.available_actions.some((a: { id: string }) => a.id === "back"));
+    assert.equal(detail.body.task.status, "task_spec_rejected");
+    assert.equal(
+      detail.body.task_spec_admission.blocking_findings[0].id,
+      "CLASSIFICATION_CONFLICT",
+    );
 
     const badAction = await request(app)
       .post("/api/v2/mobile/tasks/TASK-20260617-001-ADMIN-to-PM.md/actions")

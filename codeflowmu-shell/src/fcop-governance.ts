@@ -43,7 +43,7 @@ export type EvalAuditListItem = {
   source: "internal" | "legacy";
   created_at?: string;
   subject?: string;
-  score?: number;
+  score?: number | null;
   sender?: string;
   preview?: string;
   /** 文件 mtime（ISO），列表展示用 */
@@ -70,12 +70,10 @@ function parseFmYaml(raw: string): Record<string, string> {
   return fm;
 }
 
-function scoreFromAuditBody(raw: string): number {
-  const m = raw.match(/智能评级[^:：]*[:：]\s*\*?\*?(\d+)/);
-  if (m) return Number(m[1]);
-  if (/CRITICAL|极高/i.test(raw)) return 95;
-  if (/HIGH|高/i.test(raw)) return 85;
-  return 75;
+function scoreFromAuditBody(raw: string): number | null {
+  const explicit = raw.match(/(?:^|\n)\s*score:\s*(\d+(?:\.\d+)?)/i);
+  if (explicit) return Number(explicit[1]);
+  return null;
 }
 
 function filenameDateIso(filename: string): string | undefined {

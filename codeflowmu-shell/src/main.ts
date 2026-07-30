@@ -101,6 +101,7 @@ import { fileURLToPath } from "node:url";
 const SHELL_PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /** Shell semver — always from codeflowmu-shell/package.json (not Python fcop). */
 const VERSION = readShellVersion(SHELL_PKG_ROOT);
+const SHELL_SHUTDOWN_TIMEOUT_MS = 12_000;
 let runtimeWriterLock: RuntimeWriterLockHandle | null = null;
 let activeRuntimeInstance: RuntimeInstanceRecord | null = null;
 
@@ -967,6 +968,18 @@ async function main(): Promise<void> {
     if (stopping) return;
     stopping = true;
     console.log(`\n[shell] received ${signal}, stopping runtime...`);
+    const shutdownWatchdog = setTimeout(() => {
+      console.error(
+        `[shell] shutdown exceeded ${SHELL_SHUTDOWN_TIMEOUT_MS}ms; forcing process exit`,
+      );
+      try {
+        runtimeWriterLock?.release();
+      } catch {
+        /* process exit remains mandatory */
+      }
+      runtimeWriterLock = null;
+      process.exit(1);
+    }, SHELL_SHUTDOWN_TIMEOUT_MS);
     try {
       // Lane A: stop web panel before runtime (in-flight requests drain first)
       if (webPanel) {
@@ -983,9 +996,17 @@ async function main(): Promise<void> {
       // child alive (see fcop-client.ts `__killRealPythonChildForTests`
       // JSDoc for the same hazard surfaced in tests).
       await disposeFcopBridge();
+      clearTimeout(shutdownWatchdog);
       console.log("[shell] runtime stopped cleanly. Goodbye.");
       process.exit(0);
     } catch (err) {
+      clearTimeout(shutdownWatchdog);
+      try {
+        runtimeWriterLock?.release();
+      } catch {
+        /* process exit remains mandatory */
+      }
+      runtimeWriterLock = null;
       console.error(
         "[shell] error during stop:",
         err instanceof Error ? err.message : err,

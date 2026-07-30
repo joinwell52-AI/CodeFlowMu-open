@@ -81,13 +81,16 @@ const LEVEL_1_SIGNALS =
   /小型|小范围|单点|明确的?(?:小)?\s*Bug|已定位\s*Bug|文案|样式修改|兼容性问题|配置调整|hotfix|typo|copy\s*change|small\s*bug/i;
 
 const LEVEL_3_SIGNALS =
-  /新产品|新应用|完整产品|复杂功能|UI\s*\/\s*UX|UI\/UX|改版|移动端|手机端|\bPWA\b|架构调整|架构重构|大版本|跨模块|复杂改造|major\s*upgrade|new\s*(?:product|application)|architecture\s*(?:change|refactor)/i;
+  /新产品|新应用|完整产品|复杂功能|UI\s*\/\s*UX|UI\/UX|改版|移动端|手机端|\bPWA\b|架构调整|架构重构|大版本|跨模块|复杂改造|长(?:期|周期|任务)|major\s*upgrade|new\s*(?:product|application)|architecture\s*(?:change|refactor)|cross[- ]?module|long[- ]?(?:running|term)/i;
 
 const LEVEL_2_SIGNALS =
   /新功能|新增.*功能|功能方案|模块修改|API|接口|数据结构|影响面|工程改造|feature|schema|migration/i;
 
 const SMALL_CHANGE_SIGNALS =
   /(?:仅|只)(?:修改|调整|修复)(?:一个|单一|现有)?(?:文案|配置值|已定位\s*Bug)|单一已定位\s*Bug|只读分析|只读调查|无\s*UI|non[-_ ]?product/i;
+
+const COMPLEX_IMPLEMENTATION_SIGNALS =
+  /跨模块|架构(?:调整|重构)|系统(?:性|级)重构|大版本|复杂改造|新产品|新应用|完整产品|实现|开发|构建|交付|改造|refactor|implement|develop|build|deliver|cross[- ]?module/i;
 
 function boolField(fm: Record<string, unknown> | undefined, key: string): boolean | undefined {
   const value = fm?.[key];
@@ -122,26 +125,39 @@ export function classifyProductTask(
   const matched = PRODUCT_SIGNALS.filter(([, pattern]) => pattern.test(body)).map(
     ([name]) => name,
   );
+  const implementationIntentText = body.replace(
+    /(?:不做|无需|不进行|不要求|没有)[^，。;\n]{0,12}(?:创建|开发|构建|实现|交付|build|implement|develop|create)/gi,
+    "",
+  );
   const researchOnly =
     /调研|研究|搜索网页|提取正文|提取表格|只读分析|调查|web\s*research/i.test(body) &&
-    !/创建|开发|构建|实现|交付|新产品|新应用|产品级|build|implement|develop|create/i.test(body);
+    !/创建|开发|构建|实现|交付|新产品|新应用|产品级|build|implement|develop|create/i.test(
+      implementationIntentText,
+    );
   let level: PmPlanningLevel;
   let reason: string;
   if (explicitLevel != null && validAdminOverride) {
     level = explicitLevel;
     reason = `ADMIN override: ${overrideReason}`;
+  } else if (
+    !researchOnly &&
+    (LEVEL_3_SIGNALS.test(body) || matched.length >= 2) &&
+    COMPLEX_IMPLEMENTATION_SIGNALS.test(body)
+  ) {
+    level = 3;
+    reason = `complex_product_signals:${[...new Set(matched)].join(",") || "level_3_keyword"}`;
   } else if (LEVEL_0_SIGNALS.test(body) || researchOnly) {
     level = 0;
     reason = researchOnly ? "read_only_or_research" : "level_0_operational_task";
-  } else if (LEVEL_1_SIGNALS.test(body) || SMALL_CHANGE_SIGNALS.test(body)) {
-    level = 1;
-    reason = "small_scoped_change";
   } else if (LEVEL_3_SIGNALS.test(body) || matched.length >= 2) {
     level = 3;
     reason = `complex_product_signals:${[...new Set(matched)].join(",") || "level_3_keyword"}`;
   } else if (LEVEL_2_SIGNALS.test(body) || matched.length > 0 || explicitClass === PRODUCT_DELIVERY_TASK_CLASS) {
     level = 2;
     reason = `standard_feature_signals:${matched.join(",") || "level_2_keyword"}`;
+  } else if (LEVEL_1_SIGNALS.test(body) || SMALL_CHANGE_SIGNALS.test(body)) {
+    level = 1;
+    reason = "small_scoped_change";
   } else {
     level = 0;
     reason = "no_implementation_signal";

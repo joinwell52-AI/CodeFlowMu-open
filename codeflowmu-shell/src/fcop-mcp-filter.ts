@@ -47,6 +47,7 @@ import {
 } from "./fcop-lifecycle-tool-aliases.js";
 import { executeLifecycleRuntimeAction } from "./lifecycle-runtime-bridge.js";
 import {
+  classifyFcopToolOutcome,
   PM_RUNTIME_CONTROL_TOOL_DEFINITIONS,
   invokePmRuntimeControlTool,
   isPmRuntimeControlTool,
@@ -280,6 +281,11 @@ function handleOneShotFcopToolCall(
     },
     (err, stdout, stderr) => {
       const text = [stdout?.trim(), stderr?.trim()].filter(Boolean).join("\n");
+      const outcome = classifyFcopToolOutcome(tool, text);
+      const failed = !!err || outcome.outcome === "failed";
+      const payload = failed
+        ? buildOneShotErrorEnvelope(tool, text, err)
+        : text || JSON.stringify({ status: "success", isError: false });
       writeJsonRpcLine({
         jsonrpc: "2.0",
         id,
@@ -287,18 +293,79 @@ function handleOneShotFcopToolCall(
           content: [
             {
               type: "text",
-              text:
-                text ||
-                (err instanceof Error
-                  ? err.message
-                  : JSON.stringify({ ok: true })),
+              text: payload,
             },
           ],
-          isError: !!err,
+          isError: failed,
         },
       });
     },
   );
+}
+
+function parseLastJsonObject(text: string): Record<string, unknown> | null {
+  const candidates = [text, ...text.split(/\r?\n/).reverse()];
+  for (const candidate of candidates) {
+    const trimmed = candidate.trim();
+    if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) continue;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Continue with older human-readable fcop output.
+    }
+  }
+  return null;
+}
+
+function classifyOneShotErrorCode(text: string): string {
+  if (/ERR_MODULE_NOT_FOUND|Cannot find (?:module|package)/i.test(text)) {
+    return "DEPENDENCY_MISSING";
+  }
+  if (/TASK_ARCHIVED/i.test(text)) return "TASK_ARCHIVED";
+  if (/TASK_AMBIGUOUS/i.test(text)) return "TASK_AMBIGUOUS";
+  if (/TaskNotFound|TASK_NOT_FOUND|no task matches/i.test(text)) {
+    return "TASK_NOT_FOUND";
+  }
+  if (/REPORTER_MISMATCH/i.test(text)) return "REPORTER_MISMATCH";
+  if (/REPORT_RECIPIENT_MISMATCH/i.test(text)) {
+    return "REPORT_RECIPIENT_MISMATCH";
+  }
+  if (/THREAD_KEY_MISMATCH/i.test(text)) return "THREAD_KEY_MISMATCH";
+  if (/File not found:/i.test(text)) return "FILE_NOT_FOUND";
+  return "FCOP_TOOL_FAILED";
+}
+
+function buildOneShotErrorEnvelope(
+  tool: string,
+  text: string,
+  processError: Error | null,
+): string {
+  const parsed = parseLastJsonObject(text);
+  const nestedError =
+    parsed?.["error"] && typeof parsed["error"] === "object"
+      ? (parsed["error"] as Record<string, unknown>)
+      : null;
+  const code =
+    (typeof nestedError?.["code"] === "string" && nestedError["code"]) ||
+    (typeof parsed?.["code"] === "string" && parsed["code"]) ||
+    classifyOneShotErrorCode(text);
+  const message =
+    (typeof nestedError?.["message"] === "string" && nestedError["message"]) ||
+    (typeof parsed?.["message"] === "string" && parsed["message"]) ||
+    text ||
+    processError?.message ||
+    `${tool} failed`;
+  return JSON.stringify({
+    status: "error",
+    isError: true,
+    error: { code, message },
+    tool,
+    file_created: false,
+    ledger_appended: false,
+  });
 }
 
 parentRl.on("line", (line) => {
