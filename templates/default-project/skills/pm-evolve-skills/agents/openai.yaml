@@ -1,0 +1,4 @@
+interface:
+  display_name: "PM Skill Evolution"
+  short_description: "Discover, learn, validate, and retain missing capabilities"
+  default_prompt: "Use $pm-evolve-skills to close the capability gap for this request."

@@ -65,9 +65,9 @@ http://127.0.0.1:18765/
 任务正文中的项目名、路径或 `new_workspace` slug 都不会改变当前项目。新建/添加项目后
 必须等切换适配遮罩完成，再发布 TASK。正在执行的 TASK 不允许中途切换项目。
 
-Open 切换项目时会把公开的 `windows-use`、`browser-use` Skill 包以及 Agent Playbook
-manifest 投影到项目根。技能库应显示 PM 5/5，且公开 Skill 包“缺包 0”；缺包 2 通常表示
-旧项目尚未完成这次投影，重新切换该项目或执行环境初始化/修复即可恢复。
+Open 启动和切换项目时会按公开 Agent Playbook Manifest，把其中声明的全部 Skill 包
+以及 Manifest 投影非破坏性同步到项目根。技能库应显示 PM 5/5，且公开 Skill 包“缺包 0”；
+出现缺包通常表示项目尚未执行初始化/修复，或发行包本身未通过发布校验。
 
 每个当前项目使用自己的 `.codeflowmu/runtime` 保存 Agent 注册、SDK Agent ID、session、
 inbox 与 transcript。没有配置 Cursor API Key 时，TASK 会保留在 inbox 并显示配置提示，

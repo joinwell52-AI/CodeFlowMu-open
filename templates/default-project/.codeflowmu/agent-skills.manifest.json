@@ -2,6 +2,8 @@
   "version": 1,
   "kind": "agent_skills_manifest",
   "scope": "codeflowmu",
+  "public_skill_package_policy": "all_referenced_packages_required",
+  "filtered_missing_private_skill_packages": 0,
   "layers": {
     "mcp_skill": {
       "description": "Tool registration layer. Defines callable MCP tools, schemas, write permissions and risk levels.",
@@ -101,6 +103,50 @@
       ]
     },
     {
+      "id": "browser-playwright-check",
+      "display_name": "Browser Playwright Check",
+      "doc": "docs/skills/common-skills.md",
+      "skill_package": "skills/browser-playwright-check/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "web-search",
+      "display_name": "Web Search",
+      "description": "构造搜索 query、搜索公开网页并选择可信来源。",
+      "skill_package": "skills/web-search/SKILL.md",
+      "status": "playbook_ready",
+      "requires_any_tool": [
+        "web.search",
+        "search_query",
+        "browser search"
+      ]
+    },
+    {
+      "id": "web-extract",
+      "display_name": "Web Extract",
+      "description": "打开网页，抽取正文与表格，并在每条证据中保留 source_url；动态页面可使用 Playwright。",
+      "skill_package": "skills/web-extract/SKILL.md",
+      "status": "playbook_ready",
+      "requires_any_tool": [
+        "web.open",
+        "fetch_url",
+        "browser",
+        "playwright"
+      ]
+    },
+    {
+      "id": "web-research",
+      "display_name": "Web Research",
+      "description": "编排 Web Search 与 Web Extract，形成带来源链接、事实/推断/不确定性区分的结论或 REPORT。",
+      "skill_package": "skills/web-research/SKILL.md",
+      "status": "playbook_ready",
+      "composes": [
+        "web-search",
+        "web-extract",
+        "write_report"
+      ]
+    },
+    {
       "id": "skill-search",
       "display_name": "Skill Search",
       "description": "Discover reusable capabilities across the local skill library, GitHub repositories, and the public web.",
@@ -126,6 +172,27 @@
       "mapped_mcp_tools": [
         "skill_publish"
       ]
+    },
+    {
+      "id": "run-local-command-check",
+      "display_name": "Run Local Command Check",
+      "doc": "docs/skills/common-skills.md",
+      "skill_package": "skills/run-local-command-check/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "code-search-navigation",
+      "display_name": "Code Search Navigation",
+      "doc": "docs/skills/common-skills.md",
+      "skill_package": "skills/code-search-navigation/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "test-selection",
+      "display_name": "Test Selection",
+      "doc": "docs/skills/common-skills.md",
+      "skill_package": "skills/test-selection/SKILL.md",
+      "status": "playbook_stub"
     },
     {
       "id": "summarize_logs",
@@ -287,14 +354,280 @@
       ]
     }
   },
-  "pm_playbook_skills": [],
-  "technical_manager_playbook_skills": [],
-  "architect_playbook_skills": [],
-  "dev_playbook_skills": [],
-  "qa_playbook_skills": [],
-  "ops_playbook_skills": [],
-  "eval_playbook_skills": [],
-  "ui_playbook_skills": [],
+  "pm_playbook_skills": [
+    {
+      "id": "pm-solve-problems",
+      "display_name": "PM 独立问题求解",
+      "description": "PM 常驻核心能力：主动理解问题、跨产品/架构/UI/交付/研发管理分析、比较方案并给出推荐。",
+      "skill_package": "skills/pm-solve-problems/SKILL.md",
+      "status": "always_loaded",
+      "load_policy": "pm_identity_core"
+    },
+    {
+      "id": "pm-evolve-skills",
+      "display_name": "PM 学习与技能进化",
+      "description": "PM 常驻核心能力：发现能力缺口，主动寻找、学习、验证并沉淀新技能，在后续任务中复用。",
+      "skill_package": "skills/pm-evolve-skills/SKILL.md",
+      "status": "always_loaded",
+      "load_policy": "pm_identity_core"
+    },
+    {
+      "id": "pm-product-design-brief",
+      "display_name": "PM 产品方案设计闸门",
+      "description": "产品、UI、PWA、移动端、Gateway、应用合并和功能升级任务的 PM 必经闸门：先形成产品定位、信息架构、交互、视觉方向、验收标准和多 Agent 分工，再派发 DEV/QA/OPS。",
+      "doc": "docs/skills/pm-playbook/product-design-brief.md",
+      "skill_package": "skills/pm-product-design-brief/SKILL.md",
+      "status": "playbook_ready",
+      "composes": [
+        "pm-product-requirements",
+        "ui-requirements",
+        "ui-information-architecture",
+        "ui-visual-consistency",
+        "ui-usability-acceptance",
+        "pm-acceptance-criteria",
+        "pm-delivery-plan"
+      ]
+    },
+    {
+      "id": "pm-product-requirements",
+      "display_name": "PM 产品需求整理",
+      "doc": "docs/skills/pm-playbook/product-requirements.md",
+      "skill_package": "skills/pm-product-requirements/SKILL.md",
+      "status": "playbook_stub",
+      "inspired_by": [
+        "https://github.com/deanpeters/Product-Manager-Skills",
+        "https://github.com/product-on-purpose/pm-skills"
+      ]
+    },
+    {
+      "id": "pm-scope-control",
+      "display_name": "PM 范围控制",
+      "doc": "docs/skills/pm-playbook/scope-control.md",
+      "skill_package": "skills/pm-scope-control/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "pm-priority-triage",
+      "display_name": "PM 优先级判断",
+      "doc": "docs/skills/pm-playbook/priority-triage.md",
+      "skill_package": "skills/pm-priority-triage/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "pm-architecture-review",
+      "display_name": "PM 架构审查",
+      "doc": "docs/skills/pm-playbook/architecture-review.md",
+      "skill_package": "skills/pm-architecture-review/SKILL.md",
+      "status": "playbook_stub",
+      "inspired_by": [
+        "https://github.com/addyosmani/agent-skills"
+      ]
+    },
+    {
+      "id": "pm-delivery-plan",
+      "display_name": "PM 交付计划",
+      "doc": "docs/skills/pm-playbook/delivery-plan.md",
+      "skill_package": "skills/pm-delivery-plan/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "pm-acceptance-criteria",
+      "display_name": "PM 验收标准",
+      "doc": "docs/skills/pm-playbook/acceptance-criteria.md",
+      "skill_package": "skills/pm-acceptance-criteria/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "pm-tech-scope",
+      "display_name": "PM 技术栈边界",
+      "doc": "docs/skills/pm-playbook/tech-scope.md",
+      "skill_package": "skills/pm-tech-scope/SKILL.md",
+      "status": "playbook_stub"
+    }
+  ],
+  "technical_manager_playbook_skills": [
+    {
+      "id": "tm-delivery-governance",
+      "display_name": "技术经理交付治理",
+      "doc": "docs/skills/technical-manager-playbook/delivery-governance.md",
+      "skill_package": "skills/tm-delivery-governance/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "tm-risk-dependency",
+      "display_name": "技术经理风险依赖分析",
+      "doc": "docs/skills/technical-manager-playbook/risk-dependency.md",
+      "skill_package": "skills/tm-risk-dependency/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "tm-review-routing",
+      "display_name": "技术经理评审路由",
+      "doc": "docs/skills/technical-manager-playbook/review-routing.md",
+      "skill_package": "skills/tm-review-routing/SKILL.md",
+      "status": "playbook_stub"
+    }
+  ],
+  "architect_playbook_skills": [
+    {
+      "id": "architect-system-design",
+      "display_name": "架构师系统设计",
+      "doc": "docs/skills/architect-playbook/system-design.md",
+      "skill_package": "skills/architect-system-design/SKILL.md",
+      "status": "playbook_stub",
+      "inspired_by": [
+        "https://github.com/addyosmani/agent-skills"
+      ]
+    },
+    {
+      "id": "architect-boundary-review",
+      "display_name": "架构师边界审查",
+      "doc": "docs/skills/architect-playbook/boundary-review.md",
+      "skill_package": "skills/architect-boundary-review/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "architect-decision-record",
+      "display_name": "架构师决策记录审查",
+      "doc": "docs/skills/architect-playbook/decision-record.md",
+      "skill_package": "skills/architect-decision-record/SKILL.md",
+      "status": "playbook_stub"
+    }
+  ],
+  "dev_playbook_skills": [
+    {
+      "id": "dev-code-location",
+      "display_name": "DEV 代码定位",
+      "doc": "docs/skills/dev-playbook/code-location.md",
+      "skill_package": "skills/dev-code-location/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "dev-small-scope-patch",
+      "display_name": "DEV 小范围补丁",
+      "doc": "docs/skills/dev-playbook/small-scope-patch.md",
+      "skill_package": "skills/dev-small-scope-patch/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "dev-test-and-explain",
+      "display_name": "DEV 测试与说明",
+      "doc": "docs/skills/dev-playbook/test-and-explain.md",
+      "skill_package": "skills/dev-test-and-explain/SKILL.md",
+      "status": "playbook_stub"
+    }
+  ],
+  "qa_playbook_skills": [
+    {
+      "id": "qa-reproduce-issue",
+      "display_name": "QA 问题复现",
+      "doc": "docs/skills/qa-playbook/reproduce-issue.md",
+      "skill_package": "skills/qa-reproduce-issue/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "qa-verify-fix",
+      "display_name": "QA 修复验证",
+      "doc": "docs/skills/qa-playbook/verify-fix.md",
+      "skill_package": "skills/qa-verify-fix/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "qa-regression-check",
+      "display_name": "QA 回归检查",
+      "doc": "docs/skills/qa-playbook/regression-check.md",
+      "skill_package": "skills/qa-regression-check/SKILL.md",
+      "status": "playbook_stub"
+    }
+  ],
+  "ops_playbook_skills": [
+    {
+      "id": "ops-runtime-health",
+      "display_name": "OPS 运行健康检查",
+      "doc": "docs/skills/ops-playbook/runtime-health.md",
+      "skill_package": "skills/ops-runtime-health/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "ops-log-diagnosis",
+      "display_name": "OPS 日志诊断",
+      "doc": "docs/skills/ops-playbook/log-diagnosis.md",
+      "skill_package": "skills/ops-log-diagnosis/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "ops-stuck-workflow",
+      "display_name": "OPS 卡顿流程诊断",
+      "doc": "docs/skills/ops-playbook/stuck-workflow.md",
+      "skill_package": "skills/ops-stuck-workflow/SKILL.md",
+      "status": "playbook_stub"
+    }
+  ],
+  "eval_playbook_skills": [
+    {
+      "id": "eval-observation-writing",
+      "display_name": "EVAL 观察记录",
+      "doc": "docs/skills/eval-playbook/observation-writing.md",
+      "skill_package": "skills/eval-observation-writing/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "eval-risk-gap-analysis",
+      "display_name": "EVAL 风险差距分析",
+      "doc": "docs/skills/eval-playbook/risk-gap-analysis.md",
+      "skill_package": "skills/eval-risk-gap-analysis/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "eval-promotion-advice",
+      "display_name": "EVAL 晋升建议",
+      "doc": "docs/skills/eval-playbook/promotion-advice.md",
+      "skill_package": "skills/eval-promotion-advice/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "controlled-emergence-observer",
+      "display_name": "智能涌现观察器",
+      "doc": "skills/controlled-emergence-observer/SKILL.md",
+      "skill_package": "skills/controlled-emergence-observer/SKILL.md",
+      "status": "enabled",
+      "mapped_runtime_logic": [
+        "packages/evaluator/controlled-emergence-observer.js",
+        "packages/evaluator/eval-01.js",
+        "packages/evaluator/eval-report-writer.js"
+      ]
+    }
+  ],
+  "ui_playbook_skills": [
+    {
+      "id": "ui-requirements",
+      "display_name": "UI 需求澄清",
+      "doc": "docs/skills/ui-playbook/requirements.md",
+      "skill_package": "skills/ui-requirements/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "ui-information-architecture",
+      "display_name": "UI 信息架构",
+      "doc": "docs/skills/ui-playbook/information-architecture.md",
+      "skill_package": "skills/ui-information-architecture/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "ui-visual-consistency",
+      "display_name": "UI 视觉一致性",
+      "doc": "docs/skills/ui-playbook/visual-consistency.md",
+      "skill_package": "skills/ui-visual-consistency/SKILL.md",
+      "status": "playbook_stub"
+    },
+    {
+      "id": "ui-usability-acceptance",
+      "display_name": "UI 可用性验收",
+      "doc": "docs/skills/ui-playbook/usability-acceptance.md",
+      "skill_package": "skills/ui-usability-acceptance/SKILL.md",
+      "status": "playbook_stub"
+    }
+  ],
   "forbidden_v1": [
     "auto_github_submit",
     "auto_archive_all",
@@ -309,6 +642,5 @@
     "knowledge_graph_build",
     "full_runtime_repair"
   ],
-  "edition": "open-dev-team",
-  "filtered_missing_private_skill_packages": 40
+  "edition": "open-dev-team"
 }

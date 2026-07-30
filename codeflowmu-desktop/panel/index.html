@@ -4169,6 +4169,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
     <div style="display:flex;align-items:center;gap:10px">
       <span id="git-page-title" style="font-size:16px;font-weight:700" data-i18n="st.git.pageTitle">Git 状态</span>
       <button class="git-commit-btn" id="git-page-commit-btn" onclick="doGitPageCommit()" data-i18n="st.git.pageCommit">一键提交</button>
+      <button class="hbtn blue" id="git-page-sync-btn" onclick="syncMotherGitHub(this)" style="font-size:14px;display:none">同步 GitHub</button>
       <button class="hbtn" onclick="loadGitPageStatus()" style="margin-left:4px;font-size:14px" data-i18n="st.git.refresh">刷新</button>
     </div>
     <div class="dash-section">
@@ -5151,6 +5152,13 @@ const LANGS={
     'git.uncommitted':'● {n} 未提交文件',
     'git.cleanShort':'✓ 工作区干净',
     'git.lastCommit':'最近提交',
+    'git.syncPushed':'✓ 已同步 GitHub',
+    'git.syncAhead':'↑{n} 个本地独有提交（待推送）',
+    'git.syncBehind':'↓{n} 个 GitHub 独有提交（历史分叉）',
+    'git.syncUnknown':'远程同步状态未知',
+    'git.localCommitted':'产品代码已本地提交',
+    'git.localCommittedAhead':'已本地提交 · ↑{n} 未推送',
+    'git.localCommittedBehind':'已本地提交 · GitHub 另有 {n} 个分叉提交',
 
     'ap.return.dashboard':'返回概览','ap.return.home':'返回首页','ap.return.tasks':'返回任务',
     'ap.return.reports':'返回报告','ap.return.chat':'返回对话','ap.return.team':'返回团队',
@@ -6298,6 +6306,13 @@ const LANGS={
     'git.uncommitted':'● {n} uncommitted file(s)',
     'git.cleanShort':'✓ Clean working tree',
     'git.lastCommit':'Latest commit',
+    'git.syncPushed':'✓ Synced to GitHub',
+    'git.syncAhead':'↑{n} local-only commit(s) pending push',
+    'git.syncBehind':'↓{n} GitHub-only divergent commit(s)',
+    'git.syncUnknown':'Remote sync status unknown',
+    'git.localCommitted':'Product code committed locally',
+    'git.localCommittedAhead':'Committed locally · ↑{n} not pushed',
+    'git.localCommittedBehind':'Committed locally · GitHub has {n} divergent commit(s)',
 
     'ap.return.dashboard':'Back to overview','ap.return.home':'Back to home','ap.return.tasks':'Back to tasks',
     'ap.return.reports':'Back to reports','ap.return.chat':'Back to chat','ap.return.team':'Back to team',
@@ -24251,12 +24266,14 @@ function _renderGitDashboardCard(d){
   const dirtyEl=productUncommitted>0
     ?`<span class="git-dirty">`+esc(`Product files: ${productUncommitted} uncommitted`)+'</span>'
     :`<span class="git-clean">`+esc(t('git.cleanShort'))+'</span>';
+  const trackingEl=_renderGitTrackingState(d,12);
   const runtimeEl=`<span style="font-size:12px;color:var(--text3)">`+esc(`FCoP runtime records: ${runtimeUncommitted} ignored`)+'</span>';
   card.innerHTML=`
     <div class="git-row">
       <span style="color:var(--text3);font-size:14px">${esc(t('git.branch'))}</span>
       <span class="git-branch">${esc(d.branch||'-')}</span>
       ${dirtyEl}
+      ${trackingEl}
       ${runtimeEl}
     </div>
     <div class="git-row" style="margin-top:4px">
@@ -24264,6 +24281,31 @@ function _renderGitDashboardCard(d){
       <span class="git-subject">${esc((d.lastCommit?.subject||'').slice(0,60))}</span>
     </div>
   `;
+}
+
+function _gitTrackingState(d){
+  const ahead=Math.max(0,Number(d?.ahead??0));
+  const behind=Math.max(0,Number(d?.behind??0));
+  const parts=[];
+  if(ahead>0) parts.push(t('git.syncAhead',{n:ahead}));
+  if(behind>0) parts.push(t('git.syncBehind',{n:behind}));
+  if(parts.length>0) return {kind:'pending',text:parts.join(' · '),ahead,behind};
+  if(d?.pushed===true) return {kind:'synced',text:t('git.syncPushed'),ahead,behind};
+  return {kind:'unknown',text:t('git.syncUnknown'),ahead,behind};
+}
+
+function _renderGitTrackingState(d,fontSize=13){
+  const state=_gitTrackingState(d);
+  const color=state.kind==='synced'?'var(--green)':state.kind==='pending'?'var(--amber)':'var(--text3)';
+  return `<span data-git-tracking-state="${esc(state.kind)}" style="font-size:${Number(fontSize)||13}px;color:${color};font-weight:700">${esc(state.text)}</span>`;
+}
+
+function _gitCommitButtonLabel(d,productUncommitted){
+  if(productUncommitted>0) return gitPageCommitLabel();
+  const state=_gitTrackingState(d);
+  if(state.ahead>0) return t('git.localCommittedAhead',{n:state.ahead});
+  if(state.behind>0) return t('git.localCommittedBehind',{n:state.behind});
+  return state.kind==='synced'?t('git.syncPushed'):t('git.localCommitted');
 }
 
 function _applyGitStatusData(d, target){
@@ -24283,6 +24325,7 @@ function _applyGitStatusData(d, target){
       const dirtyEl=productUncommitted>0
         ?`<span class="git-dirty">`+esc(`● ${productUncommitted} 个产品文件未提交`)+'</span>'
         :`<span class="git-clean">`+esc(t('git.cleanShort'))+'</span>';
+      const trackingEl=_renderGitTrackingState(d,13);
       const runtimeEl=`<span style="font-size:13px;color:var(--text3)">· FCoP 运行记录 ${runtimeUncommitted}（不参与提交）</span>`;
       card.innerHTML=`
         ${scopeLine}
@@ -24290,6 +24333,7 @@ function _applyGitStatusData(d, target){
           <span style="color:var(--text3);font-size:14px">${esc(t('git.branch'))}</span>
           <span class="git-branch">${esc(d.branch||'—')}</span>
           ${dirtyEl}
+          ${trackingEl}
           ${runtimeEl}
         </div>
         <div class="git-row" style="margin-top:4px">
@@ -24300,7 +24344,20 @@ function _applyGitStatusData(d, target){
       const pageCommitBtn=document.getElementById('git-page-commit-btn');
       if(pageCommitBtn&&target==='settings'){
         pageCommitBtn.disabled=productUncommitted===0;
-        pageCommitBtn.textContent=productUncommitted===0?'产品代码已提交':gitPageCommitLabel();
+        pageCommitBtn.textContent=_gitCommitButtonLabel(d,productUncommitted);
+      }
+      const syncBtn=document.getElementById('git-page-sync-btn');
+      if(syncBtn&&target==='settings'){
+        const state=_gitTrackingState(d);
+        syncBtn.style.display='inline-flex';
+        syncBtn.disabled=productUncommitted>0||state.kind==='synced';
+        syncBtn.dataset.ahead=String(state.ahead);
+        syncBtn.dataset.behind=String(state.behind);
+        syncBtn.textContent=productUncommitted>0
+          ?'请先提交产品代码'
+          :state.kind==='synced'
+            ?t('git.syncPushed')
+            :`同步 GitHub（↑${state.ahead} / ↓${state.behind}）`;
       }
     }
   }
@@ -24621,6 +24678,62 @@ async function doGitPageCommit(){
       setTimeout(()=>{btn.classList.remove('err');btn.textContent=gitPageCommitLabel();},3000);
     }
   }catch(e){btn.classList.remove('loading');btn.textContent=gitPageCommitLabel();showToast(String(e&&e.message||e),'#fca5a5',4000);}
+}
+
+async function syncMotherGitHub(btn){
+  if(!btn||btn.disabled)return;
+  const original=btn.textContent;
+  const behind=Math.max(0,Number(btn.dataset.behind||0));
+  let conflictResolution='';
+  if(behind>0){
+    const confirmed=window.confirm(
+      `检测到 GitHub 有 ${behind} 个历史分叉提交。系统将核对版本号；仅当本地母版版本更高时，保留本地代码并把 GitHub 旧提交记入合并历史，然后普通推送。不会强推。是否继续？`
+    );
+    if(!confirmed)return;
+    conflictResolution='keep_local_newer';
+  }
+  btn.disabled=true;
+  btn.textContent='正在检查并同步…';
+  try{
+    const preparedResponse=await fetch('/api/v2/git/sync',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({branch:'main',requested_by:'PANEL-ADMIN',conflictResolution})
+    });
+    const prepared=await preparedResponse.json().catch(()=>({}));
+    if(!preparedResponse.ok||!prepared.ok)throw new Error(prepared.error||('HTTP '+preparedResponse.status));
+    if(prepared.alreadySynced){
+      showToast('母版已与 GitHub 同步','#4ade80');
+      await loadGitPageStatus();
+      return;
+    }
+    const approval=prepared.approval;
+    if(!approval?.approval_id)throw new Error('未生成 GitHub 推送审批');
+    const approvedResponse=await fetch(`/api/v2/operation-approvals/${encodeURIComponent(approval.approval_id)}/approve`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({reason:'ADMIN 点击母版“同步 GitHub”按钮确认'})
+    });
+    const approved=await approvedResponse.json().catch(()=>({}));
+    if(!approvedResponse.ok||!approved.execution_token)throw new Error(approved.error||('HTTP '+approvedResponse.status));
+    const executedResponse=await fetch(`/api/v2/operation-approvals/${encodeURIComponent(approval.approval_id)}/execute`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({execution_token:approved.execution_token})
+    });
+    const executed=await executedResponse.json().catch(()=>({}));
+    if(!executedResponse.ok||!executed.ok){
+      throw new Error(executed.error||executed.approval?.execution?.error||('HTTP '+executedResponse.status));
+    }
+    showToast('母版已安全推送到 GitHub','#4ade80',5000);
+    await loadGitPageStatus();
+  }catch(error){
+    showToast('GitHub 同步失败：'+String(error?.message||error),'#fca5a5',8000);
+    await loadGitPageStatus();
+  }finally{
+    btn.disabled=false;
+    if(btn.textContent==='正在检查并同步…')btn.textContent=original||'同步 GitHub';
+  }
 }
 
 // ════════════════════════════════════════════════════════════

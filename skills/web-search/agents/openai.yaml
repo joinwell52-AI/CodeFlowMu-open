@@ -1,0 +1,4 @@
+interface:
+  display_name: "Web Search"
+  short_description: "Build queries, search the web, and select credible sources"
+  default_prompt: "Use $web-search to find credible web sources for this question."

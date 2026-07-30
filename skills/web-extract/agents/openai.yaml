@@ -1,0 +1,4 @@
+interface:
+  display_name: "Web Extract"
+  short_description: "Open pages and extract text, tables, and source URLs"
+  default_prompt: "Use $web-extract to extract the relevant content and tables from these pages."

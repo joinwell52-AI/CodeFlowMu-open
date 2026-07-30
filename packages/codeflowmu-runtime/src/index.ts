@@ -636,8 +636,12 @@ export {
   AGENT_SKILLS_MANIFEST_PROJECTION_REL,
   agentSkillsManifestSourcePath,
   agentSkillsManifestProjectionPath,
+  collectAgentSkillPackagePaths,
+  mergeAgentSkillsManifest,
   plantAgentSkillsManifestIfMissing,
+  syncAgentPlaybookAssets,
   type PlantAgentSkillsManifestResult,
+  type SyncAgentPlaybookAssetsResult,
 } from "./skills/AgentPlaybookManifest.ts";
 
 export {

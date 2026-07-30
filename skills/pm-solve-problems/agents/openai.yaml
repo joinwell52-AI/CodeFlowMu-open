@@ -1,0 +1,4 @@
+interface:
+  display_name: "PM Problem Solving"
+  short_description: "Analyze ambiguous problems and choose defensible solutions"
+  default_prompt: "Use $pm-solve-problems to analyze this problem and recommend a solution."

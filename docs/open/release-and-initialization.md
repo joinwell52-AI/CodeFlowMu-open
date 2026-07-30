@@ -9,7 +9,7 @@ Open Dev Team Edition 当前只提供真实 Cursor SDK 接入。供应商无关�
 环境预检会区分三种情况：
 
 - 项目未初始化：点击“一键初始化/接管项目”。
-- 初始化会同时安装公开版自带的 Windows Use 与 Browser Use 技能包；技能库应显示“已接入、包在盘”，不应显示“包缺失”。
+- 初始化会按公开 Agent Playbook Manifest 安装全部声明的技能包（包括 Windows Use、Browser Use 和开发团队各角色 Playbook）；技能库应显示“已接入、包在盘”，不应显示“包缺失”。
 - FCoP 骨架不完整或协议版本过旧：点击“初始化/修复环境”。
 - 仅缺少 Cursor API Key：点击“去配置”，进入“设置 → 通道设置 → Cursor”。
 

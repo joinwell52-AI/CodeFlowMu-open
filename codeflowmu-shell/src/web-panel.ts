@@ -311,6 +311,7 @@ import {
   AgentSkillsManifestInvalidError,
   plantPmSkillManifestIfMissing,
   plantAgentSkillsManifestIfMissing,
+  syncAgentPlaybookAssets,
   isTaskReopenedForReworkFromLedger,
   stageFromPath,
   isCanonicalReportMarkdownFilename,
@@ -2607,6 +2608,118 @@ async function wpReadGitTrackingState(
   }
 }
 
+function wpIsGreaterProductVersion(next: string, previous: string): boolean {
+  const parse = (value: string): number[] | null => {
+    const match = value.match(/^V?(\d+)\.(\d+)\.(\d+)$/);
+    return match ? match.slice(1).map(Number) : null;
+  };
+  const a = parse(next);
+  const b = parse(previous);
+  if (!a || !b) return false;
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return (a[index] ?? 0) > (b[index] ?? 0);
+  }
+  return false;
+}
+
+async function wpPrepareGitHubSync(
+  cwd: string,
+  branch: string,
+  conflictResolution: "" | "keep_local_newer" = "",
+): Promise<WpGitStatusPayload> {
+  const before = await wpReadGitStatusPayload(cwd);
+  if (before.productUncommitted && before.productUncommitted > 0) {
+    throw new Error(`请先提交 ${before.productUncommitted} 个产品文件，再同步 GitHub`);
+  }
+  if (before.branch !== branch) {
+    throw new Error(`当前分支是 ${before.branch || "(detached)"}，不能同步请求中的 ${branch}`);
+  }
+
+  await execFile("git", ["fetch", "origin", branch], {
+    cwd,
+    timeout: 120_000,
+    maxBuffer: 4 * 1024 * 1024,
+  });
+
+  const fetched = await wpReadGitStatusPayload(cwd);
+  const remoteRef = fetched.remoteRef || `origin/${branch}`;
+  if (Number(fetched.behind ?? 0) > 0) {
+    const mergeBase = await execFile("git", ["merge-base", "HEAD", remoteRef], {
+      cwd,
+      timeout: 15_000,
+      maxBuffer: 1024 * 64,
+    });
+    const preview = await execFile(
+      "git",
+      ["merge-tree", String(mergeBase.stdout ?? "").trim(), "HEAD", remoteRef],
+      { cwd, timeout: 120_000, maxBuffer: 8 * 1024 * 1024 },
+    );
+    const hasConflict = /^(?:[+\- ]*)(?:<<<<<<<|=======|>>>>>>>)/m.test(String(preview.stdout ?? ""));
+    if (hasConflict && conflictResolution !== "keep_local_newer") {
+      throw new Error("GitHub 历史分叉存在代码冲突；请在面板确认保留本地较新母版后重试");
+    }
+    try {
+      if (hasConflict) {
+        const [localVersionOut, remoteVersionOut] = await Promise.all([
+          execFile("git", ["show", "HEAD:.codeflowmu-version.json"], {
+            cwd,
+            timeout: 15_000,
+            maxBuffer: 1024 * 64,
+          }),
+          execFile("git", ["show", `${remoteRef}:.codeflowmu-version.json`], {
+            cwd,
+            timeout: 15_000,
+            maxBuffer: 1024 * 64,
+          }),
+        ]);
+        const localVersion = String(
+          JSON.parse(String(localVersionOut.stdout ?? "{}"))?.codeflowmu ?? "",
+        );
+        const remoteVersion = String(
+          JSON.parse(String(remoteVersionOut.stdout ?? "{}"))?.codeflowmu ?? "",
+        );
+        if (!wpIsGreaterProductVersion(localVersion, remoteVersion)) {
+          throw new Error(
+            `不能保留本地版本：本地 ${localVersion || "未知"} 不高于 GitHub ${remoteVersion || "未知"}`,
+          );
+        }
+        await execFile(
+          "git",
+          [
+            "merge",
+            "--no-edit",
+            "-s",
+            "ours",
+            "-m",
+            `Merge older ${remoteRef} history while keeping local ${localVersion}`,
+            remoteRef,
+          ],
+          { cwd, timeout: 120_000, maxBuffer: 8 * 1024 * 1024 },
+        );
+      } else {
+        await execFile(
+          "git",
+          ["merge", "--no-edit", "-m", `Merge ${remoteRef} before GitHub sync`, remoteRef],
+          { cwd, timeout: 120_000, maxBuffer: 8 * 1024 * 1024 },
+        );
+      }
+    } catch (error) {
+      try {
+        await execFile("git", ["merge", "--abort"], {
+          cwd,
+          timeout: 30_000,
+          maxBuffer: 1024 * 1024,
+        });
+      } catch {
+        // Best effort: the merge may have failed before creating MERGE_HEAD.
+      }
+      throw new Error(wpGitCommandErrorMessage(error));
+    }
+  }
+
+  return wpReadGitStatusPayload(cwd);
+}
+
 function wpHasOwnGitRepository(cwd: string): boolean {
   return existsSync(join(cwd, ".git"));
 }
@@ -4897,7 +5010,7 @@ export function buildWebPanelApp(
           sourceRoot: hostRoot ?? root,
         });
         send(
-          agentPlanted
+          agentPlanted.planted
             ? "  ↳ ✅ 已从 docs/skills 恢复 .codeflowmu/agent-skills.manifest.json"
             : "  ↳ ℹ️ Agent Playbook manifest 已存在，跳过",
         );
@@ -5084,8 +5197,6 @@ export function buildWebPanelApp(
       [join(hostRoot, ".codeflowmu", "edition-ui.json"), join(root, ".codeflowmu", "edition-ui.json")],
       [join(hostRoot, "docs", "open"), join(root, "docs", "open")],
       [join(hostRoot, "docs", "skills"), join(root, "docs", "skills")],
-      [join(hostRoot, "skills", "windows-use"), join(root, "skills", "windows-use")],
-      [join(hostRoot, "skills", "browser-use"), join(root, "skills", "browser-use")],
       [join(hostRoot, "adoptedSource"), join(root, "adoptedSource")],
     ] as const;
     const copied: string[] = [];
@@ -5106,9 +5217,14 @@ export function buildWebPanelApp(
     if (await plantPmSkillManifestIfMissing(root)) {
       copied.push(".codeflowmu/pm-skills.manifest.json");
     }
-    if (await plantAgentSkillsManifestIfMissing(root, { sourceRoot: hostRoot })) {
+    const skillSync = await syncAgentPlaybookAssets(root, { sourceRoot: hostRoot });
+    if (skillSync.docsManifestChanged) {
+      copied.push("docs/skills/agent-skills.manifest.json");
+    }
+    if (skillSync.projectionManifestChanged) {
       copied.push(".codeflowmu/agent-skills.manifest.json");
     }
+    copied.push(...skillSync.copiedSkillPackages.map((skillPackage) => dirname(skillPackage)));
     return { applied: true, copied, skipped };
   }
 
@@ -10443,6 +10559,65 @@ export function buildWebPanelApp(
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ ok: false, error: msg });
+    }
+  });
+
+  app.post("/api/v2/git/sync", async (req: Request, res: Response) => {
+    try {
+      const cwd = resolveGitRoot();
+      if (isOpenEditionMode() && isProtectedOpenEditionAppRoot(cwd)) {
+        return res.status(403).json({
+          ok: false,
+          code: "OPEN_EDITION_TOOL_REPO_PROTECTED",
+          error: "CodeFlowMu Open 不能推送自身工具仓库，请先切换到开发项目。",
+        });
+      }
+      if (rejectOpenEditionProjectGitNotConfigured(res, cwd)) return;
+      const branch = String((req.body?.branch ?? (await wpReadGitBranch(cwd))) || "main").trim() || "main";
+      const remoteUrl = await wpReadGitRemoteUrl(cwd);
+      if (!remoteUrl) {
+        return res.status(400).json({
+          ok: false,
+          code: "REMOTE_URL_REQUIRED",
+          error: "当前仓库还没有配置 GitHub Remote URL。",
+        });
+      }
+
+      const conflictResolution =
+        req.body?.conflictResolution === "keep_local_newer" ? "keep_local_newer" : "";
+      const gitStatus = await wpPrepareGitHubSync(cwd, branch, conflictResolution);
+      if (Number(gitStatus.ahead ?? 0) === 0 && Number(gitStatus.behind ?? 0) === 0) {
+        return res.json({ ok: true, alreadySynced: true, gitStatus });
+      }
+      if (Number(gitStatus.behind ?? 0) > 0) {
+        return res.status(409).json({
+          ok: false,
+          code: "REMOTE_HISTORY_NOT_MERGED",
+          error: `GitHub 仍有 ${gitStatus.behind} 个独有提交，已停止推送。`,
+          gitStatus,
+        });
+      }
+
+      const prepared = operationApprovalService().prepare(await buildGitPushApprovalInput({
+        cwd,
+        branch,
+        subject: {
+          actor: String(req.body?.requested_by ?? "PANEL-ADMIN").trim() || "PANEL-ADMIN",
+          role: "ADMIN",
+          project_id: activeProjectId || "mother-repository",
+        },
+      }));
+      res.status(prepared.decision === "REQUIRE_APPROVAL" ? 202 : 200).json({
+        ok: true,
+        cwd,
+        branch,
+        remoteUrl,
+        gitStatus,
+        ...prepared,
+      });
+    } catch (err: unknown) {
+      const msg = wpGitCommandErrorMessage(err);
       res.status(500).json({ ok: false, error: msg });
     }
   });

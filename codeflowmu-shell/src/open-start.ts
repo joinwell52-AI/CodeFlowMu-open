@@ -8,6 +8,7 @@
 import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { syncAgentPlaybookAssets } from '@codeflowmu/runtime';
 import { startOpenInstallIntegrityGuard } from './open-install-integrity.ts';
 
 function findProjectRoot() {
@@ -84,14 +85,6 @@ if (!registeredActiveProjectRoot && !existsSync(join(defaultProjectRoot, 'fcop',
     });
   }
 }
-for (const skillName of ['windows-use', 'browser-use']) {
-  const source = join(openHostRoot, 'skills', skillName);
-  const destination = join(defaultProjectRoot, 'skills', skillName);
-  if (existsSync(source) && !existsSync(destination)) {
-    mkdirSync(dirname(destination), { recursive: true });
-    cpSync(source, destination, { recursive: true, force: false, errorOnExist: false });
-  }
-}
 const publicSkillsDocsSource = join(openHostRoot, 'docs', 'skills');
 const publicSkillsDocsDestination = join(defaultProjectRoot, 'docs', 'skills');
 if (existsSync(publicSkillsDocsSource) && !existsSync(publicSkillsDocsDestination)) {
@@ -102,11 +95,14 @@ if (existsSync(publicSkillsDocsSource) && !existsSync(publicSkillsDocsDestinatio
     errorOnExist: false,
   });
 }
-const agentSkillsSource = join(publicSkillsDocsDestination, 'agent-skills.manifest.json');
-const agentSkillsProjection = join(defaultProjectRoot, '.codeflowmu', 'agent-skills.manifest.json');
-if (existsSync(agentSkillsSource) && !existsSync(agentSkillsProjection)) {
-  mkdirSync(dirname(agentSkillsProjection), { recursive: true });
-  cpSync(agentSkillsSource, agentSkillsProjection, { force: false, errorOnExist: false });
+try {
+  await syncAgentPlaybookAssets(defaultProjectRoot, { sourceRoot: openHostRoot });
+} catch (error) {
+  process.stderr.write(
+    `[open-skills] non-destructive project upgrade failed: ${
+      error instanceof Error ? error.message : String(error)
+    }\n`,
+  );
 }
 if (!existsSync(projectsRegistry)) {
   mkdirSync(dirname(projectsRegistry), { recursive: true });
@@ -128,6 +124,7 @@ const activeProjectRoot = registeredActiveProjectRoot ?? defaultProjectRoot;
 process.env.CODEFLOW_PROVIDER = 'cursor';
 process.env.CODEFLOW_OPEN_EDITION = '1';
 process.env.CODEFLOW_OPEN_HOST_ROOT = openHostRoot;
+process.env.CODEFLOWMU_HOST_ROOT = openHostRoot;
 process.env.CODEFLOW_OPEN_PROTECTED_ROOTS = openHostRoot;
 process.env.CODEFLOW_PROJECTS_REGISTRY = projectsRegistry;
 process.env.CODEFLOW_OPEN_DEFAULT_PROJECT_ROOT = activeProjectRoot;

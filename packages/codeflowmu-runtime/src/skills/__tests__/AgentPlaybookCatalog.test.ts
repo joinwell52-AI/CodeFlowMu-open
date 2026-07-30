@@ -218,4 +218,50 @@ describe("AgentPlaybookCatalog", () => {
       await rm(hostRoot, { recursive: true, force: true });
     }
   });
+
+  it("prefers a project-local package over the CODEFLOWMU_HOST_ROOT fallback", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "cfm-catalog-local-"));
+    const hostRoot = await mkdtemp(join(tmpdir(), "cfm-catalog-host-"));
+    const previousHostRoot = process.env.CODEFLOWMU_HOST_ROOT;
+    try {
+      await mkdir(join(projectRoot, ".codeflowmu"), { recursive: true });
+      await mkdir(join(projectRoot, "skills", "shared-skill"), { recursive: true });
+      await mkdir(join(hostRoot, "skills", "shared-skill"), { recursive: true });
+      await writeFile(
+        join(projectRoot, ".codeflowmu", "agent-skills.manifest.json"),
+        JSON.stringify({
+          version: 1,
+          kind: "agent_skills_manifest",
+          common_skills: [{
+            id: "shared-skill",
+            display_name: "Shared Skill",
+            skill_package: "skills/shared-skill/SKILL.md",
+            status: "implemented",
+          }],
+        }),
+        "utf-8",
+      );
+      await writeFile(
+        join(projectRoot, "skills", "shared-skill", "SKILL.md"),
+        "---\nname: shared-skill\ndescription: Project-local override.\n---\n",
+        "utf-8",
+      );
+      await writeFile(
+        join(hostRoot, "skills", "shared-skill", "SKILL.md"),
+        "---\nname: shared-skill\ndescription: Host fallback.\n---\n",
+        "utf-8",
+      );
+      process.env.CODEFLOWMU_HOST_ROOT = hostRoot;
+
+      const catalog = await loadAgentSkillsCatalog(projectRoot);
+      const skill = catalog.groups[0]?.skills[0];
+      assert.equal(skill?.package_exists, true);
+      assert.equal(skill?.description, "Project-local override.");
+    } finally {
+      if (previousHostRoot === undefined) delete process.env.CODEFLOWMU_HOST_ROOT;
+      else process.env.CODEFLOWMU_HOST_ROOT = previousHostRoot;
+      await rm(projectRoot, { recursive: true, force: true });
+      await rm(hostRoot, { recursive: true, force: true });
+    }
+  });
 });

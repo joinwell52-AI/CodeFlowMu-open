@@ -3,16 +3,16 @@
   "productName": "CodeFlowMu Open Dev Team Edition",
   "positioning": "A multi-agent development team application governed by the FCoP protocol and driven through Cursor SDK interfaces.",
   "edition": "open-dev-team",
-  "version": "V1.1.29-open",
-  "npmVersion": "1.1.29-open",
+  "version": "V1.1.30-open",
+  "npmVersion": "1.1.30-open",
   "releaseChannel": "open",
   "status": "public-open",
   "sourceRepository": "joinwell52-AI/codeflowmu",
   "targetRepository": "joinwell52-AI/CodeFlowMu-open",
-  "builtAt": "2026-07-27T06:42:34.328Z",
-  "sourceGitCommit": "c6d1233ef6ef58cd7cc17b29d1c72d88987f4ff2",
+  "builtAt": "2026-07-30T02:39:07.484Z",
+  "sourceGitCommit": "5cb226fea40337ca192bfd09887b12b1fad25800",
   "sourceDirty": false,
-  "motherVersion": "V1.1.29",
+  "motherVersion": "V1.1.30",
   "features": [
     {
       "id": "fcop-development-team",
@@ -47,6 +47,11 @@
       "name": "Policy-bounded Browser Use",
       "status": "public",
       "publicSince": "V1.1.0-open"
+    },
+    {
+      "id": "agent-playbook-packages",
+      "name": "Manifest-driven public Agent Playbook packages",
+      "status": "public"
     },
     {
       "id": "eval-observer",
@@ -160,6 +165,15 @@
     "approvedBy": "ADMIN",
     "taskId": "TASK-20260727-005",
     "approvedFeatureIds": [
+      "project-root-hot-switch",
+      "open-install-integrity",
+      "windows-use",
+      "browser-use",
+      "agent-playbook-packages",
+      "qa-rework-dependency-gate",
+      "product-delivery-governance-gate",
+      "pre-action-approval-gate",
+      "runtime-governance-remediation",
       "team-model-runtime-persistence"
     ],
     "changeGroups": [
@@ -245,6 +259,23 @@
           "docs/skills/agent-skills.manifest.json",
           "packages/codeflowmu-runtime/src/skills/SkillContextRouter.ts",
           "packages/codeflowmu-runtime/src/skills/__tests__/SkillContextRouter.test.ts"
+        ]
+      },
+      {
+        "id": "agent-playbook-packages",
+        "productPolicy": "open-core",
+        "description": "按公开 Agent Skills Manifest 发布完整 Playbook 包，并对新项目和旧项目执行非破坏性同步与加载回退。",
+        "paths": [
+          "docs/skills/agent-skills.manifest.json",
+          "skills/**",
+          "packages/codeflowmu-runtime/src/index.ts",
+          "packages/codeflowmu-runtime/src/skills/AgentPlaybookManifest.ts",
+          "packages/codeflowmu-runtime/src/skills/SkillAssetResolver.ts",
+          "packages/codeflowmu-runtime/src/skills/__tests__/AgentPlaybookManifest.test.ts",
+          "packages/codeflowmu-runtime/src/skills/__tests__/AgentPlaybookCatalog.test.ts",
+          "codeflowmu-shell/src/web-panel.ts",
+          "codeflowmu-shell/src/__tests__/open-release-console.test.ts",
+          "templates/default-project/**"
         ]
       },
       {

@@ -649,7 +649,7 @@ API 立即派发、watcher、周期对账和恢复队列可能属于不同 `Task
 - [ ] 在受保护目录新增代码文件会自动删除。
 - [ ] `workspace/<project>` 的业务写入不受自保护壳影响。
 - [ ] PM leader profile 包含 `new_workspace`、`list_workspaces` 和 `write_task`。
-- [ ] 默认项目及切换后的已有项目包含公开 `windows-use`、`browser-use` Skill 包，catalog 缺包为 0。
+- [ ] 根发行树、默认项目及切换后的已有项目包含公开 Manifest 声明的全部 Skill 包，catalog 缺包为 0；项目内同名包未被覆盖。
 - [ ] 全新默认项目同时包含 `docs/skills/agent-skills.manifest.json` source-of-truth 与 `.codeflowmu` projection，catalog 不得 404。
 - [ ] PM 使用受控 MCP 创建工作区后能在同一轮派发 DEV。
 - [ ] 故意漏掉一次文件监听事件后，周期对账仍能将 inbox TASK 自动派发。
