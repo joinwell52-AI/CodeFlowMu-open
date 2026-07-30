@@ -1179,6 +1179,183 @@ select.ci option{background:#1e3250}
   border-top: 1px solid rgba(255,255,255,0.03);
   padding-top: 4px;
 }
+.task-timeline-board {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 18px 24px 40px;
+  background:
+    radial-gradient(circle at 15% 0%, rgba(59,130,246,.08), transparent 32%),
+    linear-gradient(180deg, rgba(2,6,23,.55), rgba(15,23,42,.2));
+}
+.task-line-content {
+  width: min(1080px, 100%);
+  min-width: 680px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.task-line-group {
+  border: 1px solid rgba(148,163,184,.18);
+  border-radius: 12px;
+  background: rgba(15,23,42,.46);
+  overflow: hidden;
+}
+.task-line-group-hd {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 14px;
+  border-bottom: 1px solid rgba(148,163,184,.14);
+  background: rgba(30,41,59,.42);
+}
+.task-line-group-title {
+  min-width: 0;
+  flex: 1;
+  color: var(--text1);
+  font-size: 14px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-line-group-count {
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: #93c5fd;
+  background: rgba(59,130,246,.14);
+  font-size: 11px;
+  font-weight: 700;
+}
+.task-line-nodes {
+  padding: 12px 14px 16px;
+}
+.task-line-node-row {
+  display: grid;
+  grid-template-columns: 92px minmax(420px, 1fr);
+  gap: 12px;
+  min-height: 76px;
+}
+.task-line-time {
+  position: relative;
+  padding: 17px 16px 0 0;
+  text-align: right;
+  color: var(--text3);
+  font-family: "Fira Code", ui-monospace, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.task-line-time::after {
+  content: "";
+  position: absolute;
+  top: 21px;
+  right: -3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #60a5fa;
+  box-shadow: 0 0 0 4px rgba(96,165,250,.13);
+}
+.task-line-node-row:not(:last-child) .task-line-time::before {
+  content: "";
+  position: absolute;
+  top: 28px;
+  right: 0;
+  bottom: -17px;
+  border-right: 1px solid rgba(96,165,250,.25);
+}
+.task-line-card-wrap {
+  --task-line-depth: 0;
+  position: relative;
+  margin-left: calc(var(--task-line-depth) * 36px);
+  padding: 7px 0;
+}
+.task-line-card-wrap:not(.is-root)::before {
+  content: "";
+  position: absolute;
+  left: -22px;
+  top: 29px;
+  width: 22px;
+  border-top: 1px solid rgba(148,163,184,.35);
+}
+.task-line-card-wrap:not(.is-root)::after {
+  content: "";
+  position: absolute;
+  left: -22px;
+  top: -8px;
+  height: 37px;
+  border-left: 1px solid rgba(148,163,184,.28);
+}
+.task-line-card {
+  display: grid;
+  grid-template-columns: auto minmax(0,1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  padding: 9px 11px;
+  border: 1px solid rgba(148,163,184,.18);
+  border-left: 3px solid #60a5fa;
+  border-radius: 8px;
+  background: rgba(255,255,255,.025);
+  cursor: pointer;
+  transition: background .16s ease, border-color .16s ease, transform .16s ease;
+}
+.task-line-card:hover {
+  transform: translateY(-1px);
+  background: rgba(255,255,255,.055);
+  border-color: rgba(96,165,250,.42);
+}
+.task-line-card[data-scope="done"],
+.task-line-card[data-scope="archive"] { border-left-color: #4ade80; }
+.task-line-card[data-scope="review"] { border-left-color: #fbbf24; }
+.task-line-card[data-scope="active"] { border-left-color: #38bdf8; }
+.task-line-role {
+  min-width: 48px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  color: #bfdbfe;
+  background: rgba(59,130,246,.14);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+.task-line-main { min-width: 0; }
+.task-line-title {
+  color: var(--text1);
+  font-size: 13px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-line-meta {
+  margin-top: 4px;
+  color: var(--text3);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-line-status {
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: #94a3b8;
+  background: rgba(148,163,184,.12);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.task-line-status.scope-active { color:#7dd3fc;background:rgba(14,165,233,.13); }
+.task-line-status.scope-review { color:#fcd34d;background:rgba(251,191,36,.13); }
+.task-line-status.scope-done,
+.task-line-status.scope-archive { color:#86efac;background:rgba(34,197,94,.13); }
+.task-line-empty {
+  margin: auto;
+  padding: 48px 20px;
+  color: var(--text3);
+  text-align: center;
+  font-size: 14px;
+}
 
 /* Agent LED Lights */
 .dot-led {
@@ -3036,6 +3213,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
     <div class="view-switch-btns" style="display:flex;gap:4px;margin-right:12px;background:rgba(255,255,255,.015);padding:2px;border-radius:6px;border:1px solid rgba(255,255,255,.04)">
       <button class="switch-btn on" id="btn-view-list" onclick="switchTaskView('list')" style="font-size:15px;padding:3px 10px;border-radius:4px;background:transparent;border:none;color:var(--text3);cursor:pointer;transition:all .2s" data-i18n="tp.viewList">📋 列表</button>
       <button class="switch-btn" id="btn-view-kanban" onclick="switchTaskView('kanban')" style="font-size:15px;padding:3px 10px;border-radius:4px;background:transparent;border:none;color:var(--text3);cursor:pointer;transition:all .2s" data-i18n="tp.viewKanban">📊 看板</button>
+      <button class="switch-btn" id="btn-view-timeline" onclick="switchTaskView('timeline')" style="font-size:15px;padding:3px 10px;border-radius:4px;background:transparent;border:none;color:var(--text3);cursor:pointer;transition:all .2s" data-i18n="tp.viewTimeline">🧭 任务线</button>
     </div>
 
     <!-- Multi-select export (legacy feature preserved) -->
@@ -3054,6 +3232,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
     <div id="task-kanban-board" class="task-kanban-board" style="display:none">
       <!-- 5 列生命周期物理看板容器将由 JS 动态绘制 -->
     </div>
+    <div id="task-timeline-board" class="task-timeline-board" style="display:none" aria-live="polite"></div>
 
     <!-- Left: two sections (scrollable) -->
     <div id="task-main-scroll">
@@ -4963,7 +5142,7 @@ const LANGS={
     'task.sec.smokeSub':'测试 artifact · 不计入主 KPI',
     'task.importMd':'📄 导入 MD','task.importMdOk':'已导入 Markdown：{name}','task.importMdFail':'导入失败：{msg}','task.attachAdded':'已添加附件：{name}',
     'cfp.activeAgents':'🟢 活跃 Agent','cfp.noActive':'暂无活跃 Agent','cfp.landedFiles':'📄 已落文件','cfp.noFiles':'暂无落文件记录','cfp.clear':'🗑 清空','cfp.footnote':'通过观察文件流动而非直接内存共享来感知',
-    'tp.title':'任务单','tp.allTasks':'全部任务','tp.searchPh':'搜索主任务文件名…','tp.searchTitle':'按主线 filename / task_id / subject 模糊筛选','tp.countFiltered':'{matched}/{total} 条主线匹配','tp.active':'进行中','tp.archived':'已归档','tp.members':'成员:','tp.operator':'操作者','tp.viewList':'📋 列表','tp.viewKanban':'📊 看板','tp.msSelected':'已选 {n} 项',
+    'tp.title':'任务单','tp.allTasks':'全部任务','tp.searchPh':'搜索主任务文件名…','tp.searchTitle':'按主线 filename / task_id / subject 模糊筛选','tp.countFiltered':'{matched}/{total} 条主线匹配','tp.active':'进行中','tp.archived':'已归档','tp.members':'成员:','tp.operator':'操作者','tp.viewList':'📋 列表','tp.viewKanban':'📊 看板','tp.viewTimeline':'🧭 任务线','tp.timelineEmpty':'暂无可生成的任务线','tp.timelineParent':'父任务','tp.timelineRoot':'根任务','tp.msSelected':'已选 {n} 项',
     'eval.title':'🔍 EVAL 涌现评估','eval.subtitle':'独立监督层 · 不参与 PM 团队工作流','eval.idle':'空闲','eval.export':'⬇ 导出','eval.trigger':'生成观察报告','eval.settingsTitle':'观察触发设置（启用配置 + 时间）','eval.cfgWatcher':'面板启动时开启文件监听（常驻，易刷屏）','eval.cfgTaskCreate':'创建任务时自动评估','eval.cfgSchedule':'启用配置（定时评估）','eval.cfgTime':'时间','eval.saveSettings':'保存设置','eval.stopWatcher':'停止常驻监听','eval.reportsList':'📋 观察报告列表（按生成时间倒序）','eval.violations':'⚠ 违规诊断快照','eval.emergence':'✨ 涌现日志快照',
     'toast.pathCopied':'路径已复制','toast.pathCopied2':'已复制路径','toast.readFail':'读取失败: {err}','toast.fileReadFail':'文件读取失败','toast.fillTask':'请填写任务标题和详情','toast.dispatchFail':'派发失败: {err}','toast.doorbellCleared':'已清空门铃记录','toast.nudgeFail':'催办发送失败','toast.opFailHttp':'操作失败 (HTTP {code}): {err}','toast.opFailNet':'操作失败，网络错误','toast.approved':'已通过 ✓','toast.opFail':'操作失败：{err}','toast.rejected':'已拒绝','toast.tabFail':'切换标签失败：{err}','toast.reportNotFound':'未找到对应报告，或任务执行中','toast.swapAiFail':'换 AI 失败: {err}','toast.swapAiReqFail':'换 AI 请求失败: {err}','toast.archiveHistFail':'转入历史档案失败: {err}','toast.taskFileUnknown':'无法识别任务文件','toast.noReportSubmit':'未找到关联 REPORT，无法提交验收','toast.rejectReason':'请填写打回原因','toast.reopenReason':'请填写重开原因','toast.copied':'已复制','toast.noLinkedTask':'未找到关联任务（可能已归档）',
     'btn.waking':'唤醒中…','btn.processing':'处理中…','btn.archiving':'转入中…','env.restarting':'重启 ({n}s)…','env.restartSvcBtn':'重启服务','hdr.restarting':'↻ 重启中...',
@@ -6118,7 +6297,7 @@ const LANGS={
     'task.sec.smokeSub':'Test artifact · excluded from primary KPIs',
     'task.importMd':'📄 Import MD','task.importMdOk':'Markdown imported: {name}','task.importMdFail':'Import failed: {msg}','task.attachAdded':'Attachment added: {name}',
     'cfp.activeAgents':'🟢 Active agents','cfp.noActive':'No active agents','cfp.landedFiles':'📄 Landed files','cfp.noFiles':'No landed files yet','cfp.clear':'🗑 Clear','cfp.footnote':'Observe coordination via files, not shared memory',
-    'tp.title':'Tasks','tp.allTasks':'All tasks','tp.searchPh':'Search main task filename…','tp.searchTitle':'Fuzzy filter by filename / task_id / subject','tp.countFiltered':'{matched}/{total} mainlines matched','tp.active':'Active','tp.archived':'Archived','tp.members':'Members:','tp.operator':'Operator','tp.viewList':'📋 List','tp.viewKanban':'📊 Board','tp.msSelected':'{n} selected',
+    'tp.title':'Tasks','tp.allTasks':'All tasks','tp.searchPh':'Search main task filename…','tp.searchTitle':'Fuzzy filter by filename / task_id / subject','tp.countFiltered':'{matched}/{total} mainlines matched','tp.active':'Active','tp.archived':'Archived','tp.members':'Members:','tp.operator':'Operator','tp.viewList':'📋 List','tp.viewKanban':'📊 Board','tp.viewTimeline':'🧭 Timeline','tp.timelineEmpty':'No task timeline available','tp.timelineParent':'Parent','tp.timelineRoot':'Root task','tp.msSelected':'{n} selected',
     'eval.title':'🔍 EVAL emergence','eval.subtitle':'Independent oversight · not in PM workflow','eval.idle':'Idle','eval.export':'⬇ Export','eval.trigger':'Generate observation','eval.settingsTitle':'Trigger settings (schedule)','eval.cfgWatcher':'File watcher on panel start (noisy)','eval.cfgTaskCreate':'Auto-eval on task create','eval.cfgSchedule':'Enable scheduled eval','eval.cfgTime':'Time','eval.saveSettings':'Save settings','eval.stopWatcher':'Stop watcher','eval.reportsList':'📋 Observation reports (newest first)','eval.violations':'⚠ Violation snapshot','eval.emergence':'✨ Emergence log snapshot',
     'toast.pathCopied':'Path copied','toast.pathCopied2':'Path copied','toast.readFail':'Read failed: {err}','toast.fileReadFail':'File read failed','toast.fillTask':'Please fill title and description','toast.dispatchFail':'Dispatch failed: {err}','toast.doorbellCleared':'Doorbell log cleared','toast.nudgeFail':'Nudge failed','toast.opFailHttp':'Operation failed (HTTP {code}): {err}','toast.opFailNet':'Operation failed (network)','toast.approved':'Approved ✓','toast.opFail':'Operation failed: {err}','toast.rejected':'Rejected','toast.tabFail':'Tab switch failed: {err}','toast.reportNotFound':'Report not found or task still running','toast.swapAiFail':'Swap AI failed: {err}','toast.swapAiReqFail':'Swap AI request failed: {err}','toast.archiveHistFail':'Archive to history failed: {err}','toast.taskFileUnknown':'Cannot identify task file','toast.noReportSubmit':'No REPORT linked — cannot submit','toast.rejectReason':'Enter reject reason','toast.reopenReason':'Enter reopen reason','toast.copied':'Copied','toast.noLinkedTask':'Linked task not found (maybe archived)',
     'btn.waking':'Waking…','btn.processing':'Processing…','btn.archiving':'Archiving…','env.restarting':'Restart ({n}s)…','env.restartSvcBtn':'Restart service','hdr.restarting':'↻ Restarting…',
@@ -8183,23 +8362,29 @@ function agCard(p){
 }
 
 /* ── Sprint-V3: Task views, Agent Status & Pairings ── */
-let currentTaskViewMode = 'list'; // 'list' | 'kanban'
+let currentTaskViewMode = 'list'; // 'list' | 'kanban' | 'timeline'
 
 function syncTaskViewModeChrome() {
-  const mode = currentTaskViewMode === 'kanban' ? 'kanban' : 'list';
+  const mode = ['kanban','timeline'].includes(currentTaskViewMode)
+    ? currentTaskViewMode
+    : 'list';
   const btnList = document.getElementById('btn-view-list');
   const btnKanban = document.getElementById('btn-view-kanban');
+  const btnTimeline = document.getElementById('btn-view-timeline');
   const listArea = document.getElementById('task-main-scroll');
   const kanbanArea = document.getElementById('task-kanban-board');
+  const timelineArea = document.getElementById('task-timeline-board');
 
   if (btnList) btnList.classList.toggle('on', mode === 'list');
   if (btnKanban) btnKanban.classList.toggle('on', mode === 'kanban');
+  if (btnTimeline) btnTimeline.classList.toggle('on', mode === 'timeline');
   if (listArea) listArea.style.display = mode === 'list' ? 'flex' : 'none';
   if (kanbanArea) kanbanArea.style.display = mode === 'kanban' ? 'flex' : 'none';
+  if (timelineArea) timelineArea.style.display = mode === 'timeline' ? 'block' : 'none';
 }
 
 function switchTaskView(mode) {
-  currentTaskViewMode = mode === 'kanban' ? 'kanban' : 'list';
+  currentTaskViewMode = ['kanban','timeline'].includes(mode) ? mode : 'list';
   syncTaskViewModeChrome();
   renderTaskPage();
 }
@@ -18122,6 +18307,132 @@ function _renderKanbanSection() {
   }).join('');
 }
 
+function taskTimelineTimestamp(f){
+  const explicit=[f&&f.created_at,f&&f.createdAt,f&&f.ctime]
+    .map(v=>Date.parse(String(v||'')))
+    .find(v=>Number.isFinite(v));
+  if(Number.isFinite(explicit))return explicit;
+  const id=taskIdPrefix(String(f&&f.filename||''));
+  const m=id.match(/^TASK-(\d{4})(\d{2})(\d{2})-(\d{3,})$/);
+  if(!m)return 0;
+  return new Date(+m[1],+m[2]-1,+m[3]).getTime()+(+m[4]);
+}
+
+function taskTimelineTimeLabel(f){
+  const explicit=[f&&f.created_at,f&&f.createdAt,f&&f.ctime]
+    .map(v=>Date.parse(String(v||'')))
+    .find(v=>Number.isFinite(v));
+  if(Number.isFinite(explicit)){
+    return new Date(explicit).toLocaleString(_localeTag(),{
+      month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false,
+    });
+  }
+  const fn=String(f&&f.filename||'');
+  return `${parseDate(fn)} ${parseSeq(fn)}`.trim()||'—';
+}
+
+function buildTaskTimelineGroups(taskList){
+  const list=(taskList||[]).filter(f=>String(f&&f.filename||'').startsWith('TASK-'));
+  const byId={};
+  list.forEach(f=>{
+    const id=taskIdPrefix(f.filename);
+    if(id)byId[id]=f;
+  });
+  const rootFor=(task)=>{
+    let current=taskIdPrefix(task&&task.filename);
+    const seen=new Set();
+    while(current&&!seen.has(current)){
+      seen.add(current);
+      const row=byId[current];
+      const parent=row?taskParentPrefix(row):'';
+      if(!parent||!byId[parent])return current;
+      current=parent;
+    }
+    return taskIdPrefix(task&&task.filename);
+  };
+  const groups=new Map();
+  list.forEach(task=>{
+    const rootId=rootFor(task);
+    if(!groups.has(rootId))groups.set(rootId,[]);
+    groups.get(rootId).push(task);
+  });
+  const depthFor=(task,rootId)=>{
+    let current=taskIdPrefix(task&&task.filename);
+    let depth=0;
+    const seen=new Set();
+    while(current&&current!==rootId&&!seen.has(current)){
+      seen.add(current);
+      const row=byId[current];
+      const parent=row?taskParentPrefix(row):'';
+      if(!parent||!byId[parent])break;
+      depth+=1;
+      current=parent;
+    }
+    return Math.min(depth,12);
+  };
+  return [...groups.entries()].map(([rootId,nodes])=>{
+    nodes.sort((a,b)=>{
+      const byTime=taskTimelineTimestamp(a)-taskTimelineTimestamp(b);
+      return byTime||String(a.filename||'').localeCompare(String(b.filename||''));
+    });
+    return {
+      rootId,
+      root:byId[rootId]||nodes[0],
+      nodes:nodes.map(task=>({task,depth:depthFor(task,rootId)})),
+    };
+  }).sort((a,b)=>taskTimelineTimestamp(b.root)-taskTimelineTimestamp(a.root));
+}
+
+function _renderTaskTimeline(){
+  const host=document.getElementById('task-timeline-board');
+  if(!host)return;
+  const groups=buildTaskTimelineGroups(taskPageVisiblePool());
+  if(!groups.length){
+    host.innerHTML=`<div class="task-line-empty">${esc(t('tp.timelineEmpty'))}</div>`;
+    return;
+  }
+  host.innerHTML=`<div class="task-line-content">${groups.map(group=>{
+    const rootTitle=taskDisplayTitle(group.root,72)||group.rootId;
+    const rows=group.nodes.map(({task,depth})=>{
+      const fn=String(task.filename||'');
+      const id=taskIdPrefix(fn);
+      const parent=taskParentPrefix(task);
+      const route=taskRouteFromFn(fn);
+      const role=route?`${route.sender}→${route.recipient}`:'TASK';
+      const scope=taskEffectiveScopeKey(task)||'inbox';
+      const title=taskDisplayTitle(task,92)||fn;
+      _taskReg[fn]=task;
+      return `<div class="task-line-node-row">
+        <div class="task-line-time">${esc(taskTimelineTimeLabel(task))}</div>
+        <div class="task-line-card-wrap${depth===0?' is-root':''}" style="--task-line-depth:${depth}">
+          <div class="task-line-card" data-fn="${esc(fn)}" data-scope="${esc(scope)}">
+            <span class="task-line-role">${esc(role)}</span>
+            <div class="task-line-main">
+              <div class="task-line-title">${esc(title)}</div>
+              <div class="task-line-meta">${esc(id)}${parent?` · ${esc(t('tp.timelineParent'))} ${esc(parent)}`:` · ${esc(t('tp.timelineRoot'))}`}</div>
+            </div>
+            <span class="task-line-status scope-${esc(scope)}">${esc(scopeStatusLabel(scope))}</span>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+    return `<section class="task-line-group" data-root-task="${esc(group.rootId)}">
+      <div class="task-line-group-hd">
+        <span class="task-line-role">ROOT</span>
+        <span class="task-line-group-title">${esc(group.rootId)} · ${esc(rootTitle)}</span>
+        <span class="task-line-group-count">${group.nodes.length}</span>
+      </div>
+      <div class="task-line-nodes">${rows}</div>
+    </section>`;
+  }).join('')}</div>`;
+  host.querySelectorAll('.task-line-card[data-fn]').forEach(card=>{
+    card.addEventListener('click',()=>{
+      const fn=card.dataset.fn||'';
+      openTaskDetail(_taskReg[fn]||{filename:fn});
+    });
+  });
+}
+
 function renderTaskPage(){
   if(curPage==='reports'){renderReportPage();return;}
   renderDiagnosticsPanel();
@@ -18134,6 +18445,11 @@ function renderTaskPage(){
 
   if (currentTaskViewMode === 'kanban') {
     _renderKanbanSection();
+    tpScheduleTaskPageLayoutSync();
+    return;
+  }
+  if (currentTaskViewMode === 'timeline') {
+    _renderTaskTimeline();
     tpScheduleTaskPageLayoutSync();
     return;
   }

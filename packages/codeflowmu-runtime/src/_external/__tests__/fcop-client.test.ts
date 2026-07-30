@@ -178,6 +178,7 @@ function buildFcopStub(
 function buildTaskProxy(sequence: number, overrides: {
   layer?: string;
   thread_key?: string | null;
+  parent?: string | null;
   references?: string[];
   body?: string;
 } = {}): unknown {
@@ -198,6 +199,9 @@ function buildTaskProxy(sequence: number, overrides: {
         ...(overrides.thread_key !== undefined
           ? { thread_key: overrides.thread_key }
           : {}),
+        ...(overrides.parent !== undefined
+          ? { parent: overrides.parent }
+          : {}),
         ...(overrides.references !== undefined
           ? { references: overrides.references }
           : {}),
@@ -213,6 +217,7 @@ function buildTaskFrontmatterProxy(args: {
   priority: string;
   subject: string | null;
   thread_key?: string | null;
+  parent?: string | null;
   references?: string[];
   risk_level?: string;
   layer?: string;
@@ -230,6 +235,7 @@ function buildTaskFrontmatterProxy(args: {
     // pythonia returns Python enum → object with `.value`
     priority: Promise.resolve({ value: Promise.resolve(args.priority) }),
     thread_key: Promise.resolve(args.thread_key ?? null),
+    parent: Promise.resolve(args.parent ?? null),
     subject: Promise.resolve(args.subject),
     references: Promise.resolve(args.references ?? []),
     risk_level: Promise.resolve({
@@ -632,6 +638,7 @@ describe("FcopProjectClient (P4 sprint Day 1.3 — TASK-20260511-007)", () => {
       body: "full body",
       references: ["TASK-001", "TASK-002"],
       thread_key: "thread-xyz",
+      parent: "TASK-20260511-001",
       risk_level: "low",
     };
     await client.writeTask(specFull);
@@ -643,6 +650,7 @@ describe("FcopProjectClient (P4 sprint Day 1.3 — TASK-20260511-007)", () => {
       body: "full body",
       references: ["TASK-001", "TASK-002"],
       thread_key: "thread-xyz",
+      parent: "TASK-20260511-001",
       risk_level: "low",
     });
   });

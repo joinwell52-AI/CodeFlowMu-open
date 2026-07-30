@@ -6,8 +6,8 @@
   "use strict";
 
   /** 本机当前运行的 PWA 包版本（发版时与 version.json / index.html ?v= 对齐） */
-  var BUNDLE_VERSION = "V1.0.53";
-  var PWA_CACHE_BUST = "1.0.53";
+  var BUNDLE_VERSION = "V1.0.54";
+  var PWA_CACHE_BUST = "1.0.54";
   var PWA_VERSION_STORAGE_KEY = "cfm_pwa_installed_version";
   var PWA_LEGACY_CACHE_NAMES = [
     "codeflowmu-pwa-v1.0.52",
@@ -81,11 +81,13 @@
     chatAttachmentPreviewCache: {},
     taskAttachmentPreviewCache: {},
     tasksListCollapsed: false,
+    tasksViewMode: "list",
   };
 
   var CHAT_LOCAL_KEY = "cfm_mobile_chat_log";
   var SELECTED_ROLE_KEY = "codeflow_selected_role";
   var TASKS_LIST_COLLAPSED_KEY = "cfm_tasks_list_collapsed";
+  var TASKS_VIEW_MODE_KEY = "cfm_tasks_view_mode";
 
   function getToken() {
     if (sessionMemoryToken) return sessionMemoryToken;
@@ -1770,6 +1772,154 @@
     return acc;
   }
 
+  function taskTimelineTimestamp(item) {
+    if (!item) return 0;
+    var explicit = Date.parse(String(item.created_at || item.ctime || ""));
+    if (Number.isFinite(explicit)) return explicit;
+    var parts = parseTaskFilenameParts(item.filename || item.task_id || item.id);
+    if (!parts) return 0;
+    var date = String(parts.date || "");
+    var year = parseInt(date.slice(0, 4), 10);
+    var month = parseInt(date.slice(4, 6), 10);
+    var day = parseInt(date.slice(6, 8), 10);
+    var base = new Date(year, month - 1, day).getTime();
+    return (Number.isFinite(base) ? base : 0) + (parseInt(parts.seq, 10) || 0);
+  }
+
+  /** Group by the explicit parent chain; each group is a complete long-task timeline. */
+  function buildMobileTaskTimelineGroups(tasks) {
+    var list = (tasks || []).filter(function (task) {
+      return !!taskIdFromItem(task);
+    });
+    var byId = {};
+    list.forEach(function (task) {
+      byId[taskIdFromItem(task)] = task;
+    });
+
+    function rootFor(task) {
+      var origin = taskIdFromItem(task);
+      var current = origin;
+      var seen = {};
+      while (current && !seen[current]) {
+        seen[current] = true;
+        var row = byId[current];
+        var parent = row ? taskParentIdFromItem(row) : "";
+        if (!parent || !byId[parent]) return current;
+        current = parent;
+      }
+      return origin;
+    }
+
+    function depthFor(task, rootId) {
+      var current = taskIdFromItem(task);
+      var depth = 0;
+      var seen = {};
+      while (current && current !== rootId && !seen[current]) {
+        seen[current] = true;
+        var row = byId[current];
+        var parent = row ? taskParentIdFromItem(row) : "";
+        if (!parent || !byId[parent]) break;
+        depth += 1;
+        current = parent;
+      }
+      return Math.min(depth, 8);
+    }
+
+    var grouped = {};
+    list.forEach(function (task) {
+      var rootId = rootFor(task);
+      if (!grouped[rootId]) grouped[rootId] = [];
+      grouped[rootId].push(task);
+    });
+
+    return Object.keys(grouped)
+      .map(function (rootId) {
+        var nodes = grouped[rootId];
+        nodes.sort(function (a, b) {
+          var aRoot = taskIdFromItem(a) === rootId;
+          var bRoot = taskIdFromItem(b) === rootId;
+          if (aRoot !== bRoot) return aRoot ? -1 : 1;
+          return (
+            taskTimelineTimestamp(a) - taskTimelineTimestamp(b) ||
+            taskIdFromItem(a).localeCompare(taskIdFromItem(b))
+          );
+        });
+        return {
+          rootId: rootId,
+          root: byId[rootId] || nodes[0],
+          nodes: nodes.map(function (task) {
+            return { task: task, depth: depthFor(task, rootId) };
+          }),
+        };
+      })
+      .sort(function (a, b) {
+        return taskTimelineTimestamp(b.root) - taskTimelineTimestamp(a.root);
+      });
+  }
+
+  function renderMobileTaskTimeline(tasks) {
+    var host = $("taskTimelineList");
+    if (!host) return;
+    var groups = buildMobileTaskTimelineGroups(tasks);
+    if (!groups.length) {
+      host.innerHTML = "";
+      return;
+    }
+    host.innerHTML = groups
+      .map(function (group) {
+        var rootTitle = (group.root && group.root.title) || group.rootId;
+        var nodes = group.nodes
+          .map(function (node) {
+            var task = node.task;
+            var parent = taskParentIdFromItem(task);
+            var time = formatTaskTimeMinute(task.created_at || task.updated_at, task);
+            var relation = parent
+              ? t("tasksTimelineParent") + " " + parent
+              : t("tasksTimelineRoot");
+            return (
+              '<div class="mobile-task-line-node" style="--mobile-tree-indent:' +
+              Math.min(node.depth, 5) * 10 +
+              "px" +
+              '">' +
+              '<div class="mobile-task-line-time">' +
+              esc(time) +
+              "</div>" +
+              '<div class="mobile-task-line-track"><span></span></div>' +
+              '<div class="mobile-task-line-content">' +
+              itemCardHtml(task, 0) +
+              '<div class="mobile-task-line-relation mono">' +
+              esc(relation) +
+              "</div>" +
+              "</div>" +
+              "</div>"
+            );
+          })
+          .join("");
+        return (
+          '<section class="mobile-task-line-group" data-root-task="' +
+          esc(group.rootId) +
+          '">' +
+          '<div class="mobile-task-line-group-head">' +
+          '<span class="mobile-task-line-root-badge">ROOT</span>' +
+          '<div class="mobile-task-line-group-title"><strong>' +
+          esc(rootTitle) +
+          '</strong><span class="mono">' +
+          esc(group.rootId) +
+          "</span></div>" +
+          '<span class="mobile-task-line-count">' +
+          group.nodes.length +
+          "</span>" +
+          "</div>" +
+          '<div class="mobile-task-line-nodes">' +
+          nodes +
+          "</div>" +
+          "</section>"
+        );
+      })
+      .join("");
+    bindItemCards(host);
+  }
+
   function itemCardHtmlFlat(item) {
     return itemCardHtml(item, 0);
   }
@@ -1878,6 +2028,39 @@
     state.tasksListCollapsed = !state.tasksListCollapsed;
     persistTasksListCollapsed(state.tasksListCollapsed);
     syncTasksListCollapsedUI();
+  }
+
+  function readTasksViewMode() {
+    try {
+      return localStorage.getItem(TASKS_VIEW_MODE_KEY) === "timeline" ? "timeline" : "list";
+    } catch (e) {
+      return "list";
+    }
+  }
+
+  function persistTasksViewMode(mode) {
+    try {
+      localStorage.setItem(TASKS_VIEW_MODE_KEY, mode);
+    } catch (e) {}
+  }
+
+  function syncTasksViewModeUI() {
+    var mode = state.tasksViewMode === "timeline" ? "timeline" : "list";
+    var listBtn = $("tasksViewListBtn");
+    var timelineBtn = $("tasksViewTimelineBtn");
+    var list = $("fullTaskList");
+    var timeline = $("taskTimelineList");
+    if (listBtn) listBtn.classList.toggle("active", mode === "list");
+    if (timelineBtn) timelineBtn.classList.toggle("active", mode === "timeline");
+    if (list) list.classList.toggle("hidden", mode !== "list");
+    if (timeline) timeline.classList.toggle("hidden", mode !== "timeline");
+  }
+
+  function setTasksViewMode(mode) {
+    state.tasksViewMode = mode === "timeline" ? "timeline" : "list";
+    persistTasksViewMode(state.tasksViewMode);
+    syncTasksViewModeUI();
+    renderTaskLists();
   }
 
   function taskMatchesFilter(task, filter) {
@@ -2024,6 +2207,7 @@
     updateHomeViewAllLabel();
 
     var full = $("fullTaskList");
+    var timeline = $("taskTimelineList");
     var fullEmpty = $("fullTaskEmpty");
     var tasks = isBound() ? expandTasksWithParentLinkedChildren(filteredTasks(), state.tasks) : [];
     if (full) {
@@ -2041,6 +2225,16 @@
         bindItemCards(full);
       }
     }
+    if (timeline) {
+      if (!isBound()) {
+        timeline.innerHTML = "";
+      } else if (state.apiErrors.tasks) {
+        timeline.innerHTML = '<div class="empty-state muted">' + esc(state.apiErrors.tasks) + "</div>";
+      } else {
+        renderMobileTaskTimeline(tasks);
+      }
+    }
+    syncTasksViewModeUI();
     if (fullEmpty) fullEmpty.classList.toggle("hidden", !isBound() || tasks.length > 0 || !!state.apiErrors.tasks);
   }
 
@@ -4293,6 +4487,14 @@
         ev.stopPropagation();
         toggleTasksListCollapsed();
       });
+    $("tasksViewListBtn") &&
+      $("tasksViewListBtn").addEventListener("click", function () {
+        setTasksViewMode("list");
+      });
+    $("tasksViewTimelineBtn") &&
+      $("tasksViewTimelineBtn").addEventListener("click", function () {
+        setTasksViewMode("timeline");
+      });
     $("reportsRefreshBtn") &&
       $("reportsRefreshBtn").addEventListener("click", function () {
         refreshAll();
@@ -4531,7 +4733,9 @@
     await loadMobileVersionManifest();
     wireEvents();
     state.tasksListCollapsed = readTasksListCollapsed();
+    state.tasksViewMode = readTasksViewMode();
     syncTasksListCollapsedUI();
+    syncTasksViewModeUI();
     initLayoutHeight();
     initKeyboardViewport();
     registerSw();

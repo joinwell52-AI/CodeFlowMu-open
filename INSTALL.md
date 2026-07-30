@@ -1,6 +1,6 @@
 # Install CodeFlowMu Open Dev Team Edition
 
-Version: `V1.2.0-open`
+Version: `V1.2.1-open`
 
 ## Requirements
 

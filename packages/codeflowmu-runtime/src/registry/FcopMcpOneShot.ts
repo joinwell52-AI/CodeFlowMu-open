@@ -162,6 +162,10 @@ const FCOP_STATIC_TOOL_SCHEMAS: Record<string, GoogleToolParameters> = {
       subject: { ...STRING_PROP, description: "Short task title." },
       body: { ...STRING_PROP, description: "Markdown task body. Do not include YAML frontmatter." },
       priority: { ...STRING_PROP, description: "Priority such as P0, P1, P2, or P3." },
+      parent: {
+        ...STRING_PROP,
+        description: "Strong parent TASK id. The parent must exist and remain open; thread_key and references inherit from it.",
+      },
       references: {
         type: "ARRAY",
         items: { type: "STRING" },
@@ -184,6 +188,10 @@ const FCOP_STATIC_TOOL_SCHEMAS: Record<string, GoogleToolParameters> = {
       subject: { ...STRING_PROP, description: "Short task title." },
       body: { ...STRING_PROP, description: "Markdown task body. Do not include YAML frontmatter." },
       priority: { ...STRING_PROP, description: "Priority such as P0, P1, P2, or P3." },
+      parent: {
+        ...STRING_PROP,
+        description: "Strong parent TASK id. The parent must exist and remain open; thread_key and references inherit from it.",
+      },
       references: {
         type: "ARRAY",
         items: { type: "STRING" },

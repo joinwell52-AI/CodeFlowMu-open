@@ -183,6 +183,8 @@ export interface FcopTask {
   subject: string;
   /** `task.frontmatter.thread_key` — null if absent. */
   thread_key: string | null;
+  /** `task.frontmatter.parent` — canonical strong parent edge. */
+  parent?: string | null;
   /** `task.frontmatter.risk_level.value` (decoded enum). */
   risk_level: string;
   /** `task.frontmatter.references` (decoded tuple → array). */
@@ -201,6 +203,7 @@ export interface FcopTaskFrontmatter {
   recipient: string;
   priority: string;
   thread_key: string | null;
+  parent?: string | null;
   subject: string;
   references: string[];
   risk_level: string;
@@ -315,6 +318,7 @@ export interface WriteTaskSpec {
   body: string;
   references?: string[];
   thread_key?: string;
+  parent?: string;
   slot?: string;
   risk_level?: RiskLevel;
 }
@@ -650,6 +654,7 @@ export class FcopProjectClient {
       };
       if (spec.references !== undefined) kwargs["references"] = spec.references;
       if (spec.thread_key !== undefined) kwargs["thread_key"] = spec.thread_key;
+      if (spec.parent !== undefined) kwargs["parent"] = spec.parent;
       if (spec.slot !== undefined) kwargs["slot"] = spec.slot;
       if (spec.risk_level !== undefined) kwargs["risk_level"] = spec.risk_level;
       const taskProxy = await p.write_task$(kwargs);
@@ -949,6 +954,7 @@ async function readTask(proxy: unknown): Promise<FcopTask> {
     priority: frontmatter.priority,
     subject: frontmatter.subject,
     thread_key: frontmatter.thread_key,
+    parent: frontmatter.parent ?? null,
     risk_level: frontmatter.risk_level,
     references: frontmatter.references,
   };
@@ -965,6 +971,7 @@ async function readTaskFrontmatter(proxy: unknown): Promise<FcopTaskFrontmatter>
       recipient: "",
       priority: "",
       thread_key: null,
+      parent: null,
       subject: "",
       references: [],
       risk_level: "",
@@ -978,6 +985,7 @@ async function readTaskFrontmatter(proxy: unknown): Promise<FcopTaskFrontmatter>
     recipient: Promise<string>;
     priority: Promise<unknown>;
     thread_key: Promise<string | null>;
+    parent: Promise<string | null>;
     subject: Promise<string | null>;
     references: Promise<unknown>;
     risk_level: Promise<unknown>;
@@ -991,6 +999,7 @@ async function readTaskFrontmatter(proxy: unknown): Promise<FcopTaskFrontmatter>
     recipient: await f.recipient,
     priority: await readEnumLike(f.priority),
     thread_key: await f.thread_key,
+    parent: (await f.parent) ?? null,
     subject: subjectRaw ?? "",
     references: await readStringList(f.references),
     risk_level: await readEnumLike(f.risk_level),

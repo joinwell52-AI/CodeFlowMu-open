@@ -2855,6 +2855,7 @@ write_report(
 
 **Step 3 — Dispatch to the worker role** (pick DEV / OPS / QA based on task content):
 **Branch rule**: each dispatch creates a **new** worker TASK. The first \`references\` item must be the current TASK \`${taskId}\`. Existing DEV/QA/OPS tasks elsewhere in the same \`thread_key\` are sibling/history context and must never satisfy \`${taskId}\`.
+**Parent rule**: every worker TASK created for this plan must pass \`parent="${taskId}"\`. This is the strong tree edge. The task tool inherits \`thread_key\` from that open parent and prepends the parent to \`references\`. Never replace \`parent\` with a sibling task or with \`references\`.
 **Dependency rule**: when QA or OPS validates artefacts produced by a DEV task, include that DEV task in both \`references\` and \`depends_on\`. The runtime must keep QA/OPS queued until the DEV task has a valid \`status=done\` REPORT.
 **PM-hub rule**: never hard-code a DEV -> QA -> DEV role cycle. Every worker receives a new PM TASK and returns a REPORT to PM. After each REPORT, PM reads the actual result and decides whether the next new TASK belongs to DEV, QA, OPS, another role, or nobody. A QA REPORT with completed testing and product verdict FAIL closes that QA task, but it does not close the product root; PM normally creates a new DEV correction task that references the QA REPORT, then decides whether a later QA retest is needed.
 \`\`\`
@@ -2863,6 +2864,7 @@ write_task(
   subject="<one-line description of what the worker should do>",
   body="## 背景\\n<why>\\n\\n## 具体要求\\n<what exactly>\\n\\n## 回执要求\\n写 REPORT-*-DEV-to-PM.md",
   priority="P1",                   # inherit from incoming task or downgrade
+  parent="${taskId}",
   references="${taskId}"
 )
 \`\`\`
