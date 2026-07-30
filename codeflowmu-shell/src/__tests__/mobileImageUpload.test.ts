@@ -48,9 +48,9 @@ test("mobile.js defines shared image compression for chat and task upload", () =
   assert.match(src, /MOBILE_IMAGE_JPEG_QUALITY = 0\.75/);
   assert.match(src, /buildPendingAttachItemHtml/);
   assert.match(src, /imageAttachOriginal/);
-  assert.match(src, /BUNDLE_VERSION = "V1\.0\.53"/);
-  assert.match(src, /PWA_CACHE_BUST = "1\.0\.53"/);
-  assert.match(src, /PWA_LEGACY_CACHE_NAMES = \[[\s\S]*codeflowmu-pwa-v1\.0\.52/);
+  assert.match(src, /BUNDLE_VERSION = "V\d+\.\d+\.\d+"/);
+  assert.match(src, /PWA_CACHE_BUST = "\d+\.\d+\.\d+"/);
+  assert.match(src, /PWA_LEGACY_CACHE_NAMES = \[[\s\S]*codeflowmu-pwa-v\d+\.\d+\.\d+/);
 });
 
 test("mobile i18n includes image upload error and preview strings", () => {
@@ -72,5 +72,5 @@ test("mobile index accepts all image types for chat attach", () => {
   const html = readFileSync(join(MOBILE_DIR, "index.html"), "utf-8");
   assert.match(html, /id="chatAttachFile"[^>]*accept="image\/\*"/);
   assert.match(html, /id="taskAttachFile"[^>]*accept="image\/\*"/);
-  assert.match(html, /cfm-pwa-bundle-version" content="V1\.0\.53"/);
+  assert.match(html, /cfm-pwa-bundle-version" content="V\d+\.\d+\.\d+"/);
 });

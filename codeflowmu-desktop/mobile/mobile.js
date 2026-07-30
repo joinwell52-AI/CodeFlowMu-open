@@ -6,10 +6,11 @@
   "use strict";
 
   /** 本机当前运行的 PWA 包版本（发版时与 version.json / index.html ?v= 对齐） */
-  var BUNDLE_VERSION = "V1.0.55";
-  var PWA_CACHE_BUST = "1.0.55";
+  var BUNDLE_VERSION = "V1.0.56";
+  var PWA_CACHE_BUST = "1.0.56";
   var PWA_VERSION_STORAGE_KEY = "cfm_pwa_installed_version";
   var PWA_LEGACY_CACHE_NAMES = [
+    "codeflowmu-pwa-v1.0.55",
     "codeflowmu-pwa-v1.0.54",
     "codeflowmu-pwa-v1.0.52",
     "codeflowmu-pwa-v1.0.51",
@@ -52,6 +53,9 @@
   var state = {
     tab: "home",
     tasks: [],
+    taskSubmissions: [],
+    tasksPrimaryMode: "formal",
+    selectedTaskSubmissionId: "",
     reports: [],
     approvals: [],
     bootstrap: null,
@@ -750,6 +754,7 @@
         clearSession();
         state.bootstrap = unboundBootstrap();
         state.tasks = [];
+        state.taskSubmissions = [];
         state.reports = [];
         state.approvals = [];
         updateTabBoundState();
@@ -771,6 +776,7 @@
           clearSession();
           state.bootstrap = unboundBootstrap();
           state.tasks = [];
+          state.taskSubmissions = [];
           state.reports = [];
           state.approvals = [];
           updateTabBoundState();
@@ -788,6 +794,12 @@
         );
       }
       var err = new Error(errMsg);
+      try {
+        err.payload = JSON.parse(errText);
+      } catch (payloadError) {
+        err.payload = null;
+      }
+      err.status = res.status;
       if (res.status === 413) {
         err.apiError = parseApiErrorPayload(errText, res.status);
       }
@@ -1311,6 +1323,7 @@
   function clearBoundData() {
     state.bootstrap = unboundBootstrap();
     state.tasks = [];
+    state.taskSubmissions = [];
     state.reports = [];
     state.approvals = [];
     state.activityEvents = [];
@@ -1926,6 +1939,18 @@
     return itemCardHtml(item, 0);
   }
 
+  function approvalStatusLabel(status) {
+    var key = "approvalStatus_" + String(status || "").toLowerCase();
+    var label = t(key);
+    return label === key ? String(status || "") : label;
+  }
+
+  function approvalTypeLabel(type) {
+    var key = "approvalType_" + String(type || "").toLowerCase();
+    var label = t(key);
+    return label === key ? String(type || "") : label;
+  }
+
   function itemCardHtml(item, depth) {
     depth = depth || 0;
     var kind = item.kind || "task";
@@ -1948,7 +1973,9 @@
       "</span>" +
       (item.priority ? '<span class="badge priority">' + esc(item.priority) + "</span>" : "") +
       (kind === "approval" && item.approval_type
-        ? '<span class="badge type">' + esc(item.approval_type) + "</span>"
+        ? '<span class="badge type">' +
+          esc(approvalTypeLabel(item.approval_type)) +
+          "</span>"
         : "") +
       "</div>" +
       '<div class="task-line mono">' +
@@ -1976,7 +2003,7 @@
       '<span class="badge ' +
       statusBadgeClass(st, kind) +
       '">' +
-      esc(st) +
+      esc(kind === "approval" ? approvalStatusLabel(st) : st) +
       "</span></div>" +
       metaHtml +
       "</div>"
@@ -2174,7 +2201,16 @@
 
   function filteredTasks() {
     var rows = state.tasks.filter(function (x) {
-      return taskMatchesFilter(x, state.taskFilter);
+      var rawId = String(x.task_id || x.id || x.filename || "");
+      var match = rawId.match(/TASK-\d{8}-\d+/i);
+      var taskId = match ? match[0].toUpperCase() : "";
+      var legacyRejected = state.taskSubmissions.some(function (submission) {
+        return (
+          submission.legacy_anomaly &&
+          String(submission.formal_task_id || "").toUpperCase() === taskId
+        );
+      });
+      return !legacyRejected && taskMatchesFilter(x, state.taskFilter);
     });
     if (state.tasksRoleFilter) {
       rows = rows.filter(function (x) {
@@ -2237,7 +2273,335 @@
       }
     }
     syncTasksViewModeUI();
+    syncTasksPrimaryModeUI();
     if (fullEmpty) fullEmpty.classList.toggle("hidden", !isBound() || tasks.length > 0 || !!state.apiErrors.tasks);
+  }
+
+  function setTasksPrimaryMode(mode) {
+    state.tasksPrimaryMode = mode === "submissions" ? "submissions" : "formal";
+    if (
+      state.tasksPrimaryMode === "submissions" &&
+      !state.selectedTaskSubmissionId &&
+      state.taskSubmissions.length
+    ) {
+      state.selectedTaskSubmissionId =
+        state.taskSubmissions[0].submission_id || "";
+    }
+    syncTasksPrimaryModeUI();
+    renderTaskSubmissions();
+  }
+
+  function syncTasksPrimaryModeUI() {
+    var review = state.tasksPrimaryMode === "submissions";
+    var formalBtn = $("tasksPrimaryFormalBtn");
+    var submissionsBtn = $("tasksPrimarySubmissionsBtn");
+    var listBody = $("tasksListBody");
+    var submissionsPanel = $("taskSubmissionsPanel");
+    var composer = $("taskPublishComposer");
+    if (formalBtn) formalBtn.classList.toggle("active", !review);
+    if (submissionsBtn) submissionsBtn.classList.toggle("active", review);
+    if (listBody) listBody.classList.toggle("hidden", review);
+    if (submissionsPanel) submissionsPanel.classList.toggle("hidden", !review);
+    if (composer) composer.classList.toggle("hidden", review);
+    var blocked = state.taskSubmissions.filter(function (row) {
+      return ["rejected", "failed", "formalization_failed"].indexOf(
+        String(row.status || ""),
+      ) >= 0;
+    }).length;
+    var badge = $("mobileSubmissionBadge");
+    if (badge) badge.textContent = blocked ? " " + blocked : "";
+  }
+
+  function mobileSubmissionStatus(status) {
+    return (
+      {
+        draft: t("submissionDraft"),
+        checking: t("submissionCheckingStatus"),
+        accepted: t("submissionAcceptedStatus"),
+        rejected: t("submissionRejectedStatus"),
+        failed: t("submissionFailedStatus"),
+        abandoned: t("submissionAbandonedStatus"),
+        formalizing: t("submissionFormalizingStatus"),
+        created: t("submissionCreatedStatus"),
+        formalization_failed: t("submissionFormalizationFailedStatus"),
+      }[status] ||
+      status ||
+      t("submissionUnknownStatus")
+    );
+  }
+
+  function renderTaskSubmissions() {
+    var host = $("taskSubmissionsPanel");
+    if (!host) return;
+    syncTasksPrimaryModeUI();
+    if (state.apiErrors.taskSubmissions) {
+      host.innerHTML =
+        '<div class="empty-state muted">' +
+        esc(state.apiErrors.taskSubmissions) +
+        "</div>";
+      return;
+    }
+    var rows = state.taskSubmissions || [];
+    if (!rows.length) {
+      host.innerHTML =
+        '<div class="empty-state muted">' + esc(t("submissionNone")) + "</div>";
+      return;
+    }
+    if (
+      !state.selectedTaskSubmissionId ||
+      !rows.some(function (row) {
+        return row.submission_id === state.selectedTaskSubmissionId;
+      })
+    ) {
+      state.selectedTaskSubmissionId = rows[0].submission_id || "";
+    }
+    var selected = rows.find(function (row) {
+      return row.submission_id === state.selectedTaskSubmissionId;
+    });
+    var cards = rows
+      .map(function (row) {
+        var findings = Array.isArray(row.blocking_findings)
+          ? row.blocking_findings.length
+          : 0;
+        return (
+          '<button type="button" class="task-card mobile-submission-card" data-submission-id="' +
+          esc(row.submission_id) +
+          '" style="width:100%;text-align:left">' +
+          '<div class="task-head"><strong class="task-title">' +
+          esc(row.subject || t("submissionUnnamed")) +
+          "</strong>" +
+          (row.legacy_anomaly
+            ? '<span class="status-pill">' +
+              esc(t("submissionLegacyAnomaly")) +
+              "</span>"
+            : "") +
+          '<span class="status-pill">' +
+          esc(mobileSubmissionStatus(row.status)) +
+          "</span></div>" +
+          '<div class="task-line mono">' +
+          esc(row.submission_id) +
+          " · revision " +
+          Number(row.admission_revision || 0) +
+          (findings
+            ? " · " + esc(t("submissionFindingsCount", { count: findings }))
+            : "") +
+          "</div></button>"
+        );
+      })
+      .join("");
+    var findingHtml = (selected.blocking_findings || [])
+      .map(function (finding, index) {
+        return (
+          '<div class="card card-alert" style="margin-top:8px">' +
+          "<strong>" +
+          (index + 1) +
+          ". " +
+          esc(finding.id || t("submissionBlockingFinding")) +
+          (finding.field ? " · " + esc(finding.field) : "") +
+          "</strong>" +
+          "<p>" +
+          esc(finding.message || "") +
+          "</p>" +
+          (finding.expected
+            ? '<p class="muted">' +
+              esc(t("submissionExpected")) +
+              esc(String(finding.expected)) +
+              "</p>"
+            : "") +
+          (finding.actual
+            ? '<p class="muted">' +
+              esc(t("submissionActual")) +
+              esc(
+                Array.isArray(finding.actual)
+                  ? finding.actual.join(", ")
+                  : String(finding.actual),
+              ) +
+              "</p>"
+            : "") +
+          (finding.suggested_fix
+            ? '<p class="muted">' +
+              esc(t("submissionSuggestedFix")) +
+              esc(finding.suggested_fix) +
+              "</p>"
+            : "") +
+          "</div>"
+        );
+      })
+      .join("");
+    var editable =
+      !selected.legacy_anomaly &&
+      ["rejected", "failed", "formalization_failed"].indexOf(selected.status) >=
+      0;
+    var legacyOptionLabels = {
+      convert_to_submission: t("submissionOptionConvert"),
+      mark_legacy_invalid: t("submissionOptionMarkInvalid"),
+      admin_manual_cleanup: t("submissionOptionManualCleanup"),
+    };
+    var legacyOptions = selected.legacy_anomaly
+      ? '<div class="card card-alert" style="margin-top:10px"><strong>' +
+        esc(t("submissionLegacyTitle")) +
+        "</strong><p>" +
+        esc(t("submissionLegacyDesc")) +
+        '</p><p class="muted">' +
+        esc(t("submissionDisposition")) +
+        esc(
+          (selected.migration_options || [])
+            .map(function (option) {
+              return legacyOptionLabels[option] || option;
+            })
+            .join("；"),
+        ) +
+        '</p><p class="muted mono">' +
+        esc(t("submissionOriginalFile")) +
+        esc(selected.legacy_task_path || "") +
+        "</p></div>"
+      : "";
+    host.innerHTML =
+      cards +
+      '<div class="card" style="margin-top:12px">' +
+      '<div class="card-head"><h3 class="card-title">' +
+      esc(selected.subject || t("submissionDetail")) +
+      "</h3><span>" +
+      esc(mobileSubmissionStatus(selected.status)) +
+      "</span></div>" +
+      '<p class="muted mono">' +
+      esc(selected.submission_id || "") +
+      " · " +
+      esc(t("submissionFormalTask")) +
+      " " +
+      esc(selected.formal_task_id || t("submissionNotGenerated")) +
+      "</p>" +
+      (selected.error
+        ? '<p class="card-alert">' + esc(selected.error) + "</p>"
+        : "") +
+      legacyOptions +
+      (findingHtml ||
+        '<p class="muted">' + esc(t("submissionNoBlockers")) + "</p>") +
+      '<label class="composer-label">' +
+      esc(t("submissionSubject")) +
+      "</label>" +
+      '<input id="mobileSubmissionSubject" type="text" value="' +
+      esc(selected.subject || "") +
+      '"' +
+      (editable ? "" : " disabled") +
+      ">" +
+      '<label class="composer-label" style="margin-top:10px">' +
+      esc(t("submissionBody")) +
+      "</label>" +
+      '<textarea id="mobileSubmissionBody" rows="10"' +
+      (editable ? "" : " disabled") +
+      ">" +
+      esc(selected.draft_body || "") +
+      "</textarea>" +
+      (editable
+        ? '<div class="composer-actions-row composer-actions-stack"><button type="button" id="mobileSubmissionReviseBtn" class="btn-send-primary">' +
+          esc(t("submissionRevise")) +
+          '</button><button type="button" id="mobileSubmissionAbandonBtn" class="btn-ghost">' +
+          esc(t("submissionAbandon")) +
+          "</button></div>"
+        : "") +
+      "</div>";
+    host.querySelectorAll("[data-submission-id]").forEach(function (card) {
+      card.addEventListener("click", function () {
+        state.selectedTaskSubmissionId =
+          card.getAttribute("data-submission-id") || "";
+        renderTaskSubmissions();
+      });
+    });
+    var revise = $("mobileSubmissionReviseBtn");
+    if (revise)
+      revise.addEventListener("click", function () {
+        reviseMobileTaskSubmission(selected.submission_id);
+      });
+    var abandon = $("mobileSubmissionAbandonBtn");
+    if (abandon)
+      abandon.addEventListener("click", function () {
+        abandonMobileTaskSubmission(selected.submission_id);
+      });
+  }
+
+  function applyMobileSubmissionPayload(payload) {
+    var submission = payload && payload.submission;
+    if (!submission) return;
+    var index = state.taskSubmissions.findIndex(function (row) {
+      return row.submission_id === submission.submission_id;
+    });
+    if (index >= 0) state.taskSubmissions[index] = submission;
+    else state.taskSubmissions.unshift(submission);
+    state.selectedTaskSubmissionId = submission.submission_id;
+    state.tasksPrimaryMode = "submissions";
+  }
+
+  function handleMobileSubmissionRejection(payload) {
+    applyMobileSubmissionPayload(payload);
+    switchTab("tasks", { keepRoleFilter: true });
+    renderTaskSubmissions();
+    showToast(
+      t("submissionRejectedToast"),
+      6500,
+      "error",
+    );
+  }
+
+  async function reviseMobileTaskSubmission(submissionId) {
+    var subject = ($("mobileSubmissionSubject") &&
+      $("mobileSubmissionSubject").value.trim()) || "";
+    var body =
+      ($("mobileSubmissionBody") && $("mobileSubmissionBody").value.trim()) ||
+      "";
+    if (!subject || !body) {
+      showToast(t("submissionRequired"), 3500, "error");
+      return;
+    }
+    showToast(t("submissionCheckingToast"), 2500);
+    try {
+      var payload = await api(
+        "/api/v2/mobile/task-submissions/" +
+          encodeURIComponent(submissionId) +
+          "/revise",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: { subject: subject, body: body },
+        },
+      );
+      applyMobileSubmissionPayload(payload);
+      await refreshAll();
+      state.tasksPrimaryMode = "submissions";
+      state.selectedTaskSubmissionId = submissionId;
+      renderTaskSubmissions();
+      showToast(t("submissionAcceptedToast"), 4000, "ok");
+    } catch (e) {
+      if (e.payload && e.payload.submission) {
+        handleMobileSubmissionRejection(e.payload);
+      } else {
+        showErrorToast(
+          t("submissionRecheckFailed", { error: userFacingError(e) }),
+        );
+      }
+    }
+  }
+
+  async function abandonMobileTaskSubmission(submissionId) {
+    if (!window.confirm(t("submissionAbandonConfirm"))) return;
+    try {
+      var payload = await api(
+        "/api/v2/mobile/task-submissions/" +
+          encodeURIComponent(submissionId) +
+          "/abandon",
+        { method: "POST", body: {} },
+      );
+      applyMobileSubmissionPayload(payload);
+      await refreshAll();
+      state.tasksPrimaryMode = "submissions";
+      state.selectedTaskSubmissionId = submissionId;
+      renderTaskSubmissions();
+      showToast(t("submissionAbandonedToast"), 3500, "ok");
+    } catch (e) {
+      showErrorToast(
+        t("submissionAbandonFailed", { error: userFacingError(e) }),
+      );
+    }
   }
 
   function renderReportsList() {
@@ -2884,10 +3248,12 @@
     hideDetailSections();
     $("fpDetailTaskId").textContent = approval.filename || "—";
     $("fpDetailFileName").textContent = approval.title || "—";
-    $("fpDetailStatus").textContent = approval.status || "—";
+    $("fpDetailStatus").textContent =
+      approvalStatusLabel(approval.status) || "—";
     $("fpDetailSender").textContent = approval.sender || "—";
     $("fpDetailRecipient").textContent = approval.recipient || "—";
-    $("fpDetailBucket").textContent = approval.approval_type || "—";
+    $("fpDetailBucket").textContent =
+      approvalTypeLabel(approval.approval_type) || "—";
     setFpMarkdown(
       approval.body ||
         approval.preview ||
@@ -3159,6 +3525,26 @@
     return state.tasks;
   }
 
+  async function loadTaskSubmissions() {
+    if (!isBound()) {
+      state.taskSubmissions = [];
+      return state.taskSubmissions;
+    }
+    try {
+      var data = await api("/api/v2/mobile/task-submissions?limit=200");
+      state.taskSubmissions = Array.isArray(data)
+        ? data
+        : Array.isArray(data.submissions)
+          ? data.submissions
+          : [];
+      clearApiError("taskSubmissions");
+    } catch (e) {
+      state.taskSubmissions = [];
+      setApiError("taskSubmissions", e.message);
+    }
+    return state.taskSubmissions;
+  }
+
   async function loadRelationPickerTasks() {
     if (!isBound()) {
       state.relationPickerTasks = [];
@@ -3222,6 +3608,7 @@
       await loadBootstrap();
       await Promise.all([
         loadTasks(),
+        loadTaskSubmissions(),
         loadRelationPickerTasks(),
         loadReports(),
         loadApprovals(),
@@ -3255,6 +3642,7 @@
     updateStatusLights(state.bootstrap);
     renderTeam(state.bootstrap);
     renderTaskLists();
+    renderTaskSubmissions();
     renderReportsList();
     renderApprovalsList();
     renderActivityList();
@@ -3889,6 +4277,11 @@
     }
     var confirmMsg = t("taskConfirmSubmit").replace("{title}", title);
     if (!window.confirm(confirmMsg)) return;
+    var quickBtn = $("sendBtn");
+    if (quickBtn) {
+      quickBtn.disabled = true;
+      quickBtn.textContent = "正在审查任务书…";
+    }
     try {
       await api("/api/v2/mobile/tasks", {
         method: "POST",
@@ -3900,6 +4293,11 @@
           to: "PM",
           relation_mode: "new",
           references: [],
+          idempotency_key:
+            "pwa-quick-" +
+            Date.now() +
+            "-" +
+            Math.random().toString(36).slice(2),
         },
       });
       showToast(t("homeSendOk"));
@@ -3907,7 +4305,16 @@
       if ($("homeQuickBody")) $("homeQuickBody").value = "";
       await refreshAll();
     } catch (e) {
-      showErrorToast(t("homeSendFail") + "：" + userFacingError(e));
+      if (e.payload && e.payload.decision === "rejected") {
+        handleMobileSubmissionRejection(e.payload);
+      } else {
+        showErrorToast(t("homeSendFail") + "：" + userFacingError(e));
+      }
+    } finally {
+      if (quickBtn) {
+        quickBtn.disabled = false;
+        quickBtn.textContent = t("homeQuickSendBtn");
+      }
     }
   }
 
@@ -3950,6 +4357,11 @@
     var displayTitle = title || (hasAttachments ? "image-only-task" : "task");
     var confirmMsg = t("taskConfirmSubmit").replace("{title}", displayTitle);
     if (!window.confirm(confirmMsg)) return;
+    var taskSendButton = $("taskSendBtn");
+    if (taskSendButton) {
+      taskSendButton.disabled = true;
+      taskSendButton.textContent = "正在审查任务书…";
+    }
     try {
       var attachmentsMeta = [];
       if (hasAttachments) attachmentsMeta = await uploadPendingAttachments(pending);
@@ -3966,6 +4378,11 @@
           references: relation.references && relation.references.length ? relation.references : [],
           parent_task_id: relation.parent_task_id || relation.current_task_id || "",
           current_task_id: relation.current_task_id || relation.parent_task_id || "",
+          idempotency_key:
+            "pwa-task-" +
+            Date.now() +
+            "-" +
+            Math.random().toString(36).slice(2),
         },
       });
       showToast(t("homeSendOk"));
@@ -3979,7 +4396,16 @@
       await refreshAll();
       syncTaskSendRelationMode();
     } catch (e) {
-      showErrorToast(t("homeSendFail") + "：" + userFacingError(e));
+      if (e.payload && e.payload.decision === "rejected") {
+        handleMobileSubmissionRejection(e.payload);
+      } else {
+        showErrorToast(t("homeSendFail") + "：" + userFacingError(e));
+      }
+    } finally {
+      if (taskSendButton) {
+        taskSendButton.disabled = false;
+        taskSendButton.textContent = t("taskPublishBtn");
+      }
     }
   }
 
@@ -4505,6 +4931,14 @@
     $("tasksViewTimelineBtn") &&
       $("tasksViewTimelineBtn").addEventListener("click", function () {
         setTasksViewMode("timeline");
+      });
+    $("tasksPrimaryFormalBtn") &&
+      $("tasksPrimaryFormalBtn").addEventListener("click", function () {
+        setTasksPrimaryMode("formal");
+      });
+    $("tasksPrimarySubmissionsBtn") &&
+      $("tasksPrimarySubmissionsBtn").addEventListener("click", function () {
+        setTasksPrimaryMode("submissions");
       });
     $("reportsRefreshBtn") &&
       $("reportsRefreshBtn").addEventListener("click", function () {

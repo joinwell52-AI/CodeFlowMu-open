@@ -30,7 +30,9 @@ export type TaskSpecAdmissionFindingId =
   | "ENVIRONMENT_REFERENCE_MISSING"
   | "GATE_NOT_DECIDABLE"
   | "GIT_SAFETY_VIOLATION"
-  | "PARENT_INVALID";
+  | "PARENT_INVALID"
+  | "ADMISSION_PROOF_MISSING"
+  | "ADMISSION_DIGEST_MISMATCH";
 
 export interface TaskSpecAdmissionFinding {
   id: TaskSpecAdmissionFindingId;
@@ -42,6 +44,10 @@ export interface TaskSpecAdmissionFinding {
   detected_level?: PmPlanningLevel;
   missing?: string[];
   evidence?: string[];
+  expected?: string;
+  actual?: string | string[];
+  suggested_fix?: string;
+  can_auto_fix?: boolean;
 }
 
 export interface TaskSpecAdmissionAccepted {
@@ -117,13 +123,38 @@ function taskIdOf(task: ParsedTask): string {
   return canonicalTaskId(task.task_id ?? task.frontmatter["task_id"] ?? task.filename);
 }
 
-function digestTask(task: ParsedTask): string {
-  const authoredBody = task.body.split(
-    /\n---\n\n## state_history \(auto-appended by runtime\)/,
-    1,
-  )[0] ?? task.body;
+const RUNTIME_OWNED_DIGEST_FIELDS = new Set([
+  "task_id",
+  "state",
+  "dispatch_state",
+  "submission_id",
+  "admission_revision",
+  "admission_digest",
+  "created_at",
+  "updated_at",
+]);
+
+/**
+ * Digest only the authored task specification. Runtime-owned formal identity
+ * fields are deliberately excluded so a checked submission and the TASK
+ * created from it have the same digest.
+ */
+export function taskSpecContentDigest(task: ParsedTask): string {
+  const authoredBody = (
+    task.body.split(
+      /\n---\n\n## state_history \(auto-appended by runtime\)/,
+      1,
+    )[0] ?? task.body
+  )
+    .replace(/\r\n/g, "\n")
+    .trim();
+  const authoredFrontmatter = Object.fromEntries(
+    Object.entries(task.frontmatter)
+      .filter(([key]) => !RUNTIME_OWNED_DIGEST_FIELDS.has(key))
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
   return createHash("sha256")
-    .update(JSON.stringify(task.frontmatter))
+    .update(JSON.stringify(authoredFrontmatter))
     .update("\n")
     .update(authoredBody)
     .digest("hex");
@@ -756,7 +787,7 @@ export async function evaluateTaskSpecAdmission(
 
   const base = {
     task_id: taskIdOf(task),
-    content_digest: digestTask(task),
+    content_digest: taskSpecContentDigest(task),
     ...(planningLevel != null ? { planning_level: planningLevel } : {}),
   };
   return findings.length > 0
@@ -785,8 +816,14 @@ export function taskSpecAdmissionRecordPath(
 export async function persistTaskSpecAdmissionResult(
   projectRoot: string,
   result: TaskSpecAdmissionResult,
+  metadata: {
+    submission_id?: string;
+    formal_task_id?: string;
+    admission_revision?: number;
+  } = {},
 ): Promise<{ path: string; changed: boolean }> {
-  const path = taskSpecAdmissionRecordPath(projectRoot, result.task_id);
+  const formalTaskId = metadata.formal_task_id ?? result.task_id;
+  const path = taskSpecAdmissionRecordPath(projectRoot, formalTaskId);
   try {
     const existing = JSON.parse(await readFile(path, "utf8")) as Record<
       string,
@@ -796,6 +833,10 @@ export async function persistTaskSpecAdmissionResult(
       existing["content_digest"] === result.content_digest &&
       existing["decision"] === result.decision &&
       existing["code"] === result.code &&
+      existing["submission_id"] === metadata.submission_id &&
+      existing["formal_task_id"] === formalTaskId &&
+      Number(existing["admission_revision"] ?? 0) ===
+        Number(metadata.admission_revision ?? 0) &&
       JSON.stringify(existing["blocking_findings"] ?? []) ===
         JSON.stringify(result.blocking_findings)
     ) {
@@ -809,6 +850,13 @@ export async function persistTaskSpecAdmissionResult(
     `${JSON.stringify(
       {
         ...result,
+        ...(metadata.submission_id
+          ? { submission_id: metadata.submission_id }
+          : {}),
+        formal_task_id: formalTaskId,
+        ...(metadata.admission_revision != null
+          ? { admission_revision: metadata.admission_revision }
+          : {}),
         checked_at: new Date().toISOString(),
       },
       null,
@@ -816,4 +864,151 @@ export async function persistTaskSpecAdmissionResult(
     )}\n`,
   );
   return { path, changed: true };
+}
+
+export async function verifyTaskSpecAdmissionForDispatch(input: {
+  projectRoot: string;
+  task: ParsedTask;
+}): Promise<TaskSpecAdmissionResult> {
+  const evaluated = await evaluateTaskSpecAdmission(input);
+  if (evaluated.decision === "rejected") {
+    await persistTaskSpecAdmissionResult(input.projectRoot, evaluated);
+    return evaluated;
+  }
+
+  const sender = String(
+    input.task.sender ?? input.task.frontmatter["sender"] ?? "",
+  ).toUpperCase();
+  const recipient = String(
+    input.task.recipient ?? input.task.frontmatter["recipient"] ?? "",
+  ).toUpperCase();
+  if (sender !== "ADMIN" || recipient !== "PM") {
+    return evaluated;
+  }
+
+  const submissionId = String(
+    input.task.frontmatter["submission_id"] ?? "",
+  ).trim();
+  if (!submissionId) {
+    // Legacy valid tasks are admitted once on first dispatch. Legacy invalid
+    // tasks are rejected by the evaluation above and can never reach Session.
+    await persistTaskSpecAdmissionResult(input.projectRoot, evaluated);
+    return evaluated;
+  }
+
+  const taskId = taskIdOf(input.task);
+  const recordPath = taskSpecAdmissionRecordPath(input.projectRoot, taskId);
+  let record: Record<string, unknown> | null = null;
+  try {
+    record = JSON.parse(await readFile(recordPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+  } catch {
+    record = null;
+  }
+  if (
+    !record ||
+    record["decision"] !== "accepted" ||
+    record["formal_task_id"] !== taskId ||
+    record["submission_id"] !== submissionId ||
+    !Array.isArray(record["blocking_findings"]) ||
+    record["blocking_findings"].length !== 0
+  ) {
+    return {
+      ...evaluated,
+      decision: "rejected",
+      code: TASK_SPEC_INVALID,
+      blocking_findings: [
+        {
+          id: "ADMISSION_PROOF_MISSING",
+          field: "submission_id",
+          message:
+            "formal ADMIN task has no matching accepted submission proof",
+          expected: `${submissionId} -> ${taskId}`,
+          actual: record ? "invalid admission proof" : "missing admission proof",
+          suggested_fix:
+            "review the submission in Task Delivery Review and formalize it again",
+          can_auto_fix: false,
+        },
+      ],
+    };
+  }
+
+  let submission: Record<string, unknown> | null = null;
+  try {
+    const safeSubmissionId = submissionId.replace(/[^A-Za-z0-9._-]/g, "-");
+    submission = JSON.parse(
+      await readFile(
+        join(
+          input.projectRoot,
+          ".codeflowmu",
+          "task-submissions",
+          `${safeSubmissionId}.json`,
+        ),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+  } catch {
+    submission = null;
+  }
+  if (
+    !submission ||
+    submission["status"] !== "created" ||
+    submission["formal_task_id"] !== taskId ||
+    submission["content_digest"] !== evaluated.content_digest ||
+    Number(submission["admission_revision"] ?? 0) !==
+      Number(input.task.frontmatter["admission_revision"] ?? 0)
+  ) {
+    return {
+      ...evaluated,
+      decision: "rejected",
+      code: TASK_SPEC_INVALID,
+      blocking_findings: [
+        {
+          id: "ADMISSION_PROOF_MISSING",
+          field: "submission_id",
+          message:
+            "formal task is not backed by a completed atomic submission transaction",
+          expected: `${submissionId} status=created formal_task_id=${taskId}`,
+          actual: submission
+            ? `status=${String(submission["status"] ?? "unknown")}`
+            : "missing submission record",
+          suggested_fix:
+            "retry formalization from Task Delivery Review; do not wake the task directly",
+          can_auto_fix: false,
+        },
+      ],
+    };
+  }
+
+  const declaredDigest = String(
+    input.task.frontmatter["admission_digest"] ?? "",
+  ).trim();
+  const recordedDigest = String(record["content_digest"] ?? "").trim();
+  if (
+    !declaredDigest ||
+    declaredDigest !== evaluated.content_digest ||
+    recordedDigest !== evaluated.content_digest
+  ) {
+    return {
+      ...evaluated,
+      decision: "rejected",
+      code: TASK_SPEC_INVALID,
+      blocking_findings: [
+        {
+          id: "ADMISSION_DIGEST_MISMATCH",
+          field: "content_digest",
+          message:
+            "formal task content changed after admission or does not match its submission",
+          expected: recordedDigest || declaredDigest || "(missing)",
+          actual: evaluated.content_digest,
+          suggested_fix:
+            "create a new submission revision and run admission again",
+          can_auto_fix: false,
+        },
+      ],
+    };
+  }
+  return evaluated;
 }

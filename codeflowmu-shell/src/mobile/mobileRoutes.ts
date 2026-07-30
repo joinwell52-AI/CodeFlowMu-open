@@ -19,8 +19,11 @@ import {
   listTasksFromLedgerAuto,
   listTasksFromLedgerFile,
 } from "../ledger-api-helpers.ts";
+import {
+  getTaskSubmission,
+  listTaskSubmissions,
+} from "../task-submission-store.ts";
 
-import { createMobileAdminPmTask } from "./mobileAdminTask.ts";
 import {
   MOBILE_CHAT_DEFAULT_LIMIT,
   MOBILE_CHAT_MAX_LIMIT,
@@ -419,7 +422,11 @@ function mobileOperationApprovalRow(record: OperationApprovalRecord): Record<str
   };
 }
 
-async function mobileApprovalDetail(ctx: MobilePanelContext, approvalId: string) {
+async function mobileApprovalDetail(
+  ctx: MobilePanelContext,
+  approvalId: string,
+  lang: MobileUiLang = "zh",
+) {
   let record: OperationApprovalRecord;
   try {
     record = mobileApprovalService(ctx).get(approvalId);
@@ -435,16 +442,38 @@ async function mobileApprovalDetail(ctx: MobilePanelContext, approvalId: string)
     : undefined;
   const { reports } = await listReportsFromLedgerAuto(ctx.getProjectRoot(), { limit: 2000 });
   const reportRow = reports.find((row) => taskId && rowLinksTask(row, taskId));
+  const labels =
+    lang === "en"
+      ? {
+          action: "Action",
+          targets: "Targets",
+          effects: "Effects",
+          nonEffects: "Not affected",
+          recovery: "Recovery",
+          expiresAt: "Expires at",
+          listSeparator: "; ",
+          targetSeparator: ", ",
+        }
+      : {
+          action: "动作",
+          targets: "目标",
+          effects: "影响",
+          nonEffects: "不影响",
+          recovery: "恢复方式",
+          expiresAt: "有效期",
+          listSeparator: "；",
+          targetSeparator: "、",
+        };
   return {
     approval: {
       ...merged,
       body: [
-        `动作：${record.request.action.operation}`,
-        `目标：${record.request.resource.targets.join("、")}`,
-        `影响：${record.effects.join("；")}`,
-        `不影响：${record.non_effects.join("；")}`,
-        `恢复方式：${record.recovery}`,
-        `有效期：${record.expires_at}`,
+        `${labels.action}: ${record.request.action.operation}`,
+        `${labels.targets}: ${record.request.resource.targets.join(labels.targetSeparator)}`,
+        `${labels.effects}: ${record.effects.join(labels.listSeparator)}`,
+        `${labels.nonEffects}: ${record.non_effects.join(labels.listSeparator)}`,
+        `${labels.recovery}: ${record.recovery}`,
+        `${labels.expiresAt}: ${record.expires_at}`,
       ].join("\n\n"),
     },
     linked_task: taskRow ? slimMobileTask(taskRow) : null,
@@ -837,6 +866,69 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
     return dot >= 0 ? code.slice(0, dot) : code;
   }
 
+  router.get("/task-submissions", async (req: Request, res: Response) => {
+    try {
+      const status = String(req.query["status"] ?? "").trim();
+      const limit = Math.min(
+        Math.max(Number(req.query["limit"] ?? 200) || 200, 1),
+        500,
+      );
+      const submissions = await listTaskSubmissions(ctx.getProjectRoot(), {
+        ...(status ? { status } : {}),
+        limit,
+      });
+      res.json({ ok: true, submissions });
+    } catch (error) {
+      res
+        .status(500)
+        .json({ ok: false, error: String(error), code: "SUBMISSION_LIST_FAILED" });
+    }
+  });
+
+  router.get(
+    "/task-submissions/:submissionId",
+    async (req: Request, res: Response) => {
+      const submission = await getTaskSubmission(
+        ctx.getProjectRoot(),
+        String(req.params["submissionId"] ?? ""),
+      );
+      if (!submission) {
+        res.status(404).json({
+          ok: false,
+          error: "TASK_SUBMISSION_NOT_FOUND",
+          code: "TASK_SUBMISSION_NOT_FOUND",
+        });
+        return;
+      }
+      res.json({ ok: true, submission });
+    },
+  );
+
+  for (const action of ["check", "revise", "abandon"] as const) {
+    router.post(
+      `/task-submissions/:submissionId/${action}`,
+      async (req: Request, res: Response) => {
+        try {
+          const submissionId = encodeURIComponent(
+            String(req.params["submissionId"] ?? ""),
+          );
+          const panelRes = await proxyPanelPost(
+            ctx.panelPort,
+            `/api/v2/task-submissions/${submissionId}/${action}`,
+            req.body ?? {},
+          );
+          res.status(panelRes.status).json(panelRes.body);
+        } catch (error) {
+          res.status(503).json({
+            ok: false,
+            error: String(error),
+            code: "TASK_SUBMISSION_PROXY_FAILED",
+          });
+        }
+      },
+    );
+  }
+
   router.post("/tasks", async (req: Request, res: Response) => {
     const adminDir = ctx.getAdminTasksDir();
     if (!adminDir) {
@@ -864,6 +956,7 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
       references?: unknown;
       parent_task_id?: string;
       current_task_id?: string;
+      idempotency_key?: string;
     };
     if (body.to && String(body.to).toUpperCase() !== "PM") {
       res.status(400).json({ ok: false, error: "MOBILE_TASK_RECIPIENT_MUST_BE_PM" });
@@ -880,35 +973,23 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
       references: Array.isArray(body.references) ? body.references : body.references,
       parent_task_id: String(body.parent_task_id ?? ""),
       current_task_id: String(body.current_task_id ?? ""),
+      idempotency_key: String(
+        body.idempotency_key ??
+          req.get("Idempotency-Key") ??
+          req.get("idempotency-key") ??
+          "",
+      ).trim(),
     };
     if (ctx.createAdminPmTask) {
       const result = await ctx.createAdminPmTask(normalizedBody);
       res.status(result.ok ? 200 : (result.status ?? 500)).json(result);
       return;
     }
-    const allocateSeq =
-      ctx.allocateTaskSeq ??
-      (() => {
-        throw new Error("allocateTaskSeq not configured");
-      });
-    try {
-      const result = await createMobileAdminPmTask({
-        projectRoot: ctx.getProjectRoot(),
-        adminTasksDir: adminDir,
-        subject: normalizedBody.title,
-        body: normalizedBody.body,
-        priority: normalizedBody.priority,
-        allocateSeq,
-        attachments: normalizedBody.attachments,
-        relation_mode: normalizedBody.relation_mode as "new" | "continue" | "child",
-        references: normalizedBody.references,
-        parent_task_id: normalizedBody.parent_task_id,
-        current_task_id: normalizedBody.current_task_id,
-      });
-      res.status(result.ok ? 200 : (result.status ?? 500)).json(result);
-    } catch (err) {
-      res.status(500).json({ ok: false, error: String(err) });
-    }
+    res.status(503).json({
+      ok: false,
+      error: "TASK_SUBMISSION_SERVICE_NOT_CONFIGURED",
+      code: "TASK_SUBMISSION_SERVICE_NOT_CONFIGURED",
+    });
   });
 
   router.get("/reports", async (req: Request, res: Response) => {
@@ -1027,7 +1108,11 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
     try {
       const filename = String(req.query["filename"] ?? "");
       if (filename) {
-        const detail = await mobileApprovalDetail(ctx, filename);
+        const detail = await mobileApprovalDetail(
+          ctx,
+          filename,
+          requestMobileUiLang(req),
+        );
         if (!detail) {
           res.status(404).json({ ok: false, error: "APPROVAL_NOT_FOUND" });
           return;
@@ -1045,7 +1130,11 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
   router.get("/approvals/:filename", async (req: Request, res: Response) => {
     const filename = String(req.params["filename"] ?? "");
     try {
-      const detail = await mobileApprovalDetail(ctx, filename);
+      const detail = await mobileApprovalDetail(
+        ctx,
+        filename,
+        requestMobileUiLang(req),
+      );
       if (!detail) {
         res.status(404).json({ ok: false, error: "APPROVAL_NOT_FOUND" });
         return;

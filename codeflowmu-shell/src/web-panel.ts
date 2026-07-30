@@ -147,6 +147,7 @@ import {
   ensureLedgerFresh,
   invalidateLedgerFreshCache,
   finalizeTaskCreateAfterDiskWrite,
+  rollbackFormalTaskCreate,
   readLedgerThreadsAuto,
   readLedgerViewMarkdownAuto,
   listTasksFromLedgerAuto,
@@ -209,7 +210,22 @@ import {
   terminateSingleChildAsParentResidue,
   TaskFrontmatterStore,
   trimTaskTransitions,
+  evaluateTaskSpecAdmission,
+  persistTaskSpecAdmissionResult,
+  taskSpecAdmissionRecordPath,
+  verifyTaskSpecAdmissionForDispatch,
 } from "@codeflowmu/runtime";
+import {
+  abandonTaskSubmission,
+  buildSubmissionAdmissionTask,
+  checkTaskSubmission,
+  createTaskSubmission,
+  getTaskSubmission,
+  listTaskSubmissions,
+  reviseTaskSubmission,
+  updateTaskSubmissionFormalization,
+  type TaskSubmissionRecord,
+} from "./task-submission-store.ts";
 import {
   detectClosedParentResidueTasks,
   hasStateBucketMismatch,
@@ -9064,6 +9080,502 @@ export function buildWebPanelApp(
     }
   }
 
+  function canonicalSubmissionAttachments(
+    attachments: TaskAttachment[],
+  ): Array<Record<string, unknown>> {
+    return attachments.map((attachment) => ({
+      ...(attachment.local_path
+        ? { local_path: attachment.local_path }
+        : {}),
+      ...(attachment.absolute_path
+        ? { absolute_path: attachment.absolute_path }
+        : {}),
+      ...(attachment.mime ? { mime: attachment.mime } : {}),
+      ...(attachment.original_name
+        ? { original_name: attachment.original_name }
+        : {}),
+      ...(typeof attachment.size === "number"
+        ? { size: attachment.size }
+        : {}),
+      ...(attachment.sha256 ? { sha256: attachment.sha256 } : {}),
+      ...(attachment.url ? { url: attachment.url } : {}),
+    }));
+  }
+
+  function taskAttachmentsFromSubmission(
+    record: TaskSubmissionRecord,
+  ): TaskAttachment[] {
+    return record.requested_attachments.map((attachment) => ({
+      type: String(attachment["mime"] ?? "").startsWith("image/")
+        ? "image"
+        : "file",
+      ...(attachment["local_path"]
+        ? { local_path: String(attachment["local_path"]) }
+        : {}),
+      ...(attachment["absolute_path"]
+        ? { absolute_path: String(attachment["absolute_path"]) }
+        : {}),
+      ...(attachment["mime"] ? { mime: String(attachment["mime"]) } : {}),
+      ...(attachment["original_name"]
+        ? { original_name: String(attachment["original_name"]) }
+        : {}),
+      ...(typeof attachment["size"] === "number"
+        ? { size: attachment["size"] }
+        : {}),
+      ...(attachment["sha256"]
+        ? { sha256: String(attachment["sha256"]) }
+        : {}),
+      ...(attachment["url"] ? { url: String(attachment["url"]) } : {}),
+    }));
+  }
+
+  async function formalizeAcceptedTaskSubmission(input: {
+    projectRoot: string;
+    adminDir: string;
+    record: TaskSubmissionRecord;
+    source: string;
+  }): Promise<Record<string, unknown>> {
+    const { projectRoot, adminDir, source } = input;
+    let record = input.record;
+    if (record.status === "created" && record.formal_task_id) {
+      const existing = findTaskFileByIdPrefix(
+        projectRoot,
+        record.formal_task_id,
+      );
+      return {
+        ok: true,
+        created: true,
+        deduplicated: true,
+        submission_id: record.submission_id,
+        formal_task_id: record.formal_task_id,
+        filename: existing?.filename,
+        filepath: existing?.path,
+        decision: record.decision,
+        submission: record,
+      };
+    }
+    if (record.status !== "accepted" && record.status !== "formalizing") {
+      return {
+        ok: false,
+        created: false,
+        status: record.status === "rejected" ? 422 : 409,
+        submission_id: record.submission_id,
+        formal_task_id: null,
+        decision: record.decision,
+        code: record.code,
+        blocking_findings: record.blocking_findings,
+        error: record.error,
+        submission: record,
+      };
+    }
+
+    const { mkdir: mk, unlink } = await import("node:fs/promises");
+    await mk(adminDir, { recursive: true });
+    let taskId = record.pending_formal_task_id ?? "";
+    if (!taskId) {
+      const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      const seq = _wpNextTaskSeq(projectRoot, date);
+      taskId = `TASK-${date}-${seq}`;
+    }
+    record = await updateTaskSubmissionFormalization(
+      projectRoot,
+      record.submission_id,
+      { status: "formalizing", pending_formal_task_id: taskId },
+    );
+    const filename = `${taskId}-ADMIN-to-PM.md`;
+    const filepath = join(adminDir, filename);
+    const attachments = taskAttachmentsFromSubmission(record);
+    const content = [
+      "---",
+      "protocol: fcop",
+      'version: "1.0"',
+      `task_id: ${taskId}`,
+      `submission_id: ${record.submission_id}`,
+      `admission_revision: ${record.admission_revision}`,
+      `admission_digest: ${record.content_digest}`,
+      "sender: ADMIN",
+      "recipient: PM",
+      `priority: ${record.requested_priority}`,
+      `thread_key: ${record.formal_thread_key}`,
+      `parent: ${JSON.stringify(record.requested_parent ?? "")}`,
+      ...(record.requested_references.length
+        ? [
+            "references:",
+            ...record.requested_references.map((id) => `  - ${id}`),
+          ]
+        : ["references: []"]),
+      "state: inbox",
+      ...formatAttachmentsYaml(attachments),
+      "---",
+      "",
+      `# ${record.subject}`,
+      "",
+      record.draft_body,
+    ].join("\n");
+    const proofPath = taskSpecAdmissionRecordPath(projectRoot, taskId);
+
+    try {
+      const candidateAdmission = await evaluateTaskSpecAdmission({
+        projectRoot,
+        task: buildSubmissionAdmissionTask(projectRoot, record),
+      });
+      if (
+        candidateAdmission.decision !== "accepted" ||
+        candidateAdmission.content_digest !== record.content_digest
+      ) {
+        throw new Error(
+          "submission changed after admission; create a new admission revision",
+        );
+      }
+
+      // The proof is written before the watched TASK file. Dispatcher also
+      // requires submission.status=created, so a watcher race remains fail-closed.
+      await persistTaskSpecAdmissionResult(projectRoot, candidateAdmission, {
+        submission_id: record.submission_id,
+        formal_task_id: taskId,
+        admission_revision: record.admission_revision,
+      });
+      await persistDurableAdminPmTask(filepath, content);
+      const ledgerResult = await finalizeTaskCreateAfterDiskWrite(
+        projectRoot,
+        filepath,
+      );
+      if (!ledgerResult.ok) {
+        throw new Error(`ledger rebuild failed: ${ledgerResult.error}`);
+      }
+
+      const formalTask = await TaskParser.parse(filepath);
+      const finalAdmission = await evaluateTaskSpecAdmission({
+        projectRoot,
+        task: formalTask,
+      });
+      if (
+        finalAdmission.decision !== "accepted" ||
+        finalAdmission.content_digest !== record.content_digest
+      ) {
+        throw new Error(
+          `formal task does not match accepted submission: ${finalAdmission.blocking_findings
+            .map((finding) => finding.id)
+            .join(",")}`,
+        );
+      }
+      record = await updateTaskSubmissionFormalization(
+        projectRoot,
+        record.submission_id,
+        { status: "created", formal_task_id: taskId },
+      );
+      await persistTaskSpecAdmissionResult(projectRoot, finalAdmission, {
+        submission_id: record.submission_id,
+        formal_task_id: taskId,
+        admission_revision: record.admission_revision,
+      });
+
+      const evalCfg = readEvalObserverConfig(projectRoot);
+      if (evalCfg.trigger_on_task_create) {
+        try {
+          await spawnEval01(projectRoot, filename);
+        } catch (doorbellErr) {
+          console.warn("EVAL trigger on task create failed:", doorbellErr);
+        }
+      }
+      const dispatch = await dispatchAdminPmTaskAfterCreate({
+        projectRoot,
+        filepath,
+        filename,
+        source,
+      });
+      return {
+        ok: true,
+        created: true,
+        filename,
+        filepath,
+        submission_id: record.submission_id,
+        formal_task_id: taskId,
+        decision: "accepted",
+        submission: record,
+        dispatch,
+      };
+    } catch (error) {
+      const rollback = await rollbackFormalTaskCreate(projectRoot, filepath);
+      await unlink(proofPath).catch(() => undefined);
+      const reason = error instanceof Error ? error.message : String(error);
+      record = await updateTaskSubmissionFormalization(
+        projectRoot,
+        record.submission_id,
+        {
+          status: "formalization_failed",
+          error: rollback.ok
+            ? reason
+            : `${reason}; rollback failed: ${rollback.error}`,
+        },
+      );
+      return {
+        ok: false,
+        created: false,
+        status: 500,
+        submission_id: record.submission_id,
+        formal_task_id: null,
+        decision: record.decision,
+        code: "TASK_SUBMISSION_FORMALIZATION_FAILED",
+        error: record.error,
+        rollback,
+        submission: record,
+      };
+    }
+  }
+
+  async function createAndProcessAdminPmSubmission(input: {
+    projectRoot: string;
+    adminDir: string;
+    subject: string;
+    body: string;
+    priority: string;
+    relationMode: "new" | "continue" | "child";
+    relationParent: string;
+    relationReferences: string[];
+    relationThreadKey: string;
+    attachments: TaskAttachment[];
+    idempotencyKey?: string;
+    source: string;
+  }): Promise<Record<string, unknown>> {
+    const bodyWithAttachmentRefs = appendMarkdownAttachmentRefs({
+      body: input.body,
+      markdownFilePath: join(input.adminDir, "SUBMISSION-DRAFT.md"),
+      attachments: input.attachments,
+      projectRoot: input.projectRoot,
+    });
+    let record = await createTaskSubmission(input.projectRoot, {
+      subject: input.subject,
+      body: bodyWithAttachmentRefs,
+      priority: input.priority,
+      relation_mode: input.relationMode,
+      parent_task_id: input.relationParent || undefined,
+      references: input.relationReferences,
+      thread_key: input.relationThreadKey || undefined,
+      attachments: canonicalSubmissionAttachments(input.attachments),
+      idempotency_key: input.idempotencyKey,
+    });
+    if (
+      record.status === "draft" ||
+      record.status === "checking" ||
+      record.status === "failed"
+    ) {
+      record = await checkTaskSubmission(
+        input.projectRoot,
+        record.submission_id,
+      );
+      sseEmit("codeflowmu.task_submission_admission_completed", {
+        event: "task_submission_admission_completed",
+        submission_id: record.submission_id,
+        decision: record.decision,
+        code: record.code,
+        blocking_findings: record.blocking_findings,
+      });
+    }
+    if (record.status === "rejected" || record.status === "abandoned") {
+      return {
+        ok: false,
+        created: false,
+        status: record.status === "rejected" ? 422 : 409,
+        submission_id: record.submission_id,
+        formal_task_id: null,
+        decision: record.decision,
+        code: record.code,
+        blocking_findings: record.blocking_findings,
+        submission: record,
+      };
+    }
+    return formalizeAcceptedTaskSubmission({
+      projectRoot: input.projectRoot,
+      adminDir: input.adminDir,
+      record,
+      source: input.source,
+    });
+  }
+
+  app.get("/api/v2/task-submissions", async (req: Request, res: Response) => {
+    try {
+      const projectRoot = resolveProjectRoot();
+      const status = String(req.query["status"] ?? "").trim();
+      const limit = Math.min(
+        Math.max(Number(req.query["limit"] ?? 200) || 200, 1),
+        500,
+      );
+      const submissions = await listTaskSubmissions(projectRoot, {
+        ...(status ? { status } : {}),
+        limit,
+      });
+      res.json({
+        ok: true,
+        submissions,
+        counts: submissions.reduce<Record<string, number>>((counts, row) => {
+          counts[row.status] = (counts[row.status] ?? 0) + 1;
+          return counts;
+        }, {}),
+      });
+    } catch (error) {
+      sendError(res, 500, "TASK_SUBMISSION_LIST_FAILED", String(error));
+    }
+  });
+
+  app.get(
+    "/api/v2/task-submissions/:submissionId",
+    async (req: Request, res: Response) => {
+      const record = await getTaskSubmission(
+        resolveProjectRoot(),
+        String(req.params["submissionId"] ?? ""),
+      );
+      if (!record) {
+        sendError(res, 404, "TASK_SUBMISSION_NOT_FOUND", "submission not found");
+        return;
+      }
+      res.json({ ok: true, submission: record });
+    },
+  );
+
+  app.post(
+    "/api/v2/task-submissions/:submissionId/check",
+    async (req: Request, res: Response) => {
+      const { projectRoot, adminDir } = resolveAdminTaskWriteScope();
+      if (isProtectedOpenEditionAppRoot(projectRoot)) {
+        sendError(
+          res,
+          403,
+          "OPEN_EDITION_APP_ROOT_PROTECTED",
+          "Open edition cannot formalize tasks against its own source directory.",
+        );
+        return;
+      }
+      try {
+        let record = await getTaskSubmission(
+          projectRoot,
+          String(req.params["submissionId"] ?? ""),
+        );
+        if (!record) {
+          sendError(
+            res,
+            404,
+            "TASK_SUBMISSION_NOT_FOUND",
+            "submission not found",
+          );
+          return;
+        }
+        if (!["accepted", "formalizing", "created"].includes(record.status)) {
+          record = await checkTaskSubmission(projectRoot, record.submission_id);
+        }
+        const result =
+          record.status === "accepted" ||
+          record.status === "formalizing" ||
+          record.status === "created"
+            ? await formalizeAcceptedTaskSubmission({
+                projectRoot,
+                adminDir,
+                record,
+                source: "task_submission_check",
+              })
+            : {
+                ok: false,
+                created: false,
+                status: record.status === "rejected" ? 422 : 409,
+                submission_id: record.submission_id,
+                formal_task_id: null,
+                decision: record.decision,
+                code: record.code,
+                blocking_findings: record.blocking_findings,
+                submission: record,
+              };
+        res
+          .status(Number(result["status"] ?? (result["ok"] ? 200 : 500)))
+          .json(result);
+      } catch (error) {
+        sendError(res, 500, "TASK_SUBMISSION_CHECK_FAILED", String(error));
+      }
+    },
+  );
+
+  app.post(
+    "/api/v2/task-submissions/:submissionId/revise",
+    async (req: Request, res: Response) => {
+      const { projectRoot, adminDir } = resolveAdminTaskWriteScope();
+      if (isProtectedOpenEditionAppRoot(projectRoot)) {
+        sendError(
+          res,
+          403,
+          "OPEN_EDITION_APP_ROOT_PROTECTED",
+          "Open edition cannot formalize tasks against its own source directory.",
+        );
+        return;
+      }
+      try {
+        let record = await reviseTaskSubmission(
+          projectRoot,
+          String(req.params["submissionId"] ?? ""),
+          {
+            ...(req.body?.subject != null
+              ? { subject: String(req.body.subject) }
+              : {}),
+            ...(req.body?.body != null ? { body: String(req.body.body) } : {}),
+            ...(req.body?.priority != null
+              ? { priority: String(req.body.priority) }
+              : {}),
+          },
+        );
+        record = await checkTaskSubmission(projectRoot, record.submission_id);
+        const result =
+          record.status === "accepted"
+            ? await formalizeAcceptedTaskSubmission({
+                projectRoot,
+                adminDir,
+                record,
+                source: "task_submission_revise",
+              })
+            : {
+                ok: false,
+                created: false,
+                status: record.status === "rejected" ? 422 : 409,
+                submission_id: record.submission_id,
+                formal_task_id: null,
+                decision: record.decision,
+                code: record.code,
+                blocking_findings: record.blocking_findings,
+                submission: record,
+              };
+        res
+          .status(Number(result["status"] ?? (result["ok"] ? 200 : 500)))
+          .json(result);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const status = message.includes("NOT_FOUND")
+          ? 404
+          : message.includes("ALREADY_FORMALIZED")
+            ? 409
+            : 500;
+        sendError(res, status, "TASK_SUBMISSION_REVISE_FAILED", message);
+      }
+    },
+  );
+
+  app.post(
+    "/api/v2/task-submissions/:submissionId/abandon",
+    async (req: Request, res: Response) => {
+      try {
+        const record = await abandonTaskSubmission(
+          resolveProjectRoot(),
+          String(req.params["submissionId"] ?? ""),
+        );
+        res.json({ ok: true, submission: record });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        sendError(
+          res,
+          message.includes("NOT_FOUND") ? 404 : 409,
+          "TASK_SUBMISSION_ABANDON_FAILED",
+          message,
+        );
+      }
+    },
+  );
+
   app.post("/api/v2/tasks", async (req: Request, res: Response) => {
     const { mkdir: mk } = await import("node:fs/promises");
     const { projectRoot, adminDir } = resolveAdminTaskWriteScope();
@@ -9213,76 +9725,44 @@ export function buildWebPanelApp(
       }
     }
 
-    await mk(adminDir, { recursive: true });
-    const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    const seq = _wpNextTaskSeq(projectRoot, date);
-    const filename = `TASK-${date}-${seq}-ADMIN-to-PM.md`;
-    const filepath = join(adminDir, filename);
-    const bodyWithAttachmentRefs = appendMarkdownAttachmentRefs({
-      body,
-      markdownFilePath: filepath,
-      attachments,
-      projectRoot,
-    });
-
-    const content = [
-      "---",
-      "protocol: fcop",
-      'version: "1.0"',
-      "sender: ADMIN",
-      "recipient: PM",
-      `priority: ${priority}`,
-      `thread_key: ${relationThreadKey || `panel-task-${seq}`}`,
-      `parent: ${relationParent}`,
-      ...(relationReferences.length
-        ? ["references:", ...relationReferences.map((id) => `  - ${id}`)]
-        : ["references: []"]),
-      "state: inbox",
-      ...formatAttachmentsYaml(attachments),
-      "---",
-      "",
-      `# ${subject}`,
-      "",
-      bodyWithAttachmentRefs,
-    ].join("\n");
-
     try {
-      await persistDurableAdminPmTask(filepath, content);
-      const ledgerResult = await finalizeTaskCreateAfterDiskWrite(
+      await mk(adminDir, { recursive: true });
+      const result = await createAndProcessAdminPmSubmission({
         projectRoot,
-        filepath,
-      );
-      if (!ledgerResult.ok) {
-        sendError(res, 500, "LEDGER_REBUILD_FAILED", ledgerResult.error);
-        return;
-      }
-
-      const evalCfg = readEvalObserverConfig(projectRoot);
-      if (evalCfg.trigger_on_task_create) {
-        try {
-          await spawnEval01(projectRoot, filename);
-        } catch (doorbellErr) {
-          console.warn("EVAL trigger on task create failed:", doorbellErr);
-        }
-      }
-      const dispatch = await dispatchAdminPmTaskAfterCreate({
-        projectRoot,
-        filepath,
-        filename,
+        adminDir,
+        subject,
+        body,
+        priority,
+        relationMode: relationMode as "new" | "continue" | "child",
+        relationParent,
+        relationReferences,
+        relationThreadKey,
+        attachments,
+        idempotencyKey: idemKey || undefined,
         source: "admin_task_create",
       });
-
-      res.json({
-        ok: true,
-        filename,
-        filepath,
+      const status = Number(result["status"] ?? (result["ok"] ? 200 : 500));
+      if (result["ok"] && result["filename"] && result["filepath"]) {
+        wpRememberRecentAdminPmCreate(
+          projectRoot,
+          fingerprint,
+          String(result["filename"]),
+          String(result["filepath"]),
+        );
+        if (idemKey) {
+          wpRememberIdempotency(
+            idemKey,
+            String(result["filename"]),
+            String(result["filepath"]),
+          );
+        }
+      }
+      res.status(status).json({
+        ...result,
         parent_task_id: relationParent || undefined,
-        dispatch,
       });
-      wpRememberRecentAdminPmCreate(projectRoot, fingerprint, filename, filepath);
-      if (idemKey) wpRememberIdempotency(idemKey, filename, filepath);
     } catch (err) {
-      sendError(res, 500, "WRITE_FAILED", String(err));
+      sendError(res, 500, "TASK_SUBMISSION_FAILED", String(err));
     }
   });
 
@@ -9446,6 +9926,55 @@ export function buildWebPanelApp(
         }
       } catch {
         /* task id remains authoritative even if thread lookup is unavailable */
+      }
+    }
+    if (boundTaskId) {
+      const taskHit = findTaskFileByIdPrefix(root, boundTaskId);
+      if (!taskHit && taskId) {
+        sendError(
+          res,
+          404,
+          "TASK_NOT_FOUND",
+          `task-bound session target does not exist: ${boundTaskId}`,
+        );
+        return;
+      }
+      if (taskHit?.path) {
+        try {
+          const task = await TaskParser.parse(taskHit.path);
+          const admission = await verifyTaskSpecAdmissionForDispatch({
+            projectRoot: root,
+            task,
+          });
+          if (admission.decision === "rejected") {
+            appendPanelRuntimeAction(root, {
+              operator: operatorRole,
+              action: intent === "patrol" ? "patrol" : "wake",
+              target_agent: agentId,
+              target_task: boundTaskId,
+              result: "skipped",
+              reason: "task_spec_rejected",
+            });
+            res.status(409).json({
+              ok: false,
+              code: admission.code,
+              error:
+                "Task admission rejected; no task-bound Session was created.",
+              task_id: admission.task_id,
+              decision: admission.decision,
+              blocking_findings: admission.blocking_findings,
+            });
+            return;
+          }
+        } catch (error) {
+          sendError(
+            res,
+            409,
+            "TASK_ADMISSION_CHECK_FAILED",
+            error instanceof Error ? error.message : String(error),
+          );
+          return;
+        }
       }
     }
     const sessionTaskId = boundTaskId || `CHAT-${Date.now()}`;
@@ -9622,6 +10151,15 @@ export function buildWebPanelApp(
       // Reuse task-write logic
       const { mkdir: mk } = await import("node:fs/promises");
       const { projectRoot, adminDir } = resolveAdminTaskWriteScope();
+      if (isProtectedOpenEditionAppRoot(projectRoot)) {
+        sendError(
+          res,
+          403,
+          "OPEN_EDITION_APP_ROOT_PROTECTED",
+          "Open edition cannot create tasks against its own source directory.",
+        );
+        return;
+      }
       if (!adminDir) { sendError(res, 503, "ADMIN_DIR_NOT_CONFIGURED", "adminTasksDir not configured"); return; }
       const chatSubject = text.slice(0, 80);
       const fingerprint = wpTaskCreateFingerprint(chatSubject, text, attachments);
@@ -9669,44 +10207,42 @@ export function buildWebPanelApp(
           return;
         }
       }
-      await mk(adminDir, { recursive: true });
-      const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-      const seq = _wpNextTaskSeq(projectRoot, date);
-      const filename = `TASK-${date}-${seq}-ADMIN-to-PM.md`;
-      const filepath = join(adminDir, filename);
-      const textWithAttachmentRefs = appendMarkdownAttachmentRefs({
-        body: text,
-        markdownFilePath: filepath,
-        attachments,
-        projectRoot,
-      });
-      const content = [
-        "---", "protocol: fcop", 'version: "1.0"', "sender: ADMIN", "recipient: PM",
-        `priority: ${priority}`, `thread_key: chat-task-${seq}`, "state: inbox",
-        ...formatAttachmentsYaml(attachments),
-        "---", "", `# ${text.slice(0, 80)}`, "", textWithAttachmentRefs,
-      ].join("\n");
       try {
-        await persistDurableAdminPmTask(filepath, content);
-        const ledgerResult = await finalizeTaskCreateAfterDiskWrite(
+        await mk(adminDir, { recursive: true });
+        const result = await createAndProcessAdminPmSubmission({
           projectRoot,
-          filepath,
-        );
-        if (!ledgerResult.ok) {
-          sendError(res, 500, "LEDGER_REBUILD_FAILED", ledgerResult.error);
-          return;
-        }
-        wpRememberRecentAdminPmCreate(projectRoot, fingerprint, filename, filepath);
-        if (idemKey) wpRememberIdempotency(idemKey, filename, filepath);
-        const dispatch = await dispatchAdminPmTaskAfterCreate({
-          projectRoot,
-          filepath,
-          filename,
+          adminDir,
+          subject: chatSubject,
+          body: text,
+          priority,
+          relationMode: "new",
+          relationParent: "",
+          relationReferences: [],
+          relationThreadKey: "",
+          attachments,
+          idempotencyKey: idemKey || undefined,
           source: "admin_chat_task",
         });
-        res.json({ ok: true, as_task: true, filename, dispatch });
+        if (result["ok"] && result["filename"] && result["filepath"]) {
+          wpRememberRecentAdminPmCreate(
+            projectRoot,
+            fingerprint,
+            String(result["filename"]),
+            String(result["filepath"]),
+          );
+          if (idemKey) {
+            wpRememberIdempotency(
+              idemKey,
+              String(result["filename"]),
+              String(result["filepath"]),
+            );
+          }
+        }
+        res
+          .status(Number(result["status"] ?? (result["ok"] ? 200 : 500)))
+          .json({ ...result, as_task: true });
       } catch (err) {
-        sendError(res, 500, "WRITE_FAILED", String(err));
+        sendError(res, 500, "TASK_SUBMISSION_FAILED", String(err));
       }
     } else if (as_report) {
       const { mkdir: mk } = await import("node:fs/promises");
@@ -16538,6 +17074,33 @@ export function buildWebPanelApp(
     allocateTaskSeq: (date) => _wpNextTaskSeq(resolveProjectRoot(), date),
     getUiLang: () => readPanelUiLang(resolveProjectRoot()),
     gatewayOnline: () => isMobileGatewayOnline(),
+    createAdminPmTask: async (body) => {
+      try {
+        const response = await fetch(`http://127.0.0.1:${panelPort}/api/v2/tasks`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": String(
+              (body as Record<string, unknown>)["idempotency_key"] ?? "",
+            ),
+          },
+          body: JSON.stringify(body),
+        });
+        const payload = (await response.json()) as Record<string, unknown>;
+        return {
+          ...payload,
+          ok: response.ok && payload["ok"] !== false,
+          status: response.status,
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          status: 503,
+          error: error instanceof Error ? error.message : String(error),
+          code: "TASK_SUBMISSION_PROXY_FAILED",
+        };
+      }
+    },
     listChatMessages: ({ agentId, limit }) => {
       const msgs = agentId
         ? directChat.filter((m) => m.agentId === agentId)

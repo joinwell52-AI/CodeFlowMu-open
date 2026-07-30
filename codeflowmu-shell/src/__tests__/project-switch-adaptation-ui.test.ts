@@ -69,6 +69,6 @@ test("project switch repairs public Open skill projections", () => {
     backend,
     /await deployOpenEditionProjectProjection\(target\.root\)/,
   );
-  assert.match(backend, /skills", "windows-use/);
-  assert.match(backend, /skills", "browser-use/);
+  assert.match(backend, /syncAgentPlaybookAssets\(root, \{ sourceRoot: hostRoot \}\)/);
+  assert.match(backend, /skillSync\.copiedSkillPackages/);
 });

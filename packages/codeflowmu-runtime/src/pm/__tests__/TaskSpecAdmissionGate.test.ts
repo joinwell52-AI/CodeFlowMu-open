@@ -8,7 +8,9 @@ import type { ParsedTask } from "../../scheduler/TaskParser.ts";
 import {
   evaluateTaskSpecAdmission,
   persistTaskSpecAdmissionResult,
+  taskSpecContentDigest,
   taskSpecAdmissionRecordPath,
+  verifyTaskSpecAdmissionForDispatch,
 } from "../TaskSpecAdmissionGate.ts";
 
 function task(
@@ -307,6 +309,176 @@ test("persists structured results idempotently by authored-content digest", asyn
     assert.equal(stored.decision, "rejected");
     assert.equal(stored.code, "TASK_SPEC_INVALID");
     assert.ok(Array.isArray(stored.blocking_findings));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("dispatch rejects a new formal task when its accepted submission proof is missing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cfm-task-admission-"));
+  try {
+    const formal = task("Implement a small feature.", {
+      submission_id: "SUBMISSION-20260730-001",
+      admission_revision: 1,
+    });
+    formal.frontmatter["admission_digest"] = taskSpecContentDigest(formal);
+    const result = await verifyTaskSpecAdmissionForDispatch({
+      projectRoot: root,
+      task: formal,
+    });
+    assert.equal(result.decision, "rejected");
+    assert.equal(result.blocking_findings[0]?.id, "ADMISSION_PROOF_MISSING");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("dispatch stays fail-closed while the submission transaction is formalizing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cfm-task-admission-"));
+  try {
+    const submissionId = "SUBMISSION-20260730-002";
+    const formal = task("Implement a small feature.", {
+      submission_id: submissionId,
+      admission_revision: 1,
+    });
+    const accepted = await evaluateTaskSpecAdmission({
+      projectRoot: root,
+      task: formal,
+    });
+    assert.equal(accepted.decision, "accepted");
+    formal.frontmatter["admission_digest"] = accepted.content_digest;
+    await persistTaskSpecAdmissionResult(root, accepted, {
+      submission_id: submissionId,
+      formal_task_id: "TASK-20260730-001",
+      admission_revision: 1,
+    });
+    await mkdir(join(root, ".codeflowmu", "task-submissions"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(
+        root,
+        ".codeflowmu",
+        "task-submissions",
+        `${submissionId}.json`,
+      ),
+      JSON.stringify({
+        submission_id: submissionId,
+        status: "formalizing",
+        formal_task_id: null,
+        admission_revision: 1,
+        content_digest: accepted.content_digest,
+      }),
+    );
+
+    const result = await verifyTaskSpecAdmissionForDispatch({
+      projectRoot: root,
+      task: formal,
+    });
+    assert.equal(result.decision, "rejected");
+    assert.equal(result.blocking_findings[0]?.id, "ADMISSION_PROOF_MISSING");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("dispatch accepts only a completed submission transaction with matching digest", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cfm-task-admission-"));
+  try {
+    const submissionId = "SUBMISSION-20260730-003";
+    const formal = task("Implement a small feature.", {
+      submission_id: submissionId,
+      admission_revision: 2,
+    });
+    const accepted = await evaluateTaskSpecAdmission({
+      projectRoot: root,
+      task: formal,
+    });
+    assert.equal(accepted.decision, "accepted");
+    formal.frontmatter["admission_digest"] = accepted.content_digest;
+    await persistTaskSpecAdmissionResult(root, accepted, {
+      submission_id: submissionId,
+      formal_task_id: "TASK-20260730-001",
+      admission_revision: 2,
+    });
+    await mkdir(join(root, ".codeflowmu", "task-submissions"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(
+        root,
+        ".codeflowmu",
+        "task-submissions",
+        `${submissionId}.json`,
+      ),
+      JSON.stringify({
+        submission_id: submissionId,
+        status: "created",
+        formal_task_id: "TASK-20260730-001",
+        admission_revision: 2,
+        content_digest: accepted.content_digest,
+      }),
+    );
+
+    const result = await verifyTaskSpecAdmissionForDispatch({
+      projectRoot: root,
+      task: formal,
+    });
+    assert.equal(result.decision, "accepted");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("dispatch rejects content changed after an accepted submission", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cfm-task-admission-"));
+  try {
+    const submissionId = "SUBMISSION-20260730-004";
+    const formal = task("Implement a small feature.", {
+      submission_id: submissionId,
+      admission_revision: 1,
+    });
+    const accepted = await evaluateTaskSpecAdmission({
+      projectRoot: root,
+      task: formal,
+    });
+    assert.equal(accepted.decision, "accepted");
+    formal.frontmatter["admission_digest"] = accepted.content_digest;
+    await persistTaskSpecAdmissionResult(root, accepted, {
+      submission_id: submissionId,
+      formal_task_id: "TASK-20260730-001",
+      admission_revision: 1,
+    });
+    await mkdir(join(root, ".codeflowmu", "task-submissions"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(
+        root,
+        ".codeflowmu",
+        "task-submissions",
+        `${submissionId}.json`,
+      ),
+      JSON.stringify({
+        submission_id: submissionId,
+        status: "created",
+        formal_task_id: "TASK-20260730-001",
+        admission_revision: 1,
+        content_digest: accepted.content_digest,
+      }),
+    );
+    formal.body = "Implement a different feature.";
+
+    const result = await verifyTaskSpecAdmissionForDispatch({
+      projectRoot: root,
+      task: formal,
+    });
+    assert.equal(result.decision, "rejected");
+    assert.ok(
+      result.blocking_findings.some(
+        (finding) => finding.id === "ADMISSION_PROOF_MISSING",
+      ),
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

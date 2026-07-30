@@ -61,11 +61,18 @@ describe("mobile bind URL UI", () => {
     const version = JSON.parse(
       await readFile(join(repoRoot, "codeflowmu-desktop", "mobile", "version.json"), "utf-8"),
     );
+    const bundleVersion = String(version.app_version);
+    const resourceVersion = bundleVersion.replace(/^V/i, "");
+    const escapedBundle = bundleVersion.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escapedResource = resourceVersion.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-    assert.match(mobileIndex, /mobile\.js\?v=1\.0\.53/);
-    assert.match(mobileJs, /BUNDLE_VERSION = "V1\.0\.53"/);
-    assert.equal(version.app_version, "V1.0.53");
-    assert.match(sw, /CACHE_NAME = "codeflowmu-pwa-v1\.0\.53"/);
+    assert.match(mobileIndex, new RegExp(`mobile\\.js\\?v=${escapedResource}`));
+    assert.match(mobileJs, new RegExp(`BUNDLE_VERSION = "${escapedBundle}"`));
+    assert.match(bundleVersion, /^V\d+\.\d+\.\d+$/);
+    assert.match(
+      sw,
+      new RegExp(`CACHE_NAME = "codeflowmu-pwa-v${escapedResource}"`),
+    );
     assert.match(sw, /path\.endsWith\("\/mobile\/"\)/);
     assert.match(sw, /path\.endsWith\("\/mobile\/mobile\.js"\)/);
     assert.match(sw, /self\.skipWaiting\(\)/);

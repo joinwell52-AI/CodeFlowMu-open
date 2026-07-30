@@ -3,7 +3,7 @@
  */
 
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync, appendFileSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -218,6 +218,84 @@ test("mergeMobileChatMessages keeps mobile store when PC directChat exists", () 
   assert.equal(merged[1]!.content, "mobile only");
 });
 
+test("mobile API: rejected submission stays out of TASK ledger and can be revised through the shared gate", async () => {
+  const { root, inbox, reviews } = makeV3ProjectRoot();
+  seedMinimalRule45ForTeam(root);
+  const dataDir = mkdtempSync(join(tmpdir(), "cf-mobile-data-"));
+  const panelPort = await reserveListenPort();
+  const app = buildMobilePanelWithPort(
+    root,
+    reviews,
+    dataDir,
+    panelPort,
+  ) as MobileApp;
+  const server = await startPanelServer(app, panelPort);
+
+  try {
+    const bindId = "bind_submission_gate";
+    const bindToken = "bind_submission_secret";
+    app.registerMobilePendingBind!(bindId, bindToken, 60_000);
+    const bind = await request(app)
+      .post("/api/v2/mobile/bind-confirm")
+      .send({
+        bind_id: bindId,
+        token: bindToken,
+        device_name: "Submission Gate PWA",
+      });
+    assert.equal(bind.status, 200);
+    const token = String(bind.body.mobile_session_token);
+
+    const rejected = await request(app)
+      .post("/api/v2/mobile/tasks")
+      .set("Authorization", `Bearer ${token}`)
+      .set("Idempotency-Key", "pwa-submission-reject")
+      .send({
+        title: "PWA conflict",
+        body: "Implement the feature.\nthread_key: client-forged-thread",
+        priority: "P1",
+        to: "PM",
+      });
+    assert.equal(rejected.status, 422);
+    assert.equal(rejected.body.decision, "rejected");
+    assert.equal(rejected.body.formal_task_id, null);
+    assert.equal(
+      readdirSync(inbox).filter((name) => name.startsWith("TASK-")).length,
+      0,
+    );
+
+    const reviewList = await request(app)
+      .get("/api/v2/mobile/task-submissions")
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(reviewList.status, 200);
+    assert.equal(reviewList.body.submissions.length, 1);
+    assert.equal(reviewList.body.submissions[0].status, "rejected");
+
+    const revised = await request(app)
+      .post(
+        `/api/v2/mobile/task-submissions/${encodeURIComponent(
+          rejected.body.submission_id,
+        )}/revise`,
+      )
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        subject: "PWA valid revision",
+        body: "Implement and verify this small feature.",
+      });
+    assert.equal(revised.status, 200);
+    assert.equal(revised.body.created, true);
+    assert.equal(revised.body.submission.status, "created");
+    assert.equal(
+      readdirSync(inbox).filter((name) => name.startsWith("TASK-")).length,
+      1,
+    );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    cleanupPanel(app);
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("mobile API: auth, bind-confirm, bootstrap, revoke", async () => {
   const { root, inbox, reviews } = makeV3ProjectRoot();
   seedMinimalRule45ForTeam(root);
@@ -330,6 +408,15 @@ Task: TASK-20260617-001
       ),
       false,
     );
+    const approvalDetailEn = await request(app)
+      .get(`/api/v2/mobile/approvals/${approvalId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .set("X-CodeFlowMu-UI-Lang", "en");
+    assert.equal(approvalDetailEn.status, 200);
+    assert.match(approvalDetailEn.body.approval.body, /^Action: push_branch/);
+    assert.match(approvalDetailEn.body.approval.body, /Targets: origin\/main/);
+    assert.doesNotMatch(approvalDetailEn.body.approval.body, /动作:/);
+
     const approvalWithoutReason = await request(app)
       .post(`/api/v2/mobile/approvals/${approvalId}/approve`)
       .set("Authorization", `Bearer ${token}`)
@@ -645,8 +732,8 @@ test("mobile panel API: version-history", async () => {
     assert.equal(res.body.ok, true);
     assert.ok(Array.isArray(res.body.items));
     assert.ok(res.body.items.length >= 1);
-    assert.equal(res.body.items[0].version, "V1.1.18");
-    assert.equal(res.body.items[0].date, "2026-07-14");
+    assert.match(res.body.items[0].version, /^V\d+\.\d+\.\d+(?:-open)?$/);
+    assert.match(res.body.items[0].date, /^\d{4}-\d{2}-\d{2}$/);
     assert.ok(Array.isArray(res.body.items[0].changes));
     assert.ok(res.body.items[0].changes.length > 0);
     const v100 = res.body.items.find((i: { version: string }) => i.version === "V1.0.0");

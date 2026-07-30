@@ -150,8 +150,8 @@ import {
 import { guardLandedPmProductWorkerTask } from "../pm/ProductDeliveryRuntimeGate.ts";
 import { recordProductTaskClassification } from "../pm/ProductDeliveryGovernance.ts";
 import {
-  evaluateTaskSpecAdmission,
-  persistTaskSpecAdmissionResult,
+  taskSpecAdmissionRecordPath,
+  verifyTaskSpecAdmissionForDispatch,
   type TaskSpecAdmissionRejected,
 } from "../pm/TaskSpecAdmissionGate.ts";
 
@@ -866,6 +866,11 @@ export class TaskDispatcher {
     recipient: string,
     outcome: DispatchOutcome,
   ): Promise<void> {
+    // Admission rejection is not a lifecycle transition. A rejected legacy
+    // TASK must not accumulate duplicate state_history blocks when watcher,
+    // manual dispatch, and recovery all encounter it.
+    if (outcome.kind === "task_spec_rejected") return;
+
     // Dispatched tasks already got inbox→dispatched + running inside _dispatch
     // before the settlement listener was registered.
     if (!(outcome.kind === "dispatched" && outcome.inboxHistoryRecorded)) {
@@ -990,22 +995,21 @@ export class TaskDispatcher {
     }
 
     if (this._projectRoot) {
-      const admission = await evaluateTaskSpecAdmission({
+      const admission = await verifyTaskSpecAdmissionForDispatch({
         projectRoot: this._projectRoot,
         task: parsedForGate,
       });
-      const persisted = await persistTaskSpecAdmissionResult(
-        this._projectRoot,
-        admission,
-      );
       if (admission.decision === "rejected") {
+        const resultPath = taskSpecAdmissionRecordPath(
+          this._projectRoot,
+          admission.task_id,
+        );
         const outcome: DispatchOutcome = {
           kind: "task_spec_rejected",
           ...admission,
-          result_path: persisted.path,
+          result_path: resultPath,
         };
         if (
-          persisted.changed ||
           this._shouldEmitDispatchWait(
             `task-spec:${filename}:${admission.content_digest}`,
           )
@@ -1013,7 +1017,7 @@ export class TaskDispatcher {
           this._panelEvents?.emit("codeflowmu.task_spec_rejected", {
             event: "task_spec_rejected",
             ...admission,
-            result_path: persisted.path,
+            result_path: resultPath,
             task_path: filepath,
             filename,
             role: recipient,
@@ -1023,14 +1027,6 @@ export class TaskDispatcher {
             `[TaskDispatcher] task_spec_rejected ${filename}: ${admission.blocking_findings
               .map((finding) => finding.id)
               .join(",")}`,
-          );
-        }
-        if (persisted.changed) {
-          await this._applyDispatchOutcome(
-            filepath,
-            filename,
-            recipient,
-            outcome,
           );
         }
         return outcome;

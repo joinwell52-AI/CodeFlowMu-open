@@ -356,7 +356,9 @@ export {
 export {
   evaluateTaskSpecAdmission,
   persistTaskSpecAdmissionResult,
+  taskSpecContentDigest,
   taskSpecAdmissionRecordPath,
+  verifyTaskSpecAdmissionForDispatch,
   TASK_SPEC_INVALID,
   TASK_SPEC_VALID,
   type TaskSpecAdmissionAccepted,

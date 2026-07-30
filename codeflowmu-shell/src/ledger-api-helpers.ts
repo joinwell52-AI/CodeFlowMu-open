@@ -217,6 +217,44 @@ export async function finalizeTaskCreateAfterDiskWrite(
   }
 }
 
+/**
+ * Compensating transaction for failures after the TASK file and ledger were
+ * created but before its accepted admission proof was durably committed.
+ */
+export async function rollbackFormalTaskCreate(
+  projectRoot: string,
+  filepath: string,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    unlinkSync(filepath);
+  } catch (error) {
+    if (existsSync(filepath)) {
+      return {
+        ok: false,
+        error: `failed to remove formal task during rollback: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      };
+    }
+  }
+  try {
+    invalidateLedgerFreshCache(projectRoot);
+    const rebuilt = await ensureLedgerFresh(projectRoot, {
+      rebuild: true,
+      force: true,
+    });
+    if (!rebuilt) throw new Error("ledger rebuild returned false");
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `formal task file removed but ledger rollback failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+}
+
 /** Count tasks.jsonl rows whose path is missing — triggers J1 rebuild in auto list. */
 export function countLedgerTaskOrphans(projectRoot: string): number {
   const layout = resolveLedgerLayout(projectRoot);
@@ -444,10 +482,10 @@ function resolveLedgerDisplayStatus(
   }
   const qaEval = payload ? evaluateQaReportAcceptance(payload) : null;
 
-  if (qaEval?.blocksReview) {
-    if (qaEval.verdict === "blocked") {
-      return { display_status: "worker_report_blocked", display_reason: qaEval.reason };
-    }
+  if (qaEval?.verdict === "blocked") {
+    return { display_status: "worker_report_blocked", display_reason: qaEval.reason };
+  }
+  if (qaEval?.verdict === "fail") {
     return { display_status: "qa_acceptance_fail", display_reason: qaEval.reason };
   }
 

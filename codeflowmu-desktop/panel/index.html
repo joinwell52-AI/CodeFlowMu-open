@@ -3177,6 +3177,10 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
   <div class="tp-header">
     <span class="tp-title" id="tp-title" data-i18n="tp.title">任务单</span>
     <span class="tc" id="tc-task">0</span>
+    <div id="task-primary-tabs" style="display:flex;gap:4px;margin-left:8px;padding:2px;border:1px solid var(--border);border-radius:8px">
+      <button type="button" id="task-primary-formal" class="rp-tab on" onclick="setTaskPrimaryTab('formal')">正式任务</button>
+      <button type="button" id="task-primary-submissions" class="rp-tab" onclick="setTaskPrimaryTab('submissions')">投递审查 <span id="task-submission-badge" class="tc" style="display:none">0</span></button>
+    </div>
     <select id="tp-thread-select" class="tc-model-select tp-thread-select" onchange="onTaskThreadSelect(this.value)" data-i18n-title="tp.threadFilterTitle">
       <option value="" data-i18n="tp.allTasks">全部任务</option>
     </select>
@@ -3210,7 +3214,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
     </div>
 
     <!-- 列表/看板模式切换开关 -->
-    <div class="view-switch-btns" style="display:flex;gap:4px;margin-right:12px;background:rgba(255,255,255,.015);padding:2px;border-radius:6px;border:1px solid rgba(255,255,255,.04)">
+    <div id="task-view-switch" class="view-switch-btns" style="display:flex;gap:4px;margin-right:12px;background:rgba(255,255,255,.015);padding:2px;border-radius:6px;border:1px solid rgba(255,255,255,.04)">
       <button class="switch-btn on" id="btn-view-list" onclick="switchTaskView('list')" style="font-size:15px;padding:3px 10px;border-radius:4px;background:transparent;border:none;color:var(--text3);cursor:pointer;transition:all .2s" data-i18n="tp.viewList">📋 列表</button>
       <button class="switch-btn" id="btn-view-kanban" onclick="switchTaskView('kanban')" style="font-size:15px;padding:3px 10px;border-radius:4px;background:transparent;border:none;color:var(--text3);cursor:pointer;transition:all .2s" data-i18n="tp.viewKanban">📊 看板</button>
       <button class="switch-btn" id="btn-view-timeline" onclick="switchTaskView('timeline')" style="font-size:15px;padding:3px 10px;border-radius:4px;background:transparent;border:none;color:var(--text3);cursor:pointer;transition:all .2s" data-i18n="tp.viewTimeline">🧭 任务线</button>
@@ -3228,6 +3232,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
 
   <!-- Main area: scrollable sections + fixed detail panel -->
   <div id="task-main-row">
+    <div id="task-submission-board" style="display:none;flex:1;min-width:0;overflow:auto;padding:16px"></div>
     <!-- New Five-Column Pipeline Kanban Board -->
     <div id="task-kanban-board" class="task-kanban-board" style="display:none">
       <!-- 5 列生命周期物理看板容器将由 JS 动态绘制 -->
@@ -7724,7 +7729,8 @@ function isTransientSdkPayload(raw,st,errMsg){
 // ════════════════════════════════════════════
 // State
 // ════════════════════════════════════════════
-let tasks=[], reports=[], issues=[], events=[], doorbells=[], failures=[], sysEvents=[], approvals=[], chatHistory=[], ledgerThreads=[], diagnosticsList=[], diagnosticsSummary={};
+let tasks=[], taskSubmissions=[], reports=[], issues=[], events=[], doorbells=[], failures=[], sysEvents=[], approvals=[], chatHistory=[], ledgerThreads=[], diagnosticsList=[], diagnosticsSummary={};
+let taskPrimaryTab='formal', selectedTaskSubmissionId='';
 window._diagNavOpen=false;
 let issueStatusTab='open', issueSearchQ='', _isSelectedFn=null;
 let _dbBuffer=[];  // ring-buffer: max 200 entries, persists across nav
@@ -10997,8 +11003,9 @@ async function loadAll(){
     }
   } catch (e) {}
 
-  const[tr,rr,ir,ar,sr,lr,dr,_teamLoad,_sessSync]=await Promise.allSettled([
+  const[tr,subr,rr,ir,ar,sr,lr,dr,_teamLoad,_sessSync]=await Promise.allSettled([
     fetch('/api/v2/tasks?limit=200').then(r=>r.json()),
+    fetch('/api/v2/task-submissions?limit=200',{cache:'no-store'}).then(r=>r.json()),
     fetch('/api/v2/reports?limit=200').then(r=>r.json()),
     fetch('/api/v2/issues?limit=200&status=all').then(r=>r.json()),
     fetch('/api/v2/agents').then(r=>r.json()),
@@ -11011,6 +11018,10 @@ async function loadAll(){
   if(tr.status==='fulfilled'){
     const tv=tr.value;
     tasks=parseTasksApiResponse(tv);
+  }
+  if(subr.status==='fulfilled'){
+    const sv=subr.value;
+    taskSubmissions=Array.isArray(sv)?sv:(Array.isArray(sv?.submissions)?sv.submissions:[]);
   }
   if(dr.status==='fulfilled'&&dr.value){
     applyDiagnosticsPayload(dr.value);
@@ -12100,15 +12111,19 @@ async function sendChatAsTask(){
     return;
   }
   _taskCreateInFlight=true;
-  if(btn){btn.disabled=true;btn.textContent=t('msg.submitting')||'提交中…';}
+  if(btn){btn.disabled=true;btn.textContent='正在审查任务书…';}
   try{
     const attachments=await resolvePendingAttachments(_taskPendingAttachments);
     const r=await fetch('/api/v2/tasks',{
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:{'Content-Type':'application/json','Idempotency-Key':'panel-'+Date.now()+'-'+Math.random().toString(36).slice(2)},
       body:JSON.stringify({subject:subj,body,priority:prio,attachments})
     });
     const d=await r.json();
+    if(d.decision==='rejected'||d.code==='TASK_SPEC_INVALID'){
+      showRejectedTaskSubmission(d,msg);
+      return;
+    }
     if(d.ok){
       document.getElementById('taskSubj').value='';
       document.getElementById('taskBody').value='';
@@ -12277,12 +12292,12 @@ async function submitDirectDispatch(){
   const parentTaskId=childTaskId;
   const btn=document.getElementById('dd-submit-btn');
   _taskCreateInFlight=true;
-  if(btn){btn.disabled=true;btn.textContent=t('msg.submitting')||'提交中…';}
+  if(btn){btn.disabled=true;btn.textContent='正在审查任务书…';}
   try{
     const attachments=await resolvePendingAttachments(_ddPendingAttachments);
     const r=await fetch('/api/v2/tasks',{
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:{'Content-Type':'application/json','Idempotency-Key':'panel-dd-'+Date.now()+'-'+Math.random().toString(36).slice(2)},
       body:JSON.stringify({
         subject,body:bodyRaw,priority:prio,attachments,
         relation_mode:relationMode,
@@ -12292,6 +12307,11 @@ async function submitDirectDispatch(){
       })
     });
     const d=await r.json().catch(()=>({}));
+    if(d.decision==='rejected'||d.code==='TASK_SPEC_INVALID'){
+      closeDirectDispatchModal();
+      showRejectedTaskSubmission(d,smsg);
+      return;
+    }
     if(r.ok||d.ok){
       closeDirectDispatchModal();
       showToast(t('toast.taskCreated',{file:d.filename||''}),'#4ade80',4000);
@@ -14644,8 +14664,13 @@ function taskIdsMatchingRootArchiveTab(taskList){
 }
 
 /** 任务页可见池：tab 仅判主线 root；子任务跟链，不按自身 archive/done 单独过滤 */
+function isLegacyRejectedFormalTask(task){
+  const id=taskIdPrefix(task?.filename||task?.task_id||'');
+  if(!id)return false;
+  return taskSubmissions.some(row=>row?.legacy_anomaly&&String(row.formal_task_id||'').toUpperCase()===String(id).toUpperCase());
+}
 function taskPageVisiblePoolBase(){
-  const pool=taskPageBasePool();
+  const pool=taskPageBasePool().filter(task=>!isLegacyRejectedFormalTask(task));
   const fullList=dashboardTaskList(tasks);
   const selectedRoot=Boolean(window._taskThreadFilter);
   if(taskArchiveTab==='all'){
@@ -18445,8 +18470,189 @@ function _renderTaskTimeline(){
   });
 }
 
+function setTaskPrimaryTab(tab){
+  taskPrimaryTab=tab==='submissions'?'submissions':'formal';
+  if(taskPrimaryTab==='submissions'&&!selectedTaskSubmissionId&&taskSubmissions.length){
+    selectedTaskSubmissionId=taskSubmissions[0].submission_id||'';
+  }
+  renderTaskPage();
+}
+
+function syncTaskPrimaryTabChrome(){
+  const review=taskPrimaryTab==='submissions';
+  document.getElementById('task-primary-formal')?.classList.toggle('on',!review);
+  document.getElementById('task-primary-submissions')?.classList.toggle('on',review);
+  const blocked=taskSubmissions.filter(row=>['rejected','failed','formalization_failed'].includes(String(row.status))).length;
+  const badge=document.getElementById('task-submission-badge');
+  if(badge){
+    badge.textContent=String(blocked);
+    badge.style.display=blocked?'inline-flex':'none';
+  }
+  for(const id of ['tp-thread-select','tp-search','task-archive-tabs','tp-agent-status-bar','tp-operator-wrap','task-view-switch']){
+    const el=document.getElementById(id);
+    if(el)el.style.display=review?'none':'';
+  }
+  const board=document.getElementById('task-submission-board');
+  const scroll=document.getElementById('task-main-scroll');
+  const kanban=document.getElementById('task-kanban-board');
+  const timeline=document.getElementById('task-timeline-board');
+  if(board)board.style.display=review?'block':'none';
+  if(review){
+    if(scroll)scroll.style.display='none';
+    if(kanban)kanban.style.display='none';
+    if(timeline)timeline.style.display='none';
+    document.getElementById('task-detail-panel')?.style.setProperty('display','none');
+  }else{
+    syncTaskViewModeChrome();
+  }
+}
+
+function submissionStatusLabel(status){
+  return ({
+    draft:'草稿',checking:'审查中',accepted:'已通过',rejected:'已拒绝',
+    failed:'审查失败',abandoned:'已放弃',formalizing:'正式化中',
+    created:'已生成正式任务',formalization_failed:'正式化失败'
+  })[status]||status||'未知';
+}
+
+function submissionStatusColor(status){
+  if(status==='created'||status==='accepted')return '#4ade80';
+  if(status==='rejected'||status==='failed'||status==='formalization_failed')return '#fca5a5';
+  if(status==='abandoned')return 'var(--text3)';
+  return '#fbbf24';
+}
+
+function renderTaskSubmissionBoard(){
+  const host=document.getElementById('task-submission-board');
+  if(!host)return;
+  if(!taskSubmissions.length){
+    host.innerHTML='<div class="fl-empty">暂无投递审查记录</div>';
+    return;
+  }
+  if(!selectedTaskSubmissionId||!taskSubmissions.some(row=>row.submission_id===selectedTaskSubmissionId)){
+    selectedTaskSubmissionId=taskSubmissions[0].submission_id||'';
+  }
+  const selected=taskSubmissions.find(row=>row.submission_id===selectedTaskSubmissionId)||taskSubmissions[0];
+  const cards=taskSubmissions.map(row=>{
+    const findings=Array.isArray(row.blocking_findings)?row.blocking_findings.length:0;
+    return `<button type="button" onclick="selectedTaskSubmissionId='${esc(row.submission_id)}';renderTaskSubmissionBoard()"
+      style="display:block;width:100%;text-align:left;margin:0 0 8px;padding:12px;border-radius:10px;border:1px solid ${row.submission_id===selected?.submission_id?'#60a5fa':'var(--border)'};background:var(--bg2);color:var(--text);cursor:pointer">
+      <div style="display:flex;gap:8px;align-items:center">
+        <strong style="flex:1">${esc(row.subject||'未命名投递')}</strong>
+        ${row.legacy_anomaly?'<span style="color:#fbbf24">旧版异常</span>':''}
+        <span style="color:${submissionStatusColor(row.status)}">${esc(submissionStatusLabel(row.status))}</span>
+      </div>
+      <div style="margin-top:6px;font-size:12px;color:var(--text3)">${esc(row.submission_id)} · revision ${Number(row.admission_revision||0)}${findings?' · '+findings+' 个阻塞项':''}</div>
+    </button>`;
+  }).join('');
+  const findings=(selected?.blocking_findings||[]).map((finding,index)=>`
+    <div style="margin-top:10px;padding:12px;border:1px solid rgba(248,113,113,.35);border-radius:9px;background:rgba(127,29,29,.12)">
+      <div style="font-weight:700;color:#fca5a5">${index+1}. ${esc(finding.id||'BLOCKING_FINDING')}${finding.field?' · '+esc(finding.field):''}</div>
+      <div style="margin-top:6px">${esc(finding.message||'')}</div>
+      ${finding.expected?`<div style="margin-top:6px"><span style="color:var(--text3)">期望：</span>${esc(String(finding.expected))}</div>`:''}
+      ${finding.actual?`<div style="margin-top:4px"><span style="color:var(--text3)">实际：</span>${esc(Array.isArray(finding.actual)?finding.actual.join(', '):String(finding.actual))}</div>`:''}
+      ${finding.suggested_fix?`<div style="margin-top:4px;color:#93c5fd"><span style="color:var(--text3)">修复建议：</span>${esc(finding.suggested_fix)}</div>`:''}
+    </div>`).join('');
+  const editable=selected&&!selected.legacy_anomaly&&['rejected','failed','formalization_failed'].includes(selected.status);
+  const legacyOptionLabels={
+    convert_to_submission:'转为新的投递记录后修订',
+    mark_legacy_invalid:'标记为旧版无效任务并保留审计',
+    admin_manual_cleanup:'由 ADMIN 人工清理旧任务文件',
+  };
+  const legacyOptions=selected?.legacy_anomaly?`
+    <div style="margin-top:12px;padding:12px;border:1px solid rgba(251,191,36,.35);border-radius:9px;background:rgba(120,53,15,.12)">
+      <div style="font-weight:700;color:#fbbf24">旧版异常拒绝记录</div>
+      <div style="margin-top:6px;color:var(--text3)">该文件不会作为正常正式任务展示，Runtime 已持续阻止调度、唤醒和 Session 创建。</div>
+      <div style="margin-top:8px">处置选项：${esc((selected.migration_options||[]).map(option=>legacyOptionLabels[option]||option).join('；'))}</div>
+      <div style="margin-top:6px;font-size:12px;color:var(--text3)">原文件：${esc(selected.legacy_task_path||'')}</div>
+    </div>`:'';
+  const history=(selected?.history||[]).slice().reverse().map(entry=>`
+    <div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:12px;color:var(--text3)">
+      ${esc(entry.at||'')} · ${esc(submissionStatusLabel(entry.status))} · revision ${Number(entry.admission_revision||0)}
+    </div>`).join('');
+  host.innerHTML=`<div style="display:grid;grid-template-columns:minmax(260px,34%) minmax(420px,1fr);gap:16px;min-height:calc(100vh - 180px)">
+    <section><div style="font-size:13px;color:var(--text3);margin-bottom:10px">所有投递记录（不会混入正式任务账本）</div>${cards}</section>
+    <section style="border:1px solid var(--border);border-radius:12px;background:var(--bg2);padding:16px;overflow:auto">
+      <div style="display:flex;gap:10px;align-items:center">
+        <h2 style="margin:0;flex:1">${esc(selected?.subject||'投递详情')}</h2>
+        <span style="color:${submissionStatusColor(selected?.status)}">${esc(submissionStatusLabel(selected?.status))}</span>
+      </div>
+      <div style="margin-top:8px;font-size:12px;color:var(--text3)">${esc(selected?.submission_id||'')} · 正式任务 ${esc(selected?.formal_task_id||'未生成')} · digest ${esc((selected?.content_digest||'').slice(0,16))}</div>
+      ${selected?.error?`<div style="margin-top:10px;color:#fca5a5">${esc(selected.error)}</div>`:''}
+      ${legacyOptions}
+      ${findings||'<div style="margin-top:14px;color:#4ade80">当前没有阻塞项。</div>'}
+      <div style="margin-top:16px"><label style="display:block;margin-bottom:5px;color:var(--text3)">任务标题</label>
+        <input id="submission-revise-subject" class="ci" value="${esc(selected?.subject||'')}" ${editable?'':'disabled'} style="width:100%">
+      </div>
+      <div style="margin-top:10px"><label style="display:block;margin-bottom:5px;color:var(--text3)">任务正文</label>
+        <textarea id="submission-revise-body" class="ci" rows="12" ${editable?'':'disabled'} style="width:100%;min-height:220px">${esc(selected?.draft_body||'')}</textarea>
+      </div>
+      ${editable?`<div style="display:flex;gap:8px;margin-top:12px">
+        <button class="hbtn blue" onclick="reviseTaskSubmissionFromPanel('${esc(selected.submission_id)}')">修订并重新审查</button>
+        <button class="hbtn" onclick="abandonTaskSubmissionFromPanel('${esc(selected.submission_id)}')" style="color:#fca5a5">放弃投递</button>
+      </div>`:''}
+      <details style="margin-top:18px"><summary style="cursor:pointer;color:var(--text3)">审查历史 (${(selected?.history||[]).length})</summary>${history}</details>
+    </section>
+  </div>`;
+}
+
+async function reviseTaskSubmissionFromPanel(submissionId){
+  const subject=(document.getElementById('submission-revise-subject')?.value||'').trim();
+  const body=(document.getElementById('submission-revise-body')?.value||'').trim();
+  if(!subject||!body){showToast('请填写任务标题和正文','#fbbf24');return;}
+  showToast('正在审查修订后的任务书…','#60a5fa',2500);
+  try{
+    const response=await fetch('/api/v2/task-submissions/'+encodeURIComponent(submissionId)+'/revise',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({subject,body})
+    });
+    const payload=await response.json().catch(()=>({}));
+    if(payload.submission){
+      const index=taskSubmissions.findIndex(row=>row.submission_id===submissionId);
+      if(index>=0)taskSubmissions[index]=payload.submission;
+    }
+    await loadAll();
+    taskPrimaryTab='submissions';
+    selectedTaskSubmissionId=submissionId;
+    renderTaskPage();
+    showToast(payload.created?'审查通过，已生成正式任务':'仍有阻塞项，请按详情继续修订',payload.created?'#4ade80':'#fca5a5',5000);
+  }catch(error){showToast('重新审查失败：'+String(error?.message||error),'#fca5a5',5000);}
+}
+
+async function abandonTaskSubmissionFromPanel(submissionId){
+  if(!confirm('确认放弃这次投递？该记录会保留用于审计。'))return;
+  const response=await fetch('/api/v2/task-submissions/'+encodeURIComponent(submissionId)+'/abandon',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  const payload=await response.json().catch(()=>({}));
+  if(!response.ok){showToast(payload.error||'放弃失败','#fca5a5');return;}
+  await loadAll();
+  taskPrimaryTab='submissions';
+  selectedTaskSubmissionId=submissionId;
+  renderTaskPage();
+}
+
+function showRejectedTaskSubmission(payload,messageNode){
+  if(payload?.submission){
+    const index=taskSubmissions.findIndex(row=>row.submission_id===payload.submission.submission_id);
+    if(index>=0)taskSubmissions[index]=payload.submission;else taskSubmissions.unshift(payload.submission);
+    selectedTaskSubmissionId=payload.submission.submission_id;
+  }
+  taskPrimaryTab='submissions';
+  if(messageNode){
+    messageNode.textContent='任务书未通过准入审查，未生成正式 TASK。请在“投递审查”中查看并修订。';
+    messageNode.style.cssText='display:block;color:var(--red)';
+  }
+  if(typeof navTo==='function')navTo('tasks');
+  renderTaskPage();
+  showToast('任务书未通过审查；没有生成正式任务。','#fca5a5',6000);
+}
+
 function renderTaskPage(){
   if(curPage==='reports'){renderReportPage();return;}
+  syncTaskPrimaryTabChrome();
+  if(taskPrimaryTab==='submissions'){
+    renderTaskSubmissionBoard();
+    tpScheduleTaskPageLayoutSync();
+    return;
+  }
   renderDiagnosticsPanel();
   syncThreadBoardChrome();
   syncTaskThreadSelect();
