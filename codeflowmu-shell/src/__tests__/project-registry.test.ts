@@ -12,6 +12,7 @@ import { test } from "node:test";
 
 import {
   loadProjectRegistry,
+  projectsRegistryPath,
   resolveActiveProjectRoot,
   resolveRuntimeStartupProjectRoot,
   saveProjectRegistry,
@@ -55,7 +56,7 @@ test("project-registry round-trip and switch active id", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("Open restart uses persisted external project instead of install bootstrap root", () => {
+test("instance project root wins over registry during restart", () => {
   const dir = mkdtempSync(join(tmpdir(), "cf-open-switch-"));
   const regPath = join(dir, "projects-registry.json");
   const installRoot = join(dir, "codeflowmu-shell");
@@ -74,11 +75,54 @@ test("Open restart uses persisted external project instead of install bootstrap 
     );
 
     assert.equal(
-      resolveRuntimeStartupProjectRoot(installRoot, null, regPath),
+      resolveRuntimeStartupProjectRoot({
+        instanceProjectRoot: externalEmptyProject,
+        openEditionBootstrapRoot: installRoot,
+        registryPath: regPath,
+      }),
       externalEmptyProject,
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("current code root wins over a global registry from another clone", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cf-candidate-root-"));
+  const regPath = join(dir, "projects-registry.json");
+  const stableRoot = join(dir, "stable");
+  const candidateRoot = join(dir, "candidate");
+  mkdirSync(stableRoot, { recursive: true });
+  mkdirSync(candidateRoot, { recursive: true });
+  saveProjectRegistry(
+    "stable",
+    [{ id: "stable", name: "stable", root: stableRoot }],
+    regPath,
+  );
+  assert.equal(
+    resolveRuntimeStartupProjectRoot({
+      discoveredBootstrapRoot: candidateRoot,
+      globalBootstrapRoot: stableRoot,
+      registryPath: regPath,
+    }),
+    candidateRoot,
+  );
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("default registry path is isolated by runtime instance id", () => {
+  const previous = process.env.CODEFLOWMU_RUNTIME_INSTANCE_ID;
+  try {
+    process.env.CODEFLOWMU_RUNTIME_INSTANCE_ID = "cfm-a";
+    const a = projectsRegistryPath();
+    process.env.CODEFLOWMU_RUNTIME_INSTANCE_ID = "cfm-b";
+    const b = projectsRegistryPath();
+    assert.notEqual(a, b);
+    assert.match(a.replaceAll("\\", "/"), /instances\/cfm-a\/projects-registry\.json$/);
+    assert.match(b.replaceAll("\\", "/"), /instances\/cfm-b\/projects-registry\.json$/);
+  } finally {
+    if (previous === undefined) delete process.env.CODEFLOWMU_RUNTIME_INSTANCE_ID;
+    else process.env.CODEFLOWMU_RUNTIME_INSTANCE_ID = previous;
   }
 });
 

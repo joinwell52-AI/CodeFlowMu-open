@@ -172,6 +172,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
   50%{box-shadow:0 0 0 2px rgba(15,23,42,.8),0 0 18px rgba(34,197,94,.7)}}
 .hstxt{font-size:15px;color:var(--text3);white-space:nowrap}
 .hteam{font-size:16px;color:var(--text2);font-weight:600}
+.hruntime{display:flex;flex-direction:column;gap:1px;min-width:0;max-width:360px;
+  padding:3px 8px;border:1px solid rgba(96,165,250,.22);border-radius:6px;
+  background:rgba(15,23,42,.52);font-family:"Fira Code",monospace}
+.hruntime-main{font-size:12px;font-weight:800;color:#93c5fd;white-space:nowrap}
+.hruntime-sub{font-size:10px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hruntime.alert{border-color:rgba(239,68,68,.7);background:rgba(127,29,29,.18)}
+.hruntime.alert .hruntime-main,.hruntime.alert .hruntime-sub{color:#fca5a5}
+@media(max-width:1200px){.hruntime{max-width:220px}.hruntime-sub{display:none}}
 .ml{margin-left:auto}
 .hbtn{font-size:16px;padding:5px 12px;border-radius:20px;cursor:pointer;
   background:var(--card2);border:1px solid var(--bd);color:var(--text2);
@@ -2572,6 +2580,10 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
   <div class="hsep"></div>
   <span class="hteam" id="hteam">—</span>
   <span id="hdr-proj-badge" onclick="navTo('settings');setSettingsTab('projects')" data-i18n-title="hdr.projBadgeTitle">codeflowmu</span>
+  <div class="hruntime" id="hdr-runtime-instance" title="Runtime instance">
+    <span class="hruntime-main" id="hdr-runtime-main">Runtime · —</span>
+    <span class="hruntime-sub" id="hdr-runtime-root">instance: — · Gateway: —</span>
+  </div>
   <div class="ml" style="display:flex;align-items:center;gap:8px">
     <span id="uptxt"></span>
     <button class="hbtn" id="hdr-refresh" onclick="refreshCurrentPanelView(this)"></button>
@@ -29814,9 +29826,42 @@ function initIcons(){
   applyLangHeaderIcons();
 }
 
+async function refreshRuntimeInstanceHeader(){
+  const box=document.getElementById('hdr-runtime-instance');
+  const main=document.getElementById('hdr-runtime-main');
+  const sub=document.getElementById('hdr-runtime-root');
+  if(!box||!main||!sub)return;
+  try{
+    const d=await fetch('/api/v2/health',{cache:'no-store'}).then(r=>r.json());
+    const role=String(d.instance_role||'runtime');
+    const roleLabel=role.charAt(0).toUpperCase()+role.slice(1);
+    const instanceId=String(d.instance_id||'—');
+    const shortId=instanceId.length>28?instanceId.slice(0,28):instanceId;
+    const gateway=d.gateway_enabled?(d.gateway_instance_id||'enabled'):'disabled';
+    const alerts=Array.isArray(d.isolation_alerts)?d.isolation_alerts:[];
+    main.textContent=`${roleLabel} · ${d.panelPort||'—'}`;
+    sub.textContent=`${d.projectRoot||'—'} · instance: ${shortId} · Gateway: ${gateway}`;
+    box.title=[
+      d.projectRoot||'',
+      `instance: ${instanceId}`,
+      `registry: ${d.registry_path||'—'}`,
+      `runtime: ${d.runtime_data_root||'—'}`,
+      `Gateway: ${gateway}`,
+      ...alerts
+    ].filter(Boolean).join('\n');
+    box.classList.toggle('alert',alerts.length>0);
+  }catch{
+    main.textContent='Runtime · disconnected';
+    sub.textContent='instance: — · Gateway: —';
+    box.classList.add('alert');
+  }
+}
+
 initIcons();
 startGitAutoRefresh();
 loadProjects();
+refreshRuntimeInstanceHeader();
+setInterval(refreshRuntimeInstanceHeader,15000);
 // Restore persisted think console on load
 (function restoreThinkConsole(){
   if(!tcEntries.length)return;

@@ -134,7 +134,7 @@ workspace/
 - `node_modules/`
 - `.venv/` / `venv/`
 - `.env` / `.env.*`
-- `.codeflowmu/mobile-gateway.json`
+- `.codeflowmu/mobile-gateway.example.json`
 - `projects/`
 - 旧版 `workspace/`
 - 用户添加的外部项目目录

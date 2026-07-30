@@ -35,6 +35,11 @@ export interface TeamMemberConfig {
 export interface TeamConfig {
   team_name?: string;
   panel_port?: number;
+  runtime_instance?: {
+    role?: string;
+    isolation?: "project" | "user";
+    gateway?: boolean;
+  };
   members: TeamMemberConfig[];
   [key: string]: unknown;
 }

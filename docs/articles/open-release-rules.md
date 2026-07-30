@@ -114,7 +114,7 @@ Agent session/checkpoint
 3. **发布包是干净产品，不是旧安装快照。** 发行树只能包含应用代码、公开文档、公开协议资产和一个已初始化但没有历史数据的默认项目模板。
 4. **当前项目是唯一运行根。** 用户首次启动后，安装器从干净模板生成已初始化的 `projects/newproject`；已有注册表中的绝对路径（包括旧版 `workspace/<项目>`）优先。用户主动切换项目后，Runtime、MCP、Watcher、ledger 和 Agent cwd 才切换到该项目。
 5. **安装代码不可被 Agent 持久修改。** Open 不削减 Agent 的正常工具能力；运行时自保护壳负责把发行版代码维持在启动基线，业务开发仍以 Panel 当前项目根为工作上下文。
-6. **Runtime 状态按真实项目根隔离。** Open 的 Agent 注册、sdk_agent_id、session 与 inbox 数据写入当前项目 `.codeflowmu/runtime`；禁止仅按 `newproject` slug 复用用户全局 Runtime 状态。
+6. **Runtime 状态按实例隔离。** Open 每套安装生成不进入 Git 的 `instance_id`；Agent 注册、sdk_agent_id、session 与 inbox 数据写入 `%USERPROFILE%\.codeflowmu\instances\<instance_id>\`，禁止按 `newproject` slug、项目目录名或另一套安装复用 Runtime 状态。
 
 ## 3. 五种目录与职责
 
@@ -257,6 +257,8 @@ release/open-dev-team/CodeFlowMu
 ```text
 .codeflowmu/projects-registry.json
 .codeflowmu/runtime/
+.codeflowmu/instance.json
+.codeflowmu/mobile-gateway.json
 .codeflowmu/report-watcher/
 fcop/chat/
 fcop/logs/
@@ -637,7 +639,7 @@ API 立即派发、watcher、周期对账和恢复队列可能属于不同 `Task
 - [ ] 任务和报告为空。
 - [ ] 环境检查显示 `newproject` 已初始化且可直接使用，不引用旧项目。
 - [ ] 第一次聊天或派单产生的文件只写入 `newproject`。
-- [ ] Runtime 数据目录为当前项目 `.codeflowmu/runtime`，全新安装不读取同名旧项目的 agent/session。
+- [ ] Runtime 数据目录为 `%USERPROFILE%\.codeflowmu\instances\<instance_id>\`，全新安装不读取同名旧项目或另一套安装的 agent/session。
 
 ### 9.3 多项目与沙箱
 

@@ -6,9 +6,12 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, test } from "node:test";
+import { afterEach, beforeEach, test } from "node:test";
 
-import { saveMobileGatewayConfig } from "../mobile/mobileGatewayConfig.ts";
+import {
+  loadMobileGatewayConfig,
+  saveMobileGatewayConfig,
+} from "../mobile/mobileGatewayConfig.ts";
 import {
   classifyForwardLog,
   getMobileGatewayStatus,
@@ -79,6 +82,7 @@ function makeProjectWithGatewayConfig(): string {
     mode: "local_gateway",
     gateway_url: "ws://127.0.0.1:5262/gateway/pc",
     public_base_url: "http://127.0.0.1:5262",
+    runtime_instance_id: "cfm-client-test",
     instance_id: "pc_test_inst",
     instance_secret: "secret_test_redact_me",
     auto_connect: true,
@@ -93,9 +97,20 @@ function makeProjectWithConfig(config: Parameters<typeof saveMobileGatewayConfig
   return root;
 }
 
+const previousRuntimeInstanceId = process.env.CODEFLOWMU_RUNTIME_INSTANCE_ID;
+
+beforeEach(() => {
+  process.env.CODEFLOWMU_RUNTIME_INSTANCE_ID = "cfm-client-test";
+});
+
 afterEach(() => {
   stopMobileGatewayClient();
   resetMobileGatewayClientForTests();
+  if (previousRuntimeInstanceId === undefined) {
+    delete process.env.CODEFLOWMU_RUNTIME_INSTANCE_ID;
+  } else {
+    process.env.CODEFLOWMU_RUNTIME_INSTANCE_ID = previousRuntimeInstanceId;
+  }
 });
 
 test("isMobileApiForwardPath allows only /api/v2/mobile/*", () => {
@@ -111,6 +126,7 @@ test("does not connect or retry an unconfigured Gateway", async () => {
     mode: "official_demo_limited",
     gateway_url: "wss://example.invalid/codeflowmu/gateway/pc",
     public_base_url: "https://example.invalid/codeflowmu",
+    runtime_instance_id: "cfm-client-test",
     instance_id: "pc_unconfigured",
     instance_secret: "secret_unconfigured",
     auto_connect: true,
@@ -181,6 +197,32 @@ test("client sends pc_hello and becomes online after pc_hello_ack", async () => 
   for (const line of logs) {
     assert.equal(line.includes("secret_test_redact_me"), false);
   }
+});
+
+test("replaced connection stops reconnecting and preserves credentials for alerting", async () => {
+  const root = makeProjectWithGatewayConfig();
+  let ws = null as unknown as MockWebSocket;
+  const WebSocketImpl = class extends MockWebSocket {
+    constructor(url: string) {
+      super(url);
+      ws = this;
+    }
+  };
+
+  startMobileGatewayClient({
+    projectRoot: root,
+    panelPort: 5999,
+    WebSocketImpl: WebSocketImpl as unknown as typeof MockWebSocket,
+  });
+
+  await wait(20);
+  ws!.emit("close", { code: 1000, reason: "replaced" });
+
+  const persisted = loadMobileGatewayConfig(root);
+  assert.ok(persisted);
+  assert.equal(persisted!.instance_id, "pc_test_inst");
+  assert.equal(persisted!.instance_secret, "secret_test_redact_me");
+  assert.equal(getMobileGatewayStatus().last_error, "replaced");
 });
 
 test("http_request forwards mobile paths to local panel", async () => {

@@ -47,7 +47,6 @@
  */
 
 import { existsSync } from "node:fs";
-import { homedir as _homedir } from "node:os";
 import { dirname, join, resolve as pathResolve, basename as pathBasename } from "node:path";
 
 import {
@@ -83,12 +82,27 @@ import { startWebPanel, type WebPanelHandle } from "./web-panel.ts";
 import { readFcopJsonMeta, readShellVersion } from "./fcop-env-probe.ts";
 import { ensureAdoptedFromSource } from "./fcop-adopted-bootstrap.ts";
 import { resolveRuntimeStartupProjectRoot } from "./project-registry.ts";
+import {
+  ensureRuntimeInstance,
+  loadRuntimeInstance,
+  parseRuntimeLaunchArgs,
+  runtimeInstanceBelongsHere,
+  runtimeInstanceRegistryPath,
+  runtimeInstanceStateRoot,
+  type RuntimeInstanceRecord,
+} from "./runtime-instance.ts";
+import {
+  acquireRuntimeWriterLocks,
+  type RuntimeWriterLockHandle,
+} from "./runtime-writer-lock.ts";
 import { resolveTeamConfigRoot } from "./team-model-config.ts";
 import { fileURLToPath } from "node:url";
 
 const SHELL_PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /** Shell semver — always from codeflowmu-shell/package.json (not Python fcop). */
 const VERSION = readShellVersion(SHELL_PKG_ROOT);
+let runtimeWriterLock: RuntimeWriterLockHandle | null = null;
+let activeRuntimeInstance: RuntimeInstanceRecord | null = null;
 
 interface ShellLogger {
   info: (msg: string) => void;
@@ -289,14 +303,16 @@ function resolveOpenEditionHostRoot(): string | null {
 }
 
 async function main(): Promise<void> {
-  // The mother application owns one Mobile Gateway identity. Switching the
-  // active development project must not switch Gateway endpoint/credentials.
-  if (
-    process.env["CODEFLOW_OPEN_EDITION"] !== "1" &&
-    !process.env["CODEFLOWMU_HOST_ROOT"]?.trim()
-  ) {
-    process.env["CODEFLOWMU_HOST_ROOT"] = pathResolve(dirname(SHELL_PKG_ROOT));
-  }
+  const launchArgs = parseRuntimeLaunchArgs();
+  const hostRoot = pathResolve(
+    process.env["CODEFLOWMU_HOST_ROOT"]?.trim() ||
+      resolveOpenEditionHostRoot() ||
+      dirname(SHELL_PKG_ROOT),
+  );
+  process.env["CODEFLOWMU_HOST_ROOT"] = hostRoot;
+  const priorDataDirOverride = Boolean(
+    launchArgs.dataDir || process.env["CODEFLOW_DATA_DIR"]?.trim(),
+  );
 
   // ── 0. Early-read codeflowmu.team.json for panel_port + project slug ─
   // Done before loadConfig() so panel_port is available before Runtime.create.
@@ -305,16 +321,34 @@ async function main(): Promise<void> {
   const _bootstrapProjectRoot = (() => {
     let d = pathResolve(process.cwd());
     for (let i = 0; i < 4; i++) {
-      if (existsSync(join(d, "codeflowmu.team.json"))) return d;
+      if (
+        existsSync(join(d, "codeflowmu.team.json")) ||
+        existsSync(join(d, "fcop", "fcop.json"))
+      ) {
+        return d;
+      }
       const p = dirname(d); if (p === d) break; d = p;
     }
     return null;
   })();
   const _openEditionBootstrapRoot = resolveOpenEditionStartupProjectRoot();
-  const _earlyProjectRoot = resolveRuntimeStartupProjectRoot(
-    _openEditionBootstrapRoot,
-    _bootstrapProjectRoot,
-  );
+  const existingInstance = loadRuntimeInstance(hostRoot);
+  const localInstance = existingInstance &&
+      runtimeInstanceBelongsHere(existingInstance, hostRoot)
+    ? existingInstance
+    : null;
+  const existingRegistryPath = localInstance
+    ? runtimeInstanceRegistryPath(localInstance.instance_id)
+    : undefined;
+  let _earlyProjectRoot = resolveRuntimeStartupProjectRoot({
+    explicitProjectRoot: launchArgs.projectRoot,
+    instanceProjectRoot: localInstance?.project_root,
+    discoveredBootstrapRoot: _bootstrapProjectRoot,
+    openEditionBootstrapRoot: _openEditionBootstrapRoot,
+    globalBootstrapRoot: hostRoot,
+    registryPath: launchArgs.registryPath ?? existingRegistryPath,
+  });
+  if (!_earlyProjectRoot) _earlyProjectRoot = hostRoot;
   const _teamConfigRootResolution = resolveTeamConfigRoot({
     openEditionHostRoot: resolveOpenEditionHostRoot(),
     codeflowmuHostRoot: process.env["CODEFLOWMU_HOST_ROOT"],
@@ -325,30 +359,50 @@ async function main(): Promise<void> {
   const _teamMeta = _teamConfigRoot
     ? await readTeamMeta(_teamConfigRoot).catch(() => null)
     : null;
-  const _panelPort = _teamMeta?.panelPort ?? 18766;
+  const _panelPort = launchArgs.panelPort ?? _teamMeta?.panelPort ?? 18766;
+  activeRuntimeInstance = ensureRuntimeInstance({
+    hostRoot,
+    projectRoot: _earlyProjectRoot,
+    panelPort: _panelPort,
+    instanceRole: launchArgs.instanceRole ?? _teamMeta?.runtimeInstanceRole,
+  });
+  process.env["CODEFLOWMU_RUNTIME_INSTANCE_ID"] =
+    activeRuntimeInstance.instance_id;
+  process.env["CODEFLOWMU_INSTANCE_ROLE"] =
+    activeRuntimeInstance.instance_role;
+  process.env["CODEFLOW_PROJECTS_REGISTRY"] =
+    launchArgs.registryPath ??
+    runtimeInstanceRegistryPath(activeRuntimeInstance.instance_id);
+  if (launchArgs.noGateway || _teamMeta?.runtimeGatewayEnabled === false) {
+    process.env["CODEFLOWMU_GATEWAY_DISABLED"] = "1";
+  }
+  if (launchArgs.dataDir) {
+    process.env["CODEFLOW_DATA_DIR"] = launchArgs.dataDir;
+  } else if (!process.env["CODEFLOW_DATA_DIR"]?.trim()) {
+    process.env["CODEFLOW_DATA_DIR"] = runtimeInstanceStateRoot(
+      activeRuntimeInstance.instance_id,
+    );
+  }
 
   // ── 1. Resolve config (5-tier merge) ───────────────────────────────
   const cfg = loadConfig();
 
-  // Per-project data dir. Open keeps Runtime state inside the actual project
-  // root so separate installations with the same slug (usually newproject)
-  // never reuse sdk_agent_id/session state from a previous installation.
-  // Mother keeps the historical per-user slug layout for compatibility.
-  const _dataDirOverridden = !!(
-    process.env["CODEFLOW_DATA_DIR"] ||
-    process.argv.some((a) => a.startsWith("--data-dir"))
-  );
-  const _projectSlug = _earlyProjectRoot
-    ? pathResolve(_earlyProjectRoot).split(/[\\/]/).pop()?.toLowerCase().replace(/[^a-z0-9-]/g, "-") ?? "default"
-    : "default";
-  const dataDir = _dataDirOverridden
-    ? cfg.dataDir
-    : process.env["CODEFLOW_OPEN_EDITION"] === "1" && _earlyProjectRoot
-      ? join(pathResolve(_earlyProjectRoot), ".codeflowmu", "runtime")
-    : join(_homedir(), ".codeflowmu", "projects", _projectSlug);
+  // Runtime data is instance-scoped. Project slugs are display-only and must
+  // never be used as the persistence identity.
+  const _dataDirOverridden = priorDataDirOverride;
+  const dataDir = cfg.dataDir;
 
   const inboxDir = join(dataDir, "inbox");
   const skillsDir = join(dataDir, "skills");
+
+  runtimeWriterLock = acquireRuntimeWriterLocks({
+    instanceId: activeRuntimeInstance.instance_id,
+    panelPort: _panelPort,
+    projectRoot: _earlyProjectRoot,
+    dataDir,
+    includeFcopLock: existsSync(join(_earlyProjectRoot, "fcop")),
+  });
+  process.once("exit", () => runtimeWriterLock?.release());
 
   // ── 2. Ensure all data dirs exist BEFORE Runtime.create ────────────
   await ensureDataDirs(dataDir);
@@ -383,7 +437,8 @@ async function main(): Promise<void> {
   // Panel's persisted active project is authoritative.  `_earlyProjectRoot`
   // already resolves it for the mother edition; the Open startup shim passes
   // the same value through CODEFLOW_OPEN_DEFAULT_PROJECT_ROOT.
-  let workspaceRoot = _earlyProjectRoot ?? _resolvedWorkspaceRoot;
+  let workspaceRoot: string | null =
+    _earlyProjectRoot ?? _resolvedWorkspaceRoot;
   let monorepoFallback = false;
   const openEditionHostMode = process.env["CODEFLOW_OPEN_EDITION"] === "1";
   const openEditionStartupRoot = resolveOpenEditionStartupProjectRoot();
@@ -710,6 +765,14 @@ async function main(): Promise<void> {
         : undefined,
       sdkAdapter,
       dataDir,
+      runtimeInstance: {
+        instanceId: activeRuntimeInstance.instance_id,
+        instanceRole: activeRuntimeInstance.instance_role,
+        hostRoot,
+        registryPath: process.env["CODEFLOW_PROJECTS_REGISTRY"]!,
+        dataRoot: dataDir,
+        writerLockPaths: runtimeWriterLock?.paths ?? [],
+      },
       agentRecycle: cfg.agentRecycle,
       reloadOnProjectSwitch: true,
       fcopRuntime: {
@@ -730,7 +793,16 @@ async function main(): Promise<void> {
   console.log("===========================================================");
   console.log(`codeflowmu v${VERSION} — internal preview`);
   console.log("===========================================================");
-  console.log(`Data dir       : ${dataDir}${_dataDirOverridden ? " (explicit)" : ` (project: ${_projectSlug})`}`);
+  console.log(
+    `Runtime instance: ${activeRuntimeInstance.instance_id} ` +
+      `(${activeRuntimeInstance.instance_role})`,
+  );
+  console.log(`Instance root  : ${hostRoot}`);
+  console.log(`Registry       : ${process.env["CODEFLOW_PROJECTS_REGISTRY"]}`);
+  console.log(
+    `Data dir       : ${dataDir}` +
+      (_dataDirOverridden ? " (explicit)" : " (runtime instance)"),
+  );
   if (workspaceRoot) {
     console.log(`Workspace root : ${workspaceRoot}`);
   }
@@ -904,6 +976,8 @@ async function main(): Promise<void> {
       planScheduler.stop();
       fixedTaskRunner.stop();
       await runtime.stop();
+      runtimeWriterLock?.release();
+      runtimeWriterLock = null;
       // P4 Day 1.4: tear down pythonia child Python process. Without this
       // Node would hang on shutdown because pythonia keeps a stdio-piped
       // child alive (see fcop-client.ts `__killRealPythonChildForTests`
@@ -988,6 +1062,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
+  runtimeWriterLock?.release();
+  runtimeWriterLock = null;
   console.error("[shell] fatal:", err);
   process.exit(1);
 });

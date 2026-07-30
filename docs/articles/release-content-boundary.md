@@ -23,7 +23,7 @@ The open release uses a full replacement strategy, while preserving local state:
 - `node_modules/`
 - `.venv/` and `venv/`
 - `.env` and `.env.*`
-- `.codeflowmu/mobile-gateway.json`
+- `.codeflowmu/mobile-gateway.example.json`
 - `workspace/`
 - external project roots outside `CodeFlowMu-open`
 

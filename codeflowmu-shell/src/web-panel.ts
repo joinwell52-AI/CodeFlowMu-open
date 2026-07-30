@@ -57,6 +57,7 @@ import {
   loadProjectRegistry,
   saveProjectRegistry,
 } from "./project-registry.ts";
+import { updateRuntimeInstanceProjectRoot } from "./runtime-instance.ts";
 import { formatDevelopmentProjectContextBlock } from "./project-context-prompt.ts";
 import {
   listCursorModels,
@@ -233,7 +234,12 @@ import { resolveTaskRelPath } from "./panel-task-path.ts";
 import { createMobileRoutes } from "./mobile/index.ts";
 import { filterReachableLanInterfaces } from "./mobile/lanNetwork.ts";
 import { formatMobileSseEvent } from "./mobile/mobileEvents.ts";
-import { isMobileGatewayOnline, startMobileGatewayClient, stopMobileGatewayClient } from "./mobile/mobileGatewayClient.ts";
+import {
+  getMobileGatewayStatus,
+  isMobileGatewayOnline,
+  startMobileGatewayClient,
+  stopMobileGatewayClient,
+} from "./mobile/mobileGatewayClient.ts";
 import {
   ingestMobileSse,
   ingestMobileThinking,
@@ -645,6 +651,11 @@ function persistProjectStore(): void {
       root,
     })),
   );
+  const active = projectStore.get(activeProjectId);
+  const hostRoot = process.env["CODEFLOWMU_HOST_ROOT"]?.trim();
+  if (active?.root && hostRoot) {
+    updateRuntimeInstanceProjectRoot(hostRoot, active.root);
+  }
 }
 
 function samePath(a: string, b: string): boolean {
@@ -2479,12 +2490,54 @@ function wpParseGitStatusPorcelainZ(stdout: string): WpGitStatusFile[] {
   return files;
 }
 
+async function wpReadIgnoredGitPaths(cwd: string, paths: string[]): Promise<Set<string>> {
+  const uniquePaths = [...new Set(paths.filter((file) => file.length > 0))];
+  if (uniquePaths.length === 0) return new Set<string>();
+
+  return await new Promise<Set<string>>((resolve, reject) => {
+    const child = spawnProc(
+      "git",
+      ["check-ignore", "--no-index", "-z", "--stdin"],
+      {
+        cwd,
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf-8");
+    child.stderr.setEncoding("utf-8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      // git check-ignore exits with 1 when none of the paths are ignored.
+      if (code !== 0 && code !== 1) {
+        reject(new Error(stderr.trim() || `git check-ignore exited with code ${String(code)}`));
+        return;
+      }
+      resolve(new Set(stdout.split("\0").filter((file) => file.length > 0)));
+    });
+    child.stdin.end(`${uniquePaths.join("\0")}\0`, "utf-8");
+  });
+}
+
 async function wpStageGitPaths(cwd: string, paths: string[]): Promise<void> {
+  const uniquePaths = [...new Set(paths.filter((file) => file.length > 0))];
+  const ignoredPaths = await wpReadIgnoredGitPaths(cwd, uniquePaths);
+  const stageablePaths = uniquePaths.filter((file) => !ignoredPaths.has(file));
+  if (stageablePaths.length === 0) return;
+
   const pathspecFile = join(
     os.tmpdir(),
     `codeflowmu-git-pathspec-${process.pid}-${Date.now()}.txt`,
   );
-  const literalPathspecs = paths.map((file) => `:(literal)${file}`);
+  const literalPathspecs = stageablePaths.map((file) => `:(literal)${file}`);
   writeFileSync(pathspecFile, `${literalPathspecs.join("\0")}\0`, "utf-8");
   try {
     await execFile(
@@ -2527,6 +2580,21 @@ function wpIsMotherRuntimeLedgerPath(file: string): boolean {
     value.startsWith(".codeflowmu/report-watcher/") ||
     value === ".codeflowmu/skill-invocations.jsonl" ||
     (value.startsWith("workspace/") && value !== "workspace/README.md")
+  );
+}
+
+function wpIsMotherRuntimeLedgerStatusFile(file: WpGitStatusFile): boolean {
+  const value = file.path.replace(/\\/g, "/");
+  if (wpIsMotherRuntimeLedgerPath(value)) return true;
+  if (file.status !== "?") return false;
+
+  // `git status` normally collapses a wholly untracked runtime directory to
+  // `fcop/` or `.codeflowmu/`. Keep that safety boundary after asking Git to
+  // enumerate individual files, while allowing the repository-safe example.
+  if (value.startsWith("fcop/")) return true;
+  return (
+    value.startsWith(".codeflowmu/") &&
+    value !== ".codeflowmu/mobile-gateway.example.json"
   );
 }
 
@@ -3936,6 +4004,14 @@ export function buildWebPanelApp(
     fcopRuntime?: FcopRuntimeSeed;
     /** Resolved data dir for agent-recycle-state.json (auto-recycle baseline). */
     dataDir?: string;
+    runtimeInstance?: {
+      instanceId: string;
+      instanceRole: string;
+      hostRoot: string;
+      registryPath: string;
+      dataRoot: string;
+      writerLockPaths: string[];
+    };
     /** Agent auto-recycle when idle after N sessions (default: disabled). */
     agentRecycle?: AgentRecycleConfig;
     /** Stop the old Runtime and automatically reload Shell after project switch. */
@@ -4160,6 +4236,25 @@ export function buildWebPanelApp(
     const pkgReport = buildFcopPackageVersionReport(pyProbe, opts.fcopRuntime);
     const protocolUpgrade = buildProtocolUpgradeReport(root, pyProbe);
     const adoptedPending = loadAdoptedPendingReport(root);
+    const gatewayStatus = getMobileGatewayStatus();
+    const gatewayEnabled =
+      process.env["CODEFLOWMU_GATEWAY_DISABLED"] !== "1" &&
+      gatewayStatus.last_error !== "GATEWAY_DISABLED";
+    const isolationAlerts: string[] = [];
+    if (
+      gatewayEnabled &&
+      opts.runtimeInstance?.instanceId &&
+      gatewayStatus.runtime_instance_id &&
+      gatewayStatus.runtime_instance_id !== opts.runtimeInstance.instanceId
+    ) {
+      isolationAlerts.push("Gateway identity is bound to another Runtime instance");
+    }
+    if (gatewayStatus.last_error === "INSTANCE_ALREADY_CONNECTED") {
+      isolationAlerts.push("Gateway identity is already active in another process");
+    }
+    if (opts.runtimeInstance && !opts.runtimeInstance.writerLockPaths?.length) {
+      isolationAlerts.push("Runtime writer lock is not owned");
+    }
 
     // Best-effort Python detection for health dashboard
     let pythonVersion = "未检测";
@@ -4209,6 +4304,19 @@ export function buildWebPanelApp(
       fcopDataRoot: join(root, "fcop"),
       panelPort,
       panelUrl,
+      instance_id: opts.runtimeInstance?.instanceId ?? null,
+      instance_role: opts.runtimeInstance?.instanceRole ?? null,
+      instance_host_root: opts.runtimeInstance?.hostRoot ?? null,
+      registry_path: opts.runtimeInstance?.registryPath ?? null,
+      runtime_data_root: opts.runtimeInstance?.dataRoot ?? opts.dataDir ?? null,
+      gateway_enabled: gatewayEnabled,
+      gateway_instance_id: gatewayEnabled ? gatewayStatus.instance_id : null,
+      gateway_runtime_instance_id: gatewayStatus.runtime_instance_id,
+      writer_lock: opts.runtimeInstance?.writerLockPaths?.length
+        ? "owned"
+        : "unavailable",
+      writer_lock_paths: opts.runtimeInstance?.writerLockPaths ?? [],
+      isolation_alerts: isolationAlerts,
       mem        : {
         usedMb  : Math.round(usedMem  / 1048576),
         totalMb : Math.round(totalMem / 1048576),
@@ -10451,12 +10559,12 @@ export function buildWebPanelApp(
 
       const { stdout: statusStdout } = await execFile(
         "git",
-        ["status", "--porcelain=v1", "-z"],
+        ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
         opts,
       );
       const rawStatus = String(statusStdout ?? "");
       const statusFiles = wpParseGitStatusPorcelainZ(rawStatus);
-      const productFiles = statusFiles.filter((file) => !wpIsMotherRuntimeLedgerPath(file.path));
+      const productFiles = statusFiles.filter((file) => !wpIsMotherRuntimeLedgerStatusFile(file));
       if (rawStatus.trim().length === 0 || productFiles.length === 0) {
         const gitStatus = await wpReadGitStatusPayload(cwd);
         const postDiag = await wpReadGitDiagnostics(cwd);
@@ -16501,6 +16609,14 @@ export async function startWebPanel(
     sdkAdapter?: AgentSdkAdapter;
     fcopRuntime?: FcopRuntimeSeed;
     dataDir?: string;
+    runtimeInstance?: {
+      instanceId: string;
+      instanceRole: string;
+      hostRoot: string;
+      registryPath: string;
+      dataRoot: string;
+      writerLockPaths: string[];
+    };
     agentRecycle?: AgentRecycleConfig;
     reloadOnProjectSwitch?: boolean;
     projectRuntimeReloadScheduler?: () => void;
@@ -16526,6 +16642,7 @@ export async function startWebPanel(
     sdkAdapter: opts.sdkAdapter,
     fcopRuntime: opts.fcopRuntime,
     dataDir: opts.dataDir,
+    runtimeInstance: opts.runtimeInstance,
     agentRecycle: opts.agentRecycle,
     reloadOnProjectSwitch: opts.reloadOnProjectSwitch,
     projectRuntimeReloadScheduler: opts.projectRuntimeReloadScheduler,

@@ -29,7 +29,7 @@ This is a CodeFlowMu development-team workflow above FCoP, not an FCoP core-prot
 
 CodeFlowMu Open Dev Team Edition 是 FCoP 协议治理下、通过 Cursor SDK 接口驱动的多 Agent 开发团队应用，面向本地安装、体验、二次开发和贡献。
 
-当前开源版本：`V1.1.30-open`
+当前开源版本：`V1.2.0-open`
 
 它不是母体私有仓库的完整镜像，也不是用来开发 CodeFlowMu 自身的目录。开发执行团队固定为 PM / DEV / OPS / QA；EVAL 作为独立观察者评估质量、风险与交付信号，不属于开发执行团队。
 
@@ -99,7 +99,7 @@ http://127.0.0.1:18765/
 
 公开仓库面向下载、安装、介绍和贡献。一个全新发版会由母版构建为完整开源版本包，包含源码、面板、Shell、公开文档、公开初始化源、启动器、`VERSION.json`、`RELEASES.md` 和 `UPDATE.md`。
 
-更新策略采用全量更新：应用文件整体替换，保留 `.git/`、`node_modules/`、`.venv/`、本机 `.env`、`.codeflowmu/mobile-gateway.json`、`projects/`、旧版 `workspace/` 和外部项目根。
+更新策略采用全量更新：应用文件整体替换，保留 `.git/`、`node_modules/`、`.venv/`、本机 `.env`、不进入 Git 的 `.codeflowmu/mobile-gateway.json`、`projects/`、旧版 `workspace/` 和外部项目根；仓库只发布 `.codeflowmu/mobile-gateway.example.json`。
 
 用户侧更新：
 
@@ -183,7 +183,7 @@ GitHub 仓库 About / topics 建议见 [docs/open/github-repo-about.md](docs/ope
 
 CodeFlowMu Open Dev Team Edition is an FCoP-governed multi-agent development team application driven through Cursor SDK interfaces. It is the public open-source edition for local installation, hands-on evaluation, development, and contribution.
 
-Current open edition version: `V1.1.30-open`
+Current open edition version: `V1.2.0-open`
 
 It is not a full mirror of the private mother repository, and it is not meant to develop CodeFlowMu itself. The execution team is fixed to PM / DEV / OPS / QA. EVAL is an independent observer for quality, risk, and delivery signals, not a member of the development execution chain.
 
@@ -228,7 +228,7 @@ http://127.0.0.1:18765/
 
 The first launch initializes a clean open-edition runtime state. It removes generated public runtime caches while keeping source files, Git history, `node_modules`, and `.venv`.
 
-First launch creates and initializes `projects/newproject` as the active project. `projects/` contains multiple independent CodeFlowMu team projects; each project owns its `fcop/` ledger and may use an internal `workspace/<product>` only in multi-product mode. Registered legacy `workspace/<project>` roots continue to run in place and are never moved automatically. Runtime data lives at `<active-project>/.codeflowmu/runtime`.
+First launch creates and initializes `projects/newproject` as the active project. `projects/` contains multiple independent CodeFlowMu team projects; each project owns its `fcop/` ledger and may use an internal `workspace/<product>` only in multi-product mode. Registered legacy `workspace/<project>` roots continue to run in place and are never moved automatically. Each installation owns an untracked `.codeflowmu/instance.json`, while Runtime state lives under `%USERPROFILE%\.codeflowmu\instances\<instance_id>\`.
 
 `CodeFlowMu-open` is the protected tool-install root. Agents retain full capability inside the active business project, while the install-integrity shell restores protected application code to its startup baseline. If no Cursor API Key is configured, formal TASK files remain in inbox instead of being consumed by the in-memory test adapter. A PM final REPORT automatically produces the EVAL closeout observation; the EVAL button is retained for retry or refresh.
 
@@ -236,7 +236,7 @@ First launch creates and initializes `projects/newproject` as the active project
 
 The public repository is for download, installation, introduction, and contribution. Each fresh release is built by the mother repository as a complete open-edition package with source, panel assets, Shell, public docs, public initialization sources, launcher, `VERSION.json`, `RELEASES.md`, and `UPDATE.md`.
 
-Updates use a full replacement strategy: application files are replaced as a whole, while `.git/`, `node_modules/`, `.venv/`, local `.env`, `.codeflowmu/mobile-gateway.json`, `projects/`, legacy `workspace/`, and external project roots are preserved.
+Updates use a full replacement strategy: application files are replaced as a whole, while `.git/`, `node_modules/`, `.venv/`, local `.env`, the untracked `.codeflowmu/mobile-gateway.json`, `projects/`, legacy `workspace/`, and external project roots are preserved. Only `.codeflowmu/mobile-gateway.example.json` is published.
 
 User update flow:
 

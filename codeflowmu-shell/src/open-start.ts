@@ -128,11 +128,6 @@ process.env.CODEFLOWMU_HOST_ROOT = openHostRoot;
 process.env.CODEFLOW_OPEN_PROTECTED_ROOTS = openHostRoot;
 process.env.CODEFLOW_PROJECTS_REGISTRY = projectsRegistry;
 process.env.CODEFLOW_OPEN_DEFAULT_PROJECT_ROOT = activeProjectRoot;
-process.env.CODEFLOW_DATA_DIR = join(
-  activeProjectRoot,
-  '.codeflowmu',
-  'runtime',
-);
 process.env.CODEFLOW_CURSOR_USAGE_SYNC = '0';
 
 const installIntegrityGuard = await startOpenInstallIntegrityGuard(openHostRoot);

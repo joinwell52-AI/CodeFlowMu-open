@@ -1,7 +1,7 @@
 /**
  * Panel 多产品开发根注册表（持久化到用户目录，与具体 fcop 项目根无关）。
  *
- * 路径：%USERPROFILE%/.codeflowmu/v2/projects-registry.json
+ * 路径：%USERPROFILE%/.codeflowmu/instances/<instance_id>/projects-registry.json
  * 测试可通过环境变量 CODEFLOW_PROJECTS_REGISTRY 覆盖。
  */
 
@@ -35,6 +35,18 @@ export interface LoadProjectRegistryResult {
 export function projectsRegistryPath(): string {
   const override = process.env["CODEFLOW_PROJECTS_REGISTRY"]?.trim();
   if (override) return pathResolve(override);
+  const instanceId = process.env["CODEFLOWMU_RUNTIME_INSTANCE_ID"]
+    ?.trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-");
+  if (instanceId) {
+    return pathResolve(
+      homedir(),
+      ".codeflowmu",
+      "instances",
+      instanceId,
+      "projects-registry.json",
+    );
+  }
   return pathResolve(homedir(), ".codeflowmu", "v2", "projects-registry.json");
 }
 
@@ -162,19 +174,43 @@ export function resolveActiveProjectRoot(
     : bootstrap;
 }
 
+export interface RuntimeStartupProjectRootOptions {
+  explicitProjectRoot?: string | null;
+  instanceProjectRoot?: string | null;
+  discoveredBootstrapRoot?: string | null;
+  openEditionBootstrapRoot?: string | null;
+  globalBootstrapRoot?: string | null;
+  registryPath?: string;
+}
+
 /**
  * Resolve the one project root used to construct Runtime during Shell startup.
- * Open edition supplies an install-time bootstrap root, but the persisted
- * active project remains authoritative after a Panel project switch.
+ *
+ * Priority: explicit CLI root -> local instance root -> current code markers ->
+ * Open bootstrap -> per-instance/global registry fallback.
  */
 export function resolveRuntimeStartupProjectRoot(
-  openEditionBootstrapRoot: string | null,
-  discoveredBootstrapRoot: string | null,
-  registryPath = projectsRegistryPath(),
+  options: RuntimeStartupProjectRootOptions,
 ): string | null {
-  const bootstrapRoot = openEditionBootstrapRoot ?? discoveredBootstrapRoot;
+  for (const candidate of [
+    options.explicitProjectRoot,
+    options.instanceProjectRoot,
+    options.discoveredBootstrapRoot,
+    options.openEditionBootstrapRoot,
+  ]) {
+    if (candidate?.trim() && existsSync(pathResolve(candidate))) {
+      return pathResolve(candidate);
+    }
+  }
+  const bootstrapRoot =
+    options.globalBootstrapRoot ??
+    options.openEditionBootstrapRoot ??
+    options.discoveredBootstrapRoot;
   return bootstrapRoot
-    ? resolveActiveProjectRoot(bootstrapRoot, registryPath)
+    ? resolveActiveProjectRoot(
+        bootstrapRoot,
+        options.registryPath ?? projectsRegistryPath(),
+      )
     : null;
 }
 

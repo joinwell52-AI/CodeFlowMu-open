@@ -16,7 +16,7 @@
 - Git 状态、项目配置、任务、报告、审批、聊天等基础协作流程
 - 安装说明、版本边界、网关策略和贡献引导
 - 工具根保护：公开版不能把自身目录注册为开发项目
-- 项目隔离：每个项目使用自己的 `.codeflowmu/runtime`，切换项目会同步重绑 Runtime、MCP、Watcher 和 ledger
+- 实例隔离：每套安装拥有独立 `instance_id`，注册表、Agent、Session 与 Runtime 数据位于 `%USERPROFILE%\.codeflowmu\instances\<instance_id>\`；切换项目会同步重绑 Runtime、MCP、Watcher 和 ledger
 - 关单观察：PM 最终 REPORT 自动生成 EVAL，人工按钮只负责重试或刷新
 - Gateway 边界：允许只读比较官方演示 PWA 版本，禁止从 Open 发布或覆盖线上 Gateway 静态资源
 

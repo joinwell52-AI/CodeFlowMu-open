@@ -69,8 +69,8 @@ Open 启动和切换项目时会按公开 Agent Playbook Manifest，把其中声
 以及 Manifest 投影非破坏性同步到项目根。技能库应显示 PM 5/5，且公开 Skill 包“缺包 0”；
 出现缺包通常表示项目尚未执行初始化/修复，或发行包本身未通过发布校验。
 
-每个当前项目使用自己的 `.codeflowmu/runtime` 保存 Agent 注册、SDK Agent ID、session、
-inbox 与 transcript。没有配置 Cursor API Key 时，TASK 会保留在 inbox 并显示配置提示，
+每套安装使用自己的 `%USERPROFILE%\.codeflowmu\instances\<instance_id>\` 保存 Agent 注册、
+SDK Agent ID、session、inbox 与 transcript；当前项目仍独立保存 FCoP 账本。没有配置 Cursor API Key 时，TASK 会保留在 inbox 并显示配置提示，
 不会由 `sdk-fake-*` 测试适配器空跑完成。
 
 PM 向 ADMIN 提交最终 `status=done` REPORT 后，系统自动生成 EVAL 旁路观察。

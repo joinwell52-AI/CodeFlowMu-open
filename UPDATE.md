@@ -18,7 +18,7 @@ The update process must preserve:
 - legacy `workspace/`
 - external project roots outside `CodeFlowMu-open`
 
-The install-level `.codeflowmu/mobile-gateway.json` is a product template and is replaced on update. Per-project Gateway identity and credentials remain preserved under `projects/`, legacy `workspace/`, or an external project root.
+The tracked `.codeflowmu/mobile-gateway.example.json` contains endpoint defaults only. The instance-local `.codeflowmu/mobile-gateway.json` contains Runtime-bound credentials, is ignored by Git, and is preserved locally.
 
 ## User update flow
 

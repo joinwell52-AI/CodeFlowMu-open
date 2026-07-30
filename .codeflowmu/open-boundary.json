@@ -60,7 +60,7 @@
     },
     {
       "path": "projects/<project>/.codeflowmu/**",
-      "purpose": "project local runtime state"
+      "purpose": "project-local metadata and settings"
     },
     {
       "path": "workspace/<legacy-project>/**",

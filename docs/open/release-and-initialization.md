@@ -15,7 +15,7 @@ Open Dev Team Edition 当前只提供真实 Cursor SDK 接入。供应商无关�
 
 Panel 中设为当前的项目目录是项目根的唯一真相源。切换项目后，Agent Runtime、MCP、任务/报告落盘和目录监听应同步热切换。
 
-Runtime 数据必须落在当前项目 `.codeflowmu/runtime`，不得按同名 `newproject` 复用用户全局 Agent/session。新建或添加项目时会同时投影 PM Skills manifest、Agent Playbook manifest 与公开 Skill 包。
+Runtime 数据必须按本机 `instance_id` 落在 `%USERPROFILE%\.codeflowmu\instances\<instance_id>\`，不得按同名 `newproject` 或目录 slug 复用 Agent/session。新建或添加项目时会同时投影 PM Skills manifest、Agent Playbook manifest 与公开 Skill 包。
 
 未配置真实 Cursor Provider 时，正式 TASK 保留在 inbox；公开版不得用 InMemory 测试适配器假装完成。PM 最终 REPORT 落盘后自动生成 EVAL 旁路观察，手动按钮只承担重试与刷新。
 

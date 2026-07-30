@@ -13,7 +13,7 @@ build/
 !.codeflowmu/edition-ui.json
 !.codeflowmu/nav.json
 !.codeflowmu/welcome.md
-!.codeflowmu/mobile-gateway.json
+!.codeflowmu/mobile-gateway.example.json
 !.codeflowmu/open-boundary.json
 .codeflowmu/runtime/
 .codeflowmu/report-watcher/

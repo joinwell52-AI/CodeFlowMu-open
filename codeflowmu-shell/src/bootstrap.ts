@@ -23,16 +23,24 @@ import {
   resolveEffectiveModel,
   type TeamConfig,
 } from "./team-model-config.ts";
+import { runtimeScopedAgentKey } from "./runtime-instance.ts";
 
 // ── Team config loader ────────────────────────────────────────────────────
 
-/** Read panel_port + team_name from codeflowmu.team.json without full bootstrap. */
-export async function readTeamMeta(projectRoot: string): Promise<{ panelPort: number; teamName?: string } | null> {
+/** Read startup metadata from codeflowmu.team.json without full bootstrap. */
+export async function readTeamMeta(projectRoot: string): Promise<{
+  panelPort: number;
+  teamName?: string;
+  runtimeInstanceRole?: string;
+  runtimeGatewayEnabled?: boolean;
+} | null> {
   const cfg = await loadTeamConfig(projectRoot);
   if (!cfg) return null;
   return {
     panelPort: cfg.panel_port ?? 18766,
     teamName: cfg.team_name,
+    runtimeInstanceRole: cfg.runtime_instance?.role,
+    runtimeGatewayEnabled: cfg.runtime_instance?.gateway,
   };
 }
 
@@ -190,6 +198,8 @@ export async function registerDefaultAgentKitIfEmpty(
 
   const existing = await runtime.registry.list();
   const existingIds = new Set(existing.map((a) => a.protocol.agent_id));
+  const runtimeInstanceId =
+    process.env["CODEFLOWMU_RUNTIME_INSTANCE_ID"]?.trim() || "legacy";
 
   let registered = 0;
   const governanceKit = process.env["CODEFLOW_OPEN_EDITION"] === "1" ? [] : GOVERNANCE_AGENT_KIT;
@@ -202,6 +212,13 @@ export async function registerDefaultAgentKitIfEmpty(
     }
     await runtime.registry.register({
       ...spec,
+      labels: {
+        runtime_instance_id: runtimeInstanceId,
+        instance_agent_key: runtimeScopedAgentKey(
+          runtimeInstanceId,
+          spec.agent_id,
+        ),
+      },
       node: "local" as const,
       runtime: "local" as const,
       status: "idle" as const,

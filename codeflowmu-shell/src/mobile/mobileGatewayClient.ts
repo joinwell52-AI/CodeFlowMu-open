@@ -19,6 +19,7 @@ const MANUAL_RECONNECT_DELAY_MS = 400;
 export interface MobileGatewayStatus {
   online: boolean;
   reconnecting: boolean;
+  runtime_instance_id: string | null;
   instance_id: string | null;
   last_connected_at: string | null;
   last_seen_at: string | null;
@@ -65,6 +66,7 @@ const SLOW_REQUEST_MS = 800;
 let status: MobileGatewayStatus = {
   online: false,
   reconnecting: false,
+  runtime_instance_id: null,
   instance_id: null,
   last_connected_at: null,
   last_seen_at: null,
@@ -76,6 +78,7 @@ let activeWs: WebSocketLike | null = null;
 let pingTimer: ReturnType<typeof setInterval> | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempt = 0;
+let reconnectBlocked = false;
 let stopped = true;
 let savedStartOptions: StartMobileGatewayClientOptions | null = null;
 
@@ -347,6 +350,7 @@ function handleMessage(raw: string, rt: RuntimeState): void {
         ...status,
         online: true,
         reconnecting: false,
+        runtime_instance_id: rt.config.runtime_instance_id,
         instance_id: rt.config.instance_id,
         last_connected_at: new Date().toISOString(),
         last_error: null,
@@ -358,6 +362,14 @@ function handleMessage(raw: string, rt: RuntimeState): void {
       const err = typeof data.error === "string" ? data.error : "HELLO_REJECTED";
       setOffline(err);
       logInfo(rt.log, `pc_hello_ack failed: ${err}`);
+      if (err === "INSTANCE_ALREADY_CONNECTED") {
+        reconnectBlocked = true;
+        emitGatewayLog(
+          rt.writeGatewayLog,
+          "error",
+          "Gateway identity is already connected; automatic reconnect stopped",
+        );
+      }
       activeWs?.close();
     }
     return;
@@ -405,6 +417,7 @@ function connectWs(rt: RuntimeState): void {
   status = {
     ...status,
     gateway_url: url,
+    runtime_instance_id: rt.config.runtime_instance_id,
     instance_id: rt.config.instance_id,
   };
 
@@ -424,6 +437,7 @@ function connectWs(rt: RuntimeState): void {
     ws.send(
       JSON.stringify({
         type: "pc_hello",
+        runtime_instance_id: rt.config.runtime_instance_id,
         instance_id: rt.config.instance_id,
         instance_secret: rt.config.instance_secret,
       }),
@@ -453,7 +467,16 @@ function connectWs(rt: RuntimeState): void {
     const closeMsg = code ? `disconnected code=${code} reason=${reason ?? ""}` : "disconnected";
     emitInfoOnce(runtime?.writeGatewayLog, rt.log, closeMsg);
     setOffline((reason && reason.length) ? `${reason}` : status.last_error ?? "DISCONNECTED");
-    scheduleReconnect();
+    if (reason === "replaced" || reason === "duplicate_instance_id") {
+      reconnectBlocked = true;
+      emitGatewayLog(
+        rt.writeGatewayLog,
+        "error",
+        "Duplicate Gateway identity detected; automatic reconnect stopped",
+      );
+      logInfo(rt.log, "duplicate Gateway identity detected; reconnect is blocked");
+    }
+    if (!reconnectBlocked) scheduleReconnect();
   };
 
   const onError = () => {
@@ -470,11 +493,25 @@ function beginMobileGatewayClient(opts: StartMobileGatewayClientOptions): void {
   stopped = false;
 
   const config = ensureMobileGatewayCredentials(opts.projectRoot);
+  if (process.env["CODEFLOWMU_GATEWAY_DISABLED"] === "1") {
+    status = {
+      online: false,
+      reconnecting: false,
+      runtime_instance_id: config.runtime_instance_id,
+      instance_id: config.instance_id,
+      last_connected_at: null,
+      last_seen_at: null,
+      last_error: "GATEWAY_DISABLED",
+      gateway_url: config.gateway_url,
+    };
+    return;
+  }
   const gatewayUrl = config.gateway_url.trim();
   if (!/^wss?:\/\//i.test(gatewayUrl) || /(?:^|[/:.])example\.invalid(?=[:/]|$)/i.test(gatewayUrl)) {
     status = {
       online: false,
       reconnecting: false,
+      runtime_instance_id: config.runtime_instance_id,
       instance_id: config.instance_id,
       last_connected_at: null,
       last_seen_at: null,
@@ -487,6 +524,7 @@ function beginMobileGatewayClient(opts: StartMobileGatewayClientOptions): void {
     status = {
       online: false,
       reconnecting: false,
+      runtime_instance_id: config.runtime_instance_id,
       instance_id: config.instance_id,
       last_connected_at: null,
       last_seen_at: null,
@@ -501,6 +539,7 @@ function beginMobileGatewayClient(opts: StartMobileGatewayClientOptions): void {
     status = {
       ...status,
       reconnecting: false,
+      runtime_instance_id: config.runtime_instance_id,
       instance_id: config.instance_id,
       last_error: "WEBSOCKET_UNAVAILABLE",
       gateway_url: config.gateway_url,
@@ -518,6 +557,7 @@ function beginMobileGatewayClient(opts: StartMobileGatewayClientOptions): void {
     writeGatewayLog: opts.writeGatewayLog,
   };
   reconnectAttempt = 0;
+  reconnectBlocked = false;
   logInfo(runtime.log, `starting client url=${config.gateway_url}`);
   connectWs(runtime);
 }
@@ -601,6 +641,7 @@ export function resetMobileGatewayClientForTests(): void {
   status = {
     online: false,
     reconnecting: false,
+    runtime_instance_id: null,
     instance_id: null,
     last_connected_at: null,
     last_seen_at: null,

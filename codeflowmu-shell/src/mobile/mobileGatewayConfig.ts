@@ -1,25 +1,38 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve as pathResolve } from "node:path";
+
+import {
+  defaultGatewayEnabled,
+  loadRuntimeInstance,
+} from "../runtime-instance.ts";
 
 export interface MobileGatewayConfig {
   enabled: boolean;
   mode: string;
   gateway_url: string;
   public_base_url: string;
+  runtime_instance_id: string;
   instance_id: string;
   instance_secret: string;
   auto_connect: boolean;
 }
 
 const CONFIG_REL = join(".codeflowmu", "mobile-gateway.json");
+const EXAMPLE_CONFIG_REL = join(
+  ".codeflowmu",
+  "mobile-gateway.example.json",
+);
 const ADOPTED_SERVER_TEMPLATE_REL = join(
   "adoptedSource",
   "gateway",
   "mobile-gateway.server.json",
 );
 
-type GatewayTemplate = Omit<MobileGatewayConfig, "instance_id" | "instance_secret">;
+type GatewayTemplate = Omit<
+  MobileGatewayConfig,
+  "runtime_instance_id" | "instance_id" | "instance_secret"
+>;
 
 const DEFAULT_LOCAL: GatewayTemplate = {
   enabled: true,
@@ -29,10 +42,13 @@ const DEFAULT_LOCAL: GatewayTemplate = {
   auto_connect: true,
 };
 
-export function mobileGatewayConfigPath(projectRoot: string): string {
+function mobileGatewayOwnerRoot(projectRoot: string): string {
   const hostRoot = process.env["CODEFLOWMU_HOST_ROOT"]?.trim();
-  const ownerRoot = hostRoot ? pathResolve(hostRoot) : projectRoot;
-  return join(ownerRoot, CONFIG_REL);
+  return pathResolve(hostRoot || projectRoot);
+}
+
+export function mobileGatewayConfigPath(projectRoot: string): string {
+  return join(mobileGatewayOwnerRoot(projectRoot), CONFIG_REL);
 }
 
 function adoptedServerGatewayTemplatePath(projectRoot: string): string {
@@ -44,7 +60,7 @@ function openEditionGatewayTemplatePath(): string | null {
     return null;
   }
   const hostRoot = process.env["CODEFLOW_OPEN_HOST_ROOT"]?.trim();
-  return hostRoot ? join(hostRoot, CONFIG_REL) : null;
+  return hostRoot ? join(hostRoot, EXAMPLE_CONFIG_REL) : null;
 }
 
 function parseGatewayTemplate(
@@ -116,6 +132,20 @@ function generateInstanceSecret(): string {
   return `secret_${randomBytes(24).toString("base64url")}`;
 }
 
+function currentRuntimeInstanceId(projectRoot: string): string {
+  const envId = process.env["CODEFLOWMU_RUNTIME_INSTANCE_ID"]?.trim();
+  if (envId) return envId;
+  const ownerRoot = mobileGatewayOwnerRoot(projectRoot);
+  const local = loadRuntimeInstance(ownerRoot);
+  if (local?.instance_id) return local.instance_id;
+  const normalizedOwnerRoot =
+    process.platform === "win32" ? ownerRoot.toLowerCase() : ownerRoot;
+  const digest = createHash("sha256")
+    .update(`codeflowmu-runtime-legacy-v1:${normalizedOwnerRoot}`)
+    .digest("hex");
+  return `legacy-${digest.slice(0, 24)}`;
+}
+
 export function loadMobileGatewayConfig(projectRoot: string): MobileGatewayConfig | null {
   const filePath = mobileGatewayConfigPath(projectRoot);
   if (!existsSync(filePath)) {
@@ -138,6 +168,10 @@ export function loadMobileGatewayConfig(projectRoot: string): MobileGatewayConfi
         typeof parsed.public_base_url === "string" && parsed.public_base_url.length > 0
           ? parsed.public_base_url.replace(/\/$/, "")
           : DEFAULT_LOCAL.public_base_url,
+      runtime_instance_id:
+        typeof parsed.runtime_instance_id === "string"
+          ? parsed.runtime_instance_id
+          : "",
       instance_id: typeof parsed.instance_id === "string" ? parsed.instance_id : "",
       instance_secret: typeof parsed.instance_secret === "string" ? parsed.instance_secret : "",
       auto_connect: parsed.auto_connect !== false,
@@ -158,35 +192,65 @@ export function saveMobileGatewayConfig(projectRoot: string, config: MobileGatew
 export function ensureMobileGatewayCredentials(projectRoot: string): MobileGatewayConfig {
   const existing = loadMobileGatewayConfig(projectRoot);
   const openEditionTemplate = loadOpenEditionGatewayTemplate();
+  const runtime_instance_id = currentRuntimeInstanceId(projectRoot);
+  const instanceRole =
+    process.env["CODEFLOWMU_INSTANCE_ROLE"]?.trim() || "stable";
   const base = openEditionTemplate
     ? {
         ...openEditionTemplate,
+        ...(existing
+          ? {
+              enabled: existing.enabled,
+              auto_connect: existing.auto_connect,
+            }
+          : {}),
+        runtime_instance_id: existing?.runtime_instance_id ?? "",
         instance_id: existing?.instance_id ?? "",
         instance_secret: existing?.instance_secret ?? "",
       }
     : existing ?? {
         ...resolveDefaultGatewayTemplate(projectRoot),
+        runtime_instance_id: "",
         instance_id: "",
         instance_secret: "",
       };
   let changed = existing === null;
+  const unboundLegacyCredentials =
+    base.runtime_instance_id.length === 0 &&
+    (base.instance_id.length > 0 || base.instance_secret.length > 0);
+  const copiedCredentials =
+    unboundLegacyCredentials ||
+    (base.runtime_instance_id.length > 0 &&
+      base.runtime_instance_id !== runtime_instance_id);
   const instance_id =
-    base.instance_id && base.instance_id.length > 0 ? base.instance_id : generateInstanceId();
+    !copiedCredentials && base.instance_id.length > 0
+      ? base.instance_id
+      : generateInstanceId();
   const instance_secret =
-    base.instance_secret && base.instance_secret.length > 0
+    !copiedCredentials && base.instance_secret.length > 0
       ? base.instance_secret
       : generateInstanceSecret();
-  if (instance_id !== base.instance_id || instance_secret !== base.instance_secret) {
+  if (
+    instance_id !== base.instance_id ||
+    instance_secret !== base.instance_secret ||
+    runtime_instance_id !== base.runtime_instance_id
+  ) {
     changed = true;
   }
+  const firstRunGatewayEnabled =
+    (!copiedCredentials &&
+      existing !== null &&
+      base.runtime_instance_id.length > 0) ||
+    defaultGatewayEnabled(instanceRole);
   const config: MobileGatewayConfig = {
-    enabled: base.enabled,
+    enabled: firstRunGatewayEnabled ? base.enabled : false,
     mode: base.mode,
     gateway_url: base.gateway_url,
     public_base_url: base.public_base_url,
+    runtime_instance_id,
     instance_id,
     instance_secret,
-    auto_connect: base.auto_connect,
+    auto_connect: firstRunGatewayEnabled ? base.auto_connect : false,
   };
   if (
     existing &&
@@ -202,6 +266,18 @@ export function ensureMobileGatewayCredentials(projectRoot: string): MobileGatew
     saveMobileGatewayConfig(projectRoot, config);
   }
   return config;
+}
+
+/** Recover from a confirmed duplicate live connection using the same credentials. */
+export function rotateMobileGatewayCredentials(projectRoot: string): MobileGatewayConfig {
+  const current = ensureMobileGatewayCredentials(projectRoot);
+  const rotated: MobileGatewayConfig = {
+    ...current,
+    instance_id: generateInstanceId(),
+    instance_secret: generateInstanceSecret(),
+  };
+  saveMobileGatewayConfig(projectRoot, rotated);
+  return rotated;
 }
 
 export function resolvePublicBaseUrl(projectRoot: string): string {

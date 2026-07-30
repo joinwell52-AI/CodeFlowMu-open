@@ -1,6 +1,6 @@
 # Install CodeFlowMu Open Dev Team Edition
 
-Version: `V1.1.30-open`
+Version: `V1.2.0-open`
 
 ## Requirements
 
@@ -57,7 +57,7 @@ After the panel opens:
 5. Switch explicitly to the target project and wait for Runtime adaptation to finish before publishing a TASK.
 6. Run environment check; initialize or repair FCoP only when the panel reports it is required.
 
-Tasks, reports, FCoP files, attachments, agent sessions, and Runtime state are written to the active project root. Runtime uses `<active-project>/.codeflowmu/runtime`; projects with the same folder name never share Agent/session state.
+Tasks, reports, FCoP files, and attachments are written to the active project root. Each installation creates an untracked `.codeflowmu/instance.json`; Agent/session Runtime state is stored under `%USERPROFILE%\.codeflowmu\instances\<instance_id>\`, so copied installs and same-named projects never share Runtime identity.
 
 The application install root is protected by an integrity shell, without reducing Agent capabilities inside the active project. If the Cursor API Key is missing, tasks remain in inbox and the panel asks for configuration. PM final reports automatically generate EVAL closeout observations; the manual EVAL action is a retry/refresh control.
 
@@ -82,7 +82,7 @@ The update preserves:
 - `node_modules/`
 - `.venv/` and `venv/`
 - `.env` and `.env.*`
-- `.codeflowmu/mobile-gateway.json`
+- `.codeflowmu/mobile-gateway.example.json`（端点模板；本机凭据另存且不进入 Git）
 - `projects/`
 - legacy `workspace/`
 - external project roots outside `CodeFlowMu-open`

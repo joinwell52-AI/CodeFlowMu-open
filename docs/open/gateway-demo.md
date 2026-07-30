@@ -11,7 +11,7 @@ Gateway 在公开版里的定位是：
 默认配置文件：
 
 ```text
-.codeflowmu/mobile-gateway.json
+.codeflowmu/mobile-gateway.example.json
 ```
 
 默认值为 `enabled: true`、`auto_connect: true`，并使用官方受限 Gateway 地址。

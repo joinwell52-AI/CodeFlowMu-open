@@ -28,7 +28,7 @@
 
 CodeFlowMu Open Dev Team Edition 是 FCoP 协议治理下、通过 Cursor SDK 接口驱动的多 Agent 开发团队应用，也是 CodeFlowMu 的公开开源版本。
 
-当前开源版本：`V1.1.30-open`
+当前开源版本：`V1.2.0-open`
 
 它面向四件事：
 
@@ -121,7 +121,7 @@ npm start
 http://127.0.0.1:18765/
 ```
 
-首次启动会生成并初始化 `projects/newproject`，它立即就是当前项目，无需先手工建立目录。`projects/` 是多个 CodeFlowMu 团队项目的集合目录；项目内的 `fcop/` 保存协作与任务账本，仅多产物布局使用项目内部 `workspace/<产品名>`。旧版 `workspace/<项目名>` 会按注册表中的绝对路径继续原地运行，不会自动移动或覆盖。你也可以进入「设置 → 项目」新建独立项目或登记已有源码；切换完成后再发布 TASK。Runtime 位于 `<当前项目>/.codeflowmu/runtime`。
+首次启动会生成并初始化 `projects/newproject`，它立即就是当前项目，无需先手工建立目录。`projects/` 是多个 CodeFlowMu 团队项目的集合目录；项目内的 `fcop/` 保存协作与任务账本，仅多产物布局使用项目内部 `workspace/<产品名>`。旧版 `workspace/<项目名>` 会按注册表中的绝对路径继续原地运行，不会自动移动或覆盖。你也可以进入「设置 → 项目」新建独立项目或登记已有源码；切换完成后再发布 TASK。每套安装拥有不进入 Git 的 `.codeflowmu/instance.json`，Runtime 状态位于 `%USERPROFILE%\.codeflowmu\instances\<instance_id>\`。
 
 `CodeFlowMu-open` 是工具安装根。Agent 在当前业务项目内保持完整开发能力；如果它尝试修改安装代码，自保护壳会恢复启动基线。未配置 Cursor API Key 时，正式 TASK 会留在 inbox 并提示配置，不会被测试适配器假装执行。
 
@@ -153,7 +153,7 @@ http://127.0.0.1:18765/
 - `node_modules/`
 - `.venv/` 和 `venv/`
 - `.env`、`.env.*`
-- `.codeflowmu/mobile-gateway.json`
+- `.codeflowmu/mobile-gateway.example.json`（仅端点模板；本机凭据文件不进入 Git）
 - `projects/`（新项目集合）
 - `workspace/`（旧版项目集合，仅兼容保留）
 - `CodeFlowMu-open` 外部的项目根
