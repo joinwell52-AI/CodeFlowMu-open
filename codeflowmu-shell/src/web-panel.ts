@@ -354,6 +354,7 @@ import {
   loadReviewDecisionPolicy,
   saveReviewDecisionPolicy,
   buildReviewGateApprovalCard,
+  FcopProjectClient,
   findReportPathForTaskOnDisk,
   REVIEW_GATE_RED_FLAG_LABELS,
   DownstreamAutoNudge,
@@ -367,10 +368,13 @@ import {
   evaluatePmSummaryGate,
   OperationApprovalError,
   OperationApprovalService,
+  buildFilesystemCleanupApprovalInput,
+  executeFilesystemCleanupApproval,
   type CapabilityRequest,
   type OperationApprovalStatus,
 } from "@codeflowmu/runtime";
 import { buildGitPushApprovalInput, executeGitPushApproval } from "./git-operation-approval.ts";
+import { buildProjectGraphProjection } from "./project-graph-projection.ts";
 import { confirmOperationDecisionNative, confirmOperationImpactNative } from "./native-operation-confirm.ts";
 import { RuntimeEventFileLogger, RUNTIME_EVENT_TYPES } from "./runtime-event-logger.ts";
 import { ensureFcopLogsAssetLayout } from "./logs-paths.ts";
@@ -2466,6 +2470,8 @@ export type WpGitStatusPayload = {
   rawUncommitted?: number;
   productUncommitted?: number;
   runtimeUncommitted?: number;
+  workspaceUncommitted?: number;
+  workingTreeClean?: boolean;
   remoteRef?: string;
   remoteHead?: { hash: string; short: string };
   ahead?: number;
@@ -2601,9 +2607,13 @@ function wpIsMotherRuntimeLedgerPath(file: string): boolean {
     value === ".codeflowmu/panel-ui-lang.json" ||
     value.startsWith(".codeflowmu/pm-governance/") ||
     value.startsWith(".codeflowmu/report-watcher/") ||
-    value === ".codeflowmu/skill-invocations.jsonl" ||
-    (value.startsWith("workspace/") && value !== "workspace/README.md")
+    value === ".codeflowmu/skill-invocations.jsonl"
   );
+}
+
+function wpIsMotherWorkspacePath(file: string): boolean {
+  const value = file.replace(/\\/g, "/");
+  return value.startsWith("workspace/") && value !== "workspace/README.md";
 }
 
 function wpIsMotherRuntimeLedgerStatusFile(file: WpGitStatusFile): boolean {
@@ -2621,9 +2631,21 @@ function wpIsMotherRuntimeLedgerStatusFile(file: WpGitStatusFile): boolean {
   );
 }
 
+function wpIsMotherWorkspaceStatusFile(file: WpGitStatusFile): boolean {
+  return wpIsMotherWorkspacePath(file.path);
+}
+
+function wpIsMotherCommitExcludedStatusFile(file: WpGitStatusFile): boolean {
+  return (
+    wpIsMotherRuntimeLedgerStatusFile(file) ||
+    wpIsMotherWorkspaceStatusFile(file)
+  );
+}
+
 export const wpIsMotherRuntimeLedgerPathForTests = wpIsMotherRuntimeLedgerPath;
 export const wpIsMotherRuntimeLedgerStatusFileForTests =
   wpIsMotherRuntimeLedgerStatusFile;
+export const wpIsMotherWorkspacePathForTests = wpIsMotherWorkspacePath;
 
 async function wpReadGitStatusPayload(cwd: string): Promise<WpGitStatusPayload> {
   const opts = { cwd, timeout: 10000 };
@@ -2645,8 +2667,9 @@ async function wpReadGitStatusPayload(cwd: string): Promise<WpGitStatusPayload> 
   const subject = spaceIdx > 0 ? logLine.slice(spaceIdx + 1) : "";
   const files = wpParseGitStatusPorcelainZ(statusOut.stdout as string);
   const runtimeFiles = files.filter(wpIsMotherRuntimeLedgerStatusFile);
+  const workspaceFiles = files.filter(wpIsMotherWorkspaceStatusFile);
   const productFiles = files.filter(
-    (file) => !wpIsMotherRuntimeLedgerStatusFile(file),
+    (file) => !wpIsMotherCommitExcludedStatusFile(file),
   );
   const tracking = await wpReadGitTrackingState(cwd, branch || "main", hash);
 
@@ -2658,6 +2681,8 @@ async function wpReadGitStatusPayload(cwd: string): Promise<WpGitStatusPayload> 
     rawUncommitted: files.length,
     productUncommitted: productFiles.length,
     runtimeUncommitted: runtimeFiles.length,
+    workspaceUncommitted: workspaceFiles.length,
+    workingTreeClean: files.length === 0,
     ...tracking,
     files,
   };
@@ -7872,7 +7897,833 @@ export function buildWebPanelApp(
     }
   });
 
+  /**
+   * GET /api/v2/project-graph — single backend projection for tree, board and timeline.
+   */
+  app.get("/api/v2/project-graph", async (_req: Request, res: Response) => {
+    try {
+      const root = projectRoot();
+      const [{ tasks }, { reports }, activeSessions] = await Promise.all([
+        listTasksFromLedgerAuto(root, { limit: 5000 }),
+        listReportsFromLedgerAuto(root, { limit: 5000 }),
+        runtime.sessionManager.listActive(),
+      ]);
+      const issues = _wpScanIssueFiles(
+        join(root, "fcop", "issues"),
+        { status: "all", limit: 5000, projectRoot: root },
+      );
+      const reviewsDir = runtime.reviewWriter.reviewsDir;
+      const reviews = existsSync(reviewsDir)
+        ? readdirSync(reviewsDir)
+            .filter((file) => file.startsWith("REVIEW-") && file.endsWith(".md"))
+            .map((file) => {
+              try {
+                return {
+                  filename: file,
+                  ..._wpParseFmYaml(readFileSync(join(reviewsDir, file), "utf8")),
+                };
+              } catch {
+                return { filename: file, status: "parse_failed" };
+              }
+            })
+        : [];
+      const approvals = operationApprovalService().list({ limit: 1000 });
+      const runtimeEvents = activeSessions.map((session) => ({
+        id: session.protocol.session_id,
+        task_id: session.protocol.task_id,
+        role: session.protocol.agent_id,
+        status: session.protocol.status,
+        created_at: session.protocol.started_at,
+        updated_at: session.runtime_last_event_at,
+      }));
+      res.json(
+        buildProjectGraphProjection({
+          projectId: activeProjectId || pathBasename(root) || "active-project",
+          projectName: pathBasename(root) || "CodeFlowMu",
+          tasks: tasks as Array<Record<string, unknown>>,
+          reports: reports as Array<Record<string, unknown>>,
+          issues,
+          reviews,
+          approvals: approvals as unknown as Array<Record<string, unknown>>,
+          runtimeEvents,
+        }),
+      );
+    } catch (error) {
+      sendError(
+        res,
+        500,
+        "PROJECT_GRAPH_FAILED",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  });
+
   /** GET /api/v2/sessions/current — current runtime session metadata */
+  app.post("/api/v2/pm/tools/inspect-task-spec", async (req: Request, res: Response) => {
+    try {
+      const subject = String(req.body?.subject ?? "").trim();
+      const body = String(req.body?.body_markdown ?? "").trim();
+      if (!subject || !body) {
+        sendError(res, 400, "MISSING_FIELDS", "subject and body_markdown are required");
+        return;
+      }
+      const taskId =
+        String(req.body?.task_id ?? req.body?.current_task_id ?? "").trim() ||
+        "TASK-PREVIEW-PM";
+      const priority = String(req.body?.priority ?? "P2").toUpperCase();
+      const threadKey =
+        String(req.body?.thread_key ?? "").trim() || `preview:${taskId}`;
+      const frontmatter: Record<string, unknown> = {
+        protocol: "fcop",
+        version: "1.0",
+        task_id: taskId,
+        sender: "ADMIN",
+        recipient: "PM",
+        priority,
+        thread_key: threadKey,
+        ...(req.body?.parent ? { parent: String(req.body.parent) } : {}),
+      };
+      const previewTask = {
+        filepath: join(projectRoot(), ".codeflowmu", "previews", `${taskId}.md`),
+        filename: `${taskId}-ADMIN-to-PM.md`,
+        frontmatter,
+        body: `# ${subject}\n\n${body}`,
+        sender: "ADMIN",
+        recipient: "PM",
+        priority,
+        thread_key: threadKey,
+      } as Awaited<ReturnType<typeof TaskParser.parse>>;
+      const result = await evaluateTaskSpecAdmission({
+        projectRoot: projectRoot(),
+        task: previewTask,
+      });
+      res.json(
+        req.body?.view === "capability_matrix"
+          ? {
+              ok: true,
+              task_id: result.task_id,
+              decision: result.decision,
+              capability_matrix: result.capability_matrix,
+            }
+          : { ok: true, ...result },
+      );
+    } catch (error) {
+      sendError(
+        res,
+        400,
+        "TASK_SPEC_INSPECTION_FAILED",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  });
+
+  app.get("/api/v2/pm/tools/project-baseline", async (_req: Request, res: Response) => {
+    try {
+      const root = resolveGitRoot();
+      const hasGit = wpHasOwnGitRepository(root);
+      const status = hasGit ? await wpReadGitStatusPayload(root) : null;
+      const head = hasGit
+        ? (await execFile("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim()
+        : "";
+      let packageVersion = "";
+      try {
+        const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+          version?: string;
+        };
+        packageVersion = String(pkg.version ?? "");
+      } catch {
+        packageVersion = "";
+      }
+      res.json({
+        ok: true,
+        project_root: root,
+        project_id: activeProjectId || pathBasename(root),
+        git: {
+          available: hasGit,
+          branch: hasGit ? await wpReadGitBranch(root) : "",
+          head,
+          status,
+        },
+        version: packageVersion,
+        dependencies: {
+          package_json: existsSync(join(root, "package.json")),
+          npm_lock: existsSync(join(root, "package-lock.json")),
+          pnpm_lock: existsSync(join(root, "pnpm-lock.yaml")),
+          node_modules: existsSync(join(root, "node_modules")),
+        },
+        inspected_at: new Date().toISOString(),
+      });
+    } catch (error) {
+      sendError(
+        res,
+        500,
+        "PROJECT_BASELINE_FAILED",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  });
+
+  app.get("/api/v2/pm/tools/runtime-topology", async (_req: Request, res: Response) => {
+    try {
+      const activeSessions = await runtime.sessionManager.listActive();
+      const root = projectRoot();
+      res.json({
+        ok: true,
+        panel: {
+          pid: process.pid,
+          port: Number(process.env["CODEFLOWMU_PANEL_PORT"] ?? 18766),
+          url: process.env["CODEFLOWMU_PANEL_URL"] ?? "",
+          uptime_s: Math.floor(process.uptime()),
+        },
+        gateway: {
+          url:
+            process.env["CODEFLOWMU_GATEWAY_URL"] ??
+            process.env["CODEFLOWMU_MOBILE_GATEWAY_URL"] ??
+            "",
+          configured: Boolean(
+            process.env["CODEFLOWMU_GATEWAY_URL"] ??
+              process.env["CODEFLOWMU_MOBILE_GATEWAY_URL"],
+          ),
+        },
+        data_root: root,
+        active_project_id: activeProjectId || "",
+        registry: [...projectStore.values()].map((project) => ({
+          id: project.id,
+          name: project.name,
+          root: project.root,
+          active: project.id === activeProjectId,
+        })),
+        sessions: activeSessions.map((session) => ({
+          session_id: session.protocol.session_id,
+          task_id: session.protocol.task_id,
+          agent_id: session.protocol.agent_id,
+          status: session.protocol.status,
+        })),
+        writer_lock_root: join(root, ".codeflowmu"),
+        quarantine_root: join(root, ".codeflowmu", "quarantine"),
+        inspected_at: new Date().toISOString(),
+      });
+    } catch (error) {
+      sendError(
+        res,
+        500,
+        "RUNTIME_TOPOLOGY_FAILED",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  });
+
+  app.post("/api/v2/pm/tools/create-child-task", async (req: Request, res: Response) => {
+    try {
+      const recipient = String(req.body?.recipient ?? "").trim().toUpperCase();
+      const subject = String(req.body?.subject ?? "").trim();
+      const body = String(req.body?.body_markdown ?? "").trim();
+      const parent = String(req.body?.parent ?? "").trim();
+      const threadKey = String(req.body?.thread_key ?? "").trim();
+      const acceptor = String(req.body?.acceptor ?? "").trim().toUpperCase();
+      const priority = String(req.body?.priority ?? "P2").trim().toUpperCase();
+      if (
+        !["DEV", "QA", "OPS"].includes(recipient) ||
+        !subject ||
+        !body ||
+        !parent ||
+        !threadKey ||
+        !acceptor ||
+        !["P0", "P1", "P2", "P3"].includes(priority)
+      ) {
+        sendError(
+          res,
+          400,
+          "INVALID_CHILD_TASK",
+          "recipient, subject, body_markdown, parent, thread_key, priority and acceptor are required",
+        );
+        return;
+      }
+      const dependsOn = Array.isArray(req.body?.depends_on)
+        ? req.body.depends_on.map(String).map((value: string) => value.trim()).filter(Boolean)
+        : [];
+      const client = await FcopProjectClient.create({
+        projectRoot: projectRoot(),
+        ensureInitialized: false,
+      });
+      const task = await client.writeTask({
+        sender: "PM",
+        recipient,
+        priority: priority as "P0" | "P1" | "P2" | "P3",
+        subject,
+        body:
+          `${body}\n\n## 验收与依赖\n\n` +
+          `- 验收人：${acceptor}\n` +
+          `- depends_on：${dependsOn.length ? dependsOn.join(", ") : "无"}`,
+        parent,
+        thread_key: threadKey,
+        references: [...new Set([parent, ...dependsOn])],
+      });
+      invalidateLedgerFreshCache(projectRoot());
+      res.status(201).json({
+        ok: true,
+        task,
+        parent,
+        thread_key: threadKey,
+        depends_on: dependsOn,
+        acceptor,
+      });
+    } catch (error) {
+      sendError(
+        res,
+        409,
+        "CHILD_TASK_CREATE_FAILED",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  });
+
+  app.post(
+    "/api/v2/pm/tools/request-operation-approval",
+    async (req: Request, res: Response) => {
+      try {
+        const operationType = String(req.body?.operation_type ?? "").trim();
+        const targets = Array.isArray(req.body?.targets)
+          ? req.body.targets.map(String).map((value: string) => value.trim()).filter(Boolean)
+          : [];
+        const reason = String(req.body?.reason ?? "").trim();
+        const rollbackPlan = String(req.body?.rollback_plan ?? "").trim();
+        if (!operationType || !targets.length || !reason || !rollbackPlan) {
+          sendError(
+            res,
+            400,
+            "INVALID_APPROVAL_REQUEST",
+            "operation_type, targets, reason and rollback_plan are required",
+          );
+          return;
+        }
+        const normalizedOperation = operationType.toLowerCase();
+        const callerDigest = String(req.body?.operation_digest ?? "").trim();
+        const requestedExpiresAt = Date.parse(String(req.body?.expires_at ?? ""));
+        const requestedExpiresInSeconds = Number.isFinite(requestedExpiresAt)
+          ? Math.max(60, Math.floor((requestedExpiresAt - Date.now()) / 1000))
+          : undefined;
+        const approvalSubject: CapabilityRequest["subject"] = {
+          actor: String(req.body?.actor ?? "PM-01"),
+          role: "PM",
+          project_id: activeProjectId || pathBasename(projectRoot()),
+          ...(req.body?.session_id
+            ? { session_id: String(req.body.session_id) }
+            : {}),
+          task_id: String(
+            req.body?.task_id ?? req.body?.current_task_id ?? "",
+          ),
+        };
+        if (["filesystem.cleanup", "cleanup"].includes(normalizedOperation)) {
+          const preview =
+            req.body?.preview_manifest &&
+            typeof req.body.preview_manifest === "object"
+              ? (req.body.preview_manifest as Record<string, unknown>)
+              : {};
+          const preparedInput = buildFilesystemCleanupApprovalInput({
+            projectRoot: projectRoot(),
+            targets,
+            subject: approvalSubject,
+            mode:
+              String(preview["mode"] ?? "quarantine") === "permanent_delete"
+                ? "permanent_delete"
+                : "quarantine",
+            retentionDays: Number(preview["retention_days"] ?? 14),
+            reason,
+          });
+          preparedInput.recovery = rollbackPlan;
+          preparedInput.effects.unshift(
+            String(req.body?.expected_benefit ?? "").trim(),
+          );
+          if (requestedExpiresInSeconds) {
+            preparedInput.expires_in_seconds = requestedExpiresInSeconds;
+          }
+          const prepared = operationApprovalService().prepare(preparedInput);
+          const operationDigest =
+            "approval" in prepared
+              ? prepared.approval.operation_digest
+              : prepared.operation_digest;
+          res.status(prepared.decision === "REQUIRE_APPROVAL" ? 202 : 200).json({
+            ok: true,
+            ...prepared,
+            operation_digest: operationDigest,
+            ...(callerDigest
+              ? { caller_digest_matches: callerDigest === operationDigest }
+              : {}),
+          });
+          return;
+        }
+        if (normalizedOperation === "git.push") {
+          const preparedInput = await buildGitPushApprovalInput({
+            cwd: resolveGitRoot(),
+            branch: targets[0]!,
+            subject: approvalSubject,
+          });
+          preparedInput.reason = reason;
+          preparedInput.recovery = rollbackPlan;
+          preparedInput.effects.unshift(
+            String(req.body?.expected_benefit ?? "").trim(),
+          );
+          if (requestedExpiresInSeconds) {
+            preparedInput.expires_in_seconds = requestedExpiresInSeconds;
+          }
+          const prepared = operationApprovalService().prepare(preparedInput);
+          const operationDigest =
+            "approval" in prepared
+              ? prepared.approval.operation_digest
+              : prepared.operation_digest;
+          res.status(prepared.decision === "REQUIRE_APPROVAL" ? 202 : 200).json({
+            ok: true,
+            ...prepared,
+            operation_digest: operationDigest,
+            ...(callerDigest
+              ? { caller_digest_matches: callerDigest === operationDigest }
+              : {}),
+          });
+          return;
+        }
+        sendError(
+          res,
+          501,
+          "EXECUTOR_NOT_REGISTERED",
+          `operation approval executor is not registered: ${operationType}`,
+        );
+        return;
+      } catch (error) {
+        sendOperationApprovalError(res, error);
+      }
+    },
+  );
+
+  app.post("/api/v2/pm/tools/capture-evidence", (req: Request, res: Response) => {
+    try {
+      const taskId = String(
+        req.body?.task_id ?? req.body?.current_task_id ?? "",
+      ).trim();
+      const evidenceType = String(req.body?.evidence_type ?? "").trim();
+      const summary = String(req.body?.summary ?? "").trim();
+      const source = String(req.body?.source ?? "").trim();
+      if (!taskId || !evidenceType || !summary || !source) {
+        sendError(
+          res,
+          400,
+          "INVALID_EVIDENCE",
+          "task_id, evidence_type, summary and source are required",
+        );
+        return;
+      }
+      const capturedAt =
+        String(req.body?.captured_at ?? "").trim() || new Date().toISOString();
+      const row = {
+        evidence_id: `EVIDENCE-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
+        task_id: taskId,
+        evidence_type: evidenceType,
+        summary,
+        source,
+        sha256: String(req.body?.sha256 ?? "").trim() || undefined,
+        environment_id:
+          String(req.body?.environment_id ?? "").trim() ||
+          `${os.hostname()}:${process.pid}`,
+        actor: String(req.body?.actor ?? "PM-01"),
+        session_id: String(req.body?.session_id ?? "") || undefined,
+        captured_at: capturedAt,
+        metadata:
+          req.body?.metadata && typeof req.body.metadata === "object"
+            ? req.body.metadata
+            : {},
+      };
+      const evidenceDir = join(projectRoot(), ".codeflowmu", "evidence");
+      mkdirSync(evidenceDir, { recursive: true });
+      appendFileSync(
+        join(evidenceDir, "pm-evidence.jsonl"),
+        `${JSON.stringify(row)}\n`,
+        "utf8",
+      );
+      res.status(201).json({ ok: true, evidence: row });
+    } catch (error) {
+      sendError(
+        res,
+        500,
+        "EVIDENCE_CAPTURE_FAILED",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  });
+
+  async function softwareRuntimeInventory(): Promise<Array<Record<string, unknown>>> {
+    const commands = [
+      { id: "node", command: process.execPath, args: ["--version"] },
+      { id: "npm", command: "npm", args: ["--version"] },
+      { id: "git", command: "git", args: ["--version"] },
+      { id: "python", command: "python", args: ["--version"] },
+      { id: "winget", command: "winget", args: ["--version"] },
+    ];
+    const runtimeRows = await Promise.all(
+      commands.map(async (item) => {
+        try {
+          const result = await execFile(item.command, item.args, {
+            cwd: projectRoot(),
+            timeout: 5_000,
+          });
+          return {
+            package_id: item.id,
+            version: `${result.stdout}${result.stderr}`.trim().split(/\r?\n/)[0] ?? "",
+            source: "runtime_path",
+            available: true,
+          };
+        } catch {
+          return {
+            package_id: item.id,
+            version: "",
+            source: "runtime_path",
+            available: false,
+          };
+        }
+      }),
+    );
+    const appRows = listCommonWindowsUseAppCandidates().map((candidate) => ({
+      package_id: candidate.app_id,
+      version: "",
+      source: candidate.source,
+      executable: candidate.executable,
+      available: true,
+      approved: false,
+    }));
+    return [...runtimeRows, ...appRows];
+  }
+
+  app.get("/api/v2/software/inventory", async (_req: Request, res: Response) => {
+    try {
+      res.json({
+        ok: true,
+        inventory: await softwareRuntimeInventory(),
+        install_executor: {
+          registered: true,
+          source: "winget",
+          requires_role: "OPS",
+          requires_operation_approval: true,
+        },
+        inspected_at: new Date().toISOString(),
+      });
+    } catch (error) {
+      sendError(
+        res,
+        500,
+        "SOFTWARE_INVENTORY_FAILED",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  });
+
+  app.get("/api/v2/software/search", async (req: Request, res: Response) => {
+    const query = String(req.query["query"] ?? "").trim();
+    if (!query) {
+      sendError(res, 400, "SOFTWARE_QUERY_REQUIRED", "query is required");
+      return;
+    }
+    try {
+      const inventory = (await softwareRuntimeInventory()).filter((row) =>
+        JSON.stringify(row).toLowerCase().includes(query.toLowerCase()),
+      );
+      let sourceRows: string[] = [];
+      let sourceStatus = "available";
+      try {
+        const result = await execFile(
+          "winget",
+          [
+            "search",
+            "--query",
+            query,
+            "--source",
+            "winget",
+            "--accept-source-agreements",
+            "--disable-interactivity",
+          ],
+          { cwd: projectRoot(), timeout: 20_000, maxBuffer: 512 * 1024 },
+        );
+        sourceRows = result.stdout
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .slice(0, 50);
+      } catch {
+        sourceStatus = "unavailable";
+      }
+      res.json({
+        ok: true,
+        query,
+        local_inventory: inventory,
+        managed_source: {
+          source: "winget",
+          status: sourceStatus,
+          rows: sourceRows,
+        },
+        side_effects: "none",
+      });
+    } catch (error) {
+      sendError(
+        res,
+        500,
+        "SOFTWARE_SEARCH_FAILED",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  });
+
+  app.post("/api/v2/software/verify-package", async (req: Request, res: Response) => {
+    try {
+      const packageId = String(req.body?.package_id ?? "").trim();
+      const source = String(req.body?.source ?? "").trim();
+      const version = String(req.body?.version ?? "").trim();
+      const packagePath = String(req.body?.package_path ?? "").trim();
+      const expectedSha = String(req.body?.sha256 ?? "").trim().toLowerCase();
+      const signature = String(req.body?.signature ?? "").trim();
+      if (!packageId || !source || !version) {
+        sendError(
+          res,
+          400,
+          "SOFTWARE_VERIFY_FIELDS_REQUIRED",
+          "package_id, source and version are required",
+        );
+        return;
+      }
+      let file:
+        | { path: string; size: number; sha256: string; hash_matches: boolean | null }
+        | undefined;
+      if (packagePath) {
+        const exactPath = pathResolve(packagePath);
+        const stat = statSync(exactPath);
+        if (!stat.isFile()) {
+          sendError(res, 400, "SOFTWARE_PACKAGE_NOT_FILE", "package_path must be an exact file");
+          return;
+        }
+        if (stat.size > 512 * 1024 * 1024) {
+          sendError(res, 413, "SOFTWARE_PACKAGE_TOO_LARGE", "package exceeds the 512 MiB verification limit");
+          return;
+        }
+        const { createHash } = await import("node:crypto");
+        const digest = createHash("sha256").update(readFileSync(exactPath)).digest("hex");
+        file = {
+          path: exactPath,
+          size: stat.size,
+          sha256: digest,
+          hash_matches: expectedSha ? digest === expectedSha : null,
+        };
+      }
+      res.json({
+        ok: !file || file.hash_matches !== false,
+        package: {
+          package_id: packageId,
+          source,
+          version,
+          signature: signature || "not_provided",
+          expected_sha256: expectedSha || undefined,
+          file,
+        },
+        verification: {
+          identity_complete: Boolean(packageId && source && version),
+          signature_declared: Boolean(signature),
+          hash_verified: file ? file.hash_matches : null,
+          executable_started: false,
+        },
+        verified_at: new Date().toISOString(),
+      });
+    } catch (error) {
+      sendError(
+        res,
+        400,
+        "SOFTWARE_VERIFY_FAILED",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  });
+
+  app.post("/api/v2/software/request-install", (req: Request, res: Response) => {
+    try {
+      const packageId = String(req.body?.package_id ?? "").trim();
+      const source = String(req.body?.source ?? "").trim().toLowerCase();
+      const version = String(req.body?.version ?? "").trim();
+      const installDirectory = String(req.body?.install_directory ?? "").trim();
+      const rollbackPlan = String(req.body?.rollback_plan ?? "").trim();
+      const installerRole = String(req.body?.installer_role ?? "").trim().toUpperCase();
+      const signature = String(req.body?.signature ?? "").trim();
+      const sha256 = String(req.body?.sha256 ?? "").trim().toLowerCase();
+      const permissions = Array.isArray(req.body?.permissions)
+        ? req.body.permissions.map(String).map((value: string) => value.trim()).filter(Boolean)
+        : [];
+      if (
+        !packageId ||
+        source !== "winget" ||
+        !version ||
+        !installDirectory ||
+        !rollbackPlan ||
+        installerRole !== "OPS" ||
+        permissions.length === 0 ||
+        (!signature && !sha256)
+      ) {
+        sendError(
+          res,
+          400,
+          "INVALID_SOFTWARE_INSTALL_REQUEST",
+          "exact package_id, winget source, version, signature or hash, install_directory, permissions, rollback_plan and installer_role=OPS are required",
+        );
+        return;
+      }
+      const taskId = String(
+        req.body?.task_id ?? req.body?.current_task_id ?? "",
+      ).trim();
+      const request: CapabilityRequest = {
+        subject: {
+          actor: String(req.body?.actor ?? "PM-01"),
+          role: "PM",
+          project_id: activeProjectId || pathBasename(projectRoot()),
+          ...(req.body?.session_id ? { session_id: String(req.body.session_id) } : {}),
+          ...(taskId ? { task_id: taskId } : {}),
+        },
+        action: {
+          capability: "software.install",
+          operation: "install_exact_package",
+          executor: "software.install",
+        },
+        resource: {
+          type: "software_package",
+          targets: [packageId],
+          scope: {
+            package_id: packageId,
+            source,
+            version,
+            signature: signature || undefined,
+            sha256: sha256 || undefined,
+            install_directory: installDirectory,
+            permissions,
+            installer_role: installerRole,
+          },
+        },
+        context: {
+          workspace: projectRoot(),
+          environment: "local",
+          initiated_by: "agent",
+          authorization_source: "none",
+          human_confirmation_id: null,
+        },
+        effect: {
+          software_change: true,
+          external_write: true,
+        },
+        snapshot: {
+          package_id: packageId,
+          source,
+          version,
+          signature: signature || "not_provided",
+          sha256: sha256 || "not_provided",
+          install_directory: installDirectory,
+          permissions,
+          installer_role: installerRole,
+          rollback_plan: rollbackPlan,
+        },
+      };
+      const prepared = operationApprovalService().prepare({
+        request,
+        reason:
+          String(req.body?.expected_benefit ?? "").trim() ||
+          `install ${packageId} ${version}`,
+        effects: [
+          `install ${packageId} ${version} from winget`,
+          `write to ${installDirectory}`,
+          ...permissions.map((permission: string) => `permission: ${permission}`),
+        ],
+        non_effects: [
+          "no download or installer process is started before ADMIN approval",
+          "the approval is single-use and bound to the exact operation digest",
+        ],
+        recovery: rollbackPlan,
+        expires_in_seconds: 900,
+        comment_required: true,
+      });
+      res.status(prepared.decision === "REQUIRE_APPROVAL" ? 202 : 200).json({
+        ok: true,
+        ...prepared,
+      });
+    } catch (error) {
+      sendOperationApprovalError(res, error);
+    }
+  });
+
+  app.post("/api/v2/software/install", async (req: Request, res: Response) => {
+    try {
+      const actorRole = String(req.body?.actor_role ?? "").trim().toUpperCase();
+      if (actorRole !== "OPS") {
+        sendError(res, 403, "SOFTWARE_INSTALL_OPS_ONLY", "software.install is restricted to OPS");
+        return;
+      }
+      const service = operationApprovalService();
+      const approvalId = String(req.body?.approval_id ?? "").trim();
+      const executionToken = String(req.body?.execution_token ?? "").trim();
+      const row = service.get(approvalId);
+      if (row.request.action.executor !== "software.install") {
+        sendError(res, 409, "SOFTWARE_EXECUTOR_MISMATCH", "approval is not for software.install");
+        return;
+      }
+      const scope = row.request.resource.scope ?? {};
+      const packageId = String(scope["package_id"] ?? "").trim();
+      const source = String(scope["source"] ?? "").trim();
+      const version = String(scope["version"] ?? "").trim();
+      const installDirectory = String(scope["install_directory"] ?? "").trim();
+      if (!packageId || source !== "winget" || !version || !installDirectory) {
+        sendError(res, 409, "SOFTWARE_APPROVAL_SCOPE_INVALID", "approved software scope is incomplete");
+        return;
+      }
+      const completed = await service.execute(
+        approvalId,
+        executionToken,
+        row.request,
+        async () => {
+          const args = [
+            "install",
+            "--id",
+            packageId,
+            "--exact",
+            "--version",
+            version,
+            "--source",
+            "winget",
+            "--location",
+            installDirectory,
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+            "--disable-interactivity",
+          ];
+          const result = await execFile("winget", args, {
+            cwd: projectRoot(),
+            timeout: 15 * 60_000,
+            maxBuffer: 2 * 1024 * 1024,
+          });
+          return {
+            status: "succeeded" as const,
+            evidence: [
+              {
+                executor: "software.install",
+                package_id: packageId,
+                version,
+                source,
+                install_directory: installDirectory,
+                command: ["winget", ...args],
+                stdout_tail: result.stdout.slice(-4_000),
+                stderr_tail: result.stderr.slice(-4_000),
+              },
+            ],
+          };
+        },
+      );
+      res.status(completed.status === "failed" ? 500 : 200).json({
+        ok: completed.status === "succeeded",
+        approval: completed,
+      });
+    } catch (error) {
+      sendOperationApprovalError(res, error);
+    }
+  });
+
   app.get("/api/v2/sessions/current", async (_req: Request, res: Response) => {
     try {
       // SessionStore doesn't expose a list() — use SessionManager.listActive()
@@ -8304,6 +9155,29 @@ export function buildWebPanelApp(
   }
 
   function operationApprovalPanelRow(row: ReturnType<OperationApprovalService["get"]>): Record<string, unknown> {
+    const snapshot = row.request.snapshot;
+    const cleanupDiff =
+      row.request.action.executor === "filesystem.cleanup"
+        ? [
+            "--- filesystem.cleanup preflight",
+            "+++ approved quarantine plan",
+            "@@ exact impact summary @@",
+            ` file_count: ${String(snapshot["file_count"] ?? 0)}`,
+            ` directory_count: ${String(snapshot["directory_count"] ?? 0)}`,
+            ` total_size: ${String(snapshot["total_size"] ?? 0)} bytes`,
+            ` file_types: ${JSON.stringify(snapshot["file_types"] ?? {})}`,
+            ` earliest_modified_at: ${String(snapshot["earliest_modified_at"] ?? "")}`,
+            ` latest_modified_at: ${String(snapshot["latest_modified_at"] ?? "")}`,
+            ` protected_exclusions: ${JSON.stringify(snapshot["protected_exclusions"] ?? [])}`,
+            ` requested_mode: ${String(snapshot["requested_mode"] ?? "")}`,
+            ` recommended_mode: ${String(snapshot["recommended_mode"] ?? "quarantine")}`,
+            ` retention_days: ${String(snapshot["retention_days"] ?? "")}`,
+            ` recovery: ${String(snapshot["recovery"] ?? row.recovery)}`,
+            ...row.request.resource.targets.map((target) => `- ${target}`),
+            `+ quarantine: .codeflowmu/quarantine/${row.approval_id}/`,
+            ` operation_digest: ${row.operation_digest}`,
+          ].join("\n")
+        : "";
     return {
       ...row,
       id: row.approval_id,
@@ -8318,6 +9192,7 @@ export function buildWebPanelApp(
       admin_question: `是否${row.reason}？`,
       can_approve: row.status === "pending_approval",
       gate_status: row.status === "pending_approval" ? "valid" : row.status,
+      ...(cleanupDiff ? { diff: cleanupDiff } : {}),
     };
   }
 
@@ -8388,12 +9263,15 @@ export function buildWebPanelApp(
   app.post("/api/v2/operation-approvals/prepare", async (req: Request, res: Response) => {
     try {
       const executor = String(req.body?.executor ?? "").trim();
-      if (executor !== "git.push") {
-        sendError(res, 400, "EXECUTOR_NOT_REGISTERED", "prepare currently accepts only the controlled git.push executor");
+      if (!["git.push", "filesystem.cleanup"].includes(executor)) {
+        sendError(
+          res,
+          400,
+          "EXECUTOR_NOT_REGISTERED",
+          "prepare accepts controlled git.push and filesystem.cleanup executors",
+        );
         return;
       }
-      const cwd = resolveGitRoot();
-      const branch = String(req.body?.input?.branch ?? await wpReadGitBranch(cwd)).trim();
       const subject: CapabilityRequest["subject"] = {
         actor: String(req.body?.subject?.actor ?? "PANEL-REQUEST").trim() || "PANEL-REQUEST",
         role: String(req.body?.subject?.role ?? "AGENT").trim() || "AGENT",
@@ -8402,7 +9280,29 @@ export function buildWebPanelApp(
         ...(req.body?.subject?.session_id ? { session_id: String(req.body.subject.session_id) } : {}),
         ...(req.body?.subject?.task_id ? { task_id: String(req.body.subject.task_id) } : {}),
       };
-      const prepared = operationApprovalService().prepare(await buildGitPushApprovalInput({ cwd, branch, subject }));
+      const preparedInput =
+        executor === "git.push"
+          ? await (async () => {
+              const cwd = resolveGitRoot();
+              const branch = String(
+                req.body?.input?.branch ?? (await wpReadGitBranch(cwd)),
+              ).trim();
+              return buildGitPushApprovalInput({ cwd, branch, subject });
+            })()
+          : buildFilesystemCleanupApprovalInput({
+              projectRoot: projectRoot(),
+              targets: Array.isArray(req.body?.input?.targets)
+                ? req.body.input.targets.map(String)
+                : [],
+              subject,
+              mode:
+                String(req.body?.input?.mode ?? "quarantine") === "permanent_delete"
+                  ? "permanent_delete"
+                  : "quarantine",
+              retentionDays: Number(req.body?.input?.retention_days ?? 14),
+              reason: String(req.body?.reason ?? "").trim() || undefined,
+            });
+      const prepared = operationApprovalService().prepare(await preparedInput);
       res.status(prepared.decision === "REQUIRE_APPROVAL" ? 202 : 200).json({ ok: true, ...prepared });
     } catch (err) { sendOperationApprovalError(res, err); }
   });
@@ -8462,7 +9362,11 @@ export function buildWebPanelApp(
       const id = String(req.params["approvalId"] ?? "");
       const token = String(req.body?.execution_token ?? "");
       const row = service.get(id);
-      if (row.request.action.executor !== "git.push" && row.request.action.executor !== "review.policy.save") {
+      if (
+        row.request.action.executor !== "git.push" &&
+        row.request.action.executor !== "review.policy.save" &&
+        row.request.action.executor !== "filesystem.cleanup"
+      ) {
         sendError(res, 501, "EXECUTOR_NOT_REGISTERED", `executor ${row.request.action.executor} is not registered`);
         return;
       }
@@ -8475,13 +9379,31 @@ export function buildWebPanelApp(
           subject: row.request.subject,
         });
         completed = await service.execute(id, token, current.request, executeGitPushApproval);
-      } else {
+      } else if (row.request.action.executor === "review.policy.save") {
         const updates = (scope["updates"] ?? {}) as ReviewPolicyUpdates;
         const current = await buildReviewPolicyApprovalInput(projectRoot(), updates);
         completed = await service.execute(id, token, current.request, async () => {
           const policy = await saveReviewDecisionPolicy({ projectRoot: projectRoot(), updates });
           return { evidence: [{ executor: "review.policy.save", policy }] };
         });
+      } else {
+        const current = buildFilesystemCleanupApprovalInput({
+          projectRoot: row.project_root,
+          targets: row.request.resource.targets,
+          subject: row.request.subject,
+          mode:
+            String(scope["mode"] ?? "quarantine") === "permanent_delete"
+              ? "permanent_delete"
+              : "quarantine",
+          retentionDays: Number(scope["retention_days"] ?? 14),
+          reason: row.reason,
+        });
+        completed = await service.execute(
+          id,
+          token,
+          current.request,
+          executeFilesystemCleanupApproval,
+        );
       }
       res.status(completed.status === "failed" ? 500 : 200).json({ ok: completed.status === "succeeded", approval: completed });
     } catch (err) { sendOperationApprovalError(res, err); }
@@ -9158,7 +10080,9 @@ export function buildWebPanelApp(
       return {
         ok: false,
         created: false,
-        status: record.status === "rejected" ? 422 : 409,
+        status: ["needs_revision", "needs_approval", "rejected"].includes(record.status)
+          ? 422
+          : 409,
         submission_id: record.submission_id,
         formal_task_id: null,
         decision: record.decision,
@@ -11111,7 +12035,9 @@ export function buildWebPanelApp(
       );
       const rawStatus = String(statusStdout ?? "");
       const statusFiles = wpParseGitStatusPorcelainZ(rawStatus);
-      const productFiles = statusFiles.filter((file) => !wpIsMotherRuntimeLedgerStatusFile(file));
+      const productFiles = statusFiles.filter(
+        (file) => !wpIsMotherCommitExcludedStatusFile(file),
+      );
       if (rawStatus.trim().length === 0 || productFiles.length === 0) {
         const gitStatus = await wpReadGitStatusPayload(cwd);
         const postDiag = await wpReadGitDiagnostics(cwd);

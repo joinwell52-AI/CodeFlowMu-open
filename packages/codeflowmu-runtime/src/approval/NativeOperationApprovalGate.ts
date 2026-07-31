@@ -5,6 +5,7 @@ import {
   type GitPushSubject,
 } from "./GitPushApproval.ts";
 import type { PrepareOperationInput } from "./OperationApprovalService.ts";
+import { buildFilesystemCleanupApprovalInput } from "./FilesystemCleanupApproval.ts";
 
 export const OPERATION_APPROVAL_REQUIRED = "OPERATION_APPROVAL_REQUIRED";
 export const OPERATION_BOUNDARY_DENIED = "OPERATION_BOUNDARY_DENIED";
@@ -166,6 +167,7 @@ export async function evaluateNativeOperationBoundary(input: {
   projectId: string;
   agentId: string;
   sessionId?: string;
+  taskId?: string;
 }): Promise<NativeOperationBoundaryDecision> {
   const command = extractCommand(input.args);
   const target = extractTargetPath(input.args);
@@ -186,6 +188,51 @@ export async function evaluateNativeOperationBoundary(input: {
   if (commandTargetsGovernanceStorage(command)) {
     if (isReadOnlyGovernanceShellCommand(command)) return { decision: "ALLOW" };
     return { decision: "DENY", reason: "governance_storage_boundary_violation" };
+  }
+  const tool = normalizedToolName(input.toolName);
+  if (
+    /^(?:filesystem_cleanup|cleanup|delete|delete_file|remove|remove_file)$/.test(
+      tool,
+    )
+  ) {
+    const rawTargets = Array.isArray(input.args["targets"])
+      ? input.args["targets"].map(String)
+      : [input.args["path"], input.args["target"], input.args["file"]]
+          .filter((value) => typeof value === "string")
+          .map(String);
+    if (rawTargets.length === 0) {
+      return { decision: "DENY", reason: "filesystem_cleanup_targets_missing" };
+    }
+    try {
+      return {
+        decision: "REQUIRE_APPROVAL",
+        input: buildFilesystemCleanupApprovalInput({
+          projectRoot: input.projectRoot,
+          targets: rawTargets,
+          subject: {
+            actor: input.agentId,
+            role: roleFromAgentId(input.agentId),
+            project_id: input.projectId,
+            agent_id: input.agentId,
+            ...(input.sessionId ? { session_id: input.sessionId } : {}),
+            ...(input.taskId ? { task_id: input.taskId } : {}),
+          },
+          mode:
+            String(input.args["mode"] ?? "quarantine") === "permanent_delete"
+              ? "permanent_delete"
+              : "quarantine",
+          retentionDays: Number(input.args["retention_days"] ?? 14),
+          reason: String(input.args["reason"] ?? "").trim() || undefined,
+        }),
+      };
+    } catch (error) {
+      return {
+        decision: "DENY",
+        reason: `filesystem_cleanup_preflight_failed:${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      };
+    }
   }
   const unsupportedReason = command ? unsupportedHighRiskReason(command) : null;
   if (unsupportedReason) {
@@ -220,6 +267,7 @@ export async function evaluateNativeOperationBoundary(input: {
     project_id: input.projectId,
     agent_id: input.agentId,
     ...(input.sessionId ? { session_id: input.sessionId } : {}),
+    ...(input.taskId ? { task_id: input.taskId } : {}),
   };
   try {
     return {

@@ -106,6 +106,24 @@ const PM_GOVERNANCE_SKILL_PREFIXES = [
   "pm.write_planning_artifact",
   "record_planning_skill_evidence",
   "pm.record_planning_skill_evidence",
+  "inspect_task_spec",
+  "pm.inspect_task_spec",
+  "inspect_capability_matrix",
+  "pm.inspect_capability_matrix",
+  "inspect_project_baseline",
+  "pm.inspect_project_baseline",
+  "inspect_runtime_topology",
+  "pm.inspect_runtime_topology",
+  "create_child_task",
+  "pm.create_child_task",
+  "request_operation_approval",
+  "pm.request_operation_approval",
+  "capture_evidence",
+  "pm.capture_evidence",
+  "software.inventory",
+  "software.search",
+  "software.request_install",
+  "software.verify_package",
 ];
 
 const EDIT_TOOL_NAMES = new Set([
@@ -173,6 +191,7 @@ const SHELL_WRITE_PATTERNS: RegExp[] = [
   /\bpython(?:3)?\b[^\n|]*\bjson\.dump\s*\(/i,
   /\bpython(?:3)?\b[^\n|]*\.(?:write_text|write_bytes)\s*\(/i,
   /\bpython(?:3)?\b[^\n|]*\bshutil\./i,
+  /\b(?:python|python3|py)\b[\s\S]*\bopen\s*\([^)]*['"]w/i,
   /\bnode\b[^\n|]*(?:writeFile|writeFileSync|createWriteStream)/i,
 ];
 
@@ -768,9 +787,10 @@ function evaluatePmToolCall(input: EvaluateRoleToolCallInput): RoleToolDecision 
       };
     }
     return {
-      allow: false,
-      severity: "block",
-      reason: "PM shell command not in read-only allowlist",
+      allow: true,
+      severity: "warn",
+      reason:
+        "Command is not a known PM read probe; effect-based native operation policy remains authoritative",
     };
   }
 

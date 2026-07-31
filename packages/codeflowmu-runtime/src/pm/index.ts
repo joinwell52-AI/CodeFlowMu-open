@@ -362,6 +362,7 @@ export {
   TASK_SPEC_INVALID,
   TASK_SPEC_VALID,
   type TaskSpecAdmissionAccepted,
+  type TaskSpecCapabilityMatrixRow,
   type TaskSpecAdmissionFinding,
   type TaskSpecAdmissionFindingId,
   type TaskSpecAdmissionInput,

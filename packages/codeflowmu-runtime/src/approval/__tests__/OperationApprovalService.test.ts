@@ -78,13 +78,16 @@ function tempRoot(): string {
   return mkdtempSync(join(tmpdir(), "cfm-operation-approval-"));
 }
 
-test("classifier only requires approval for the five deterministic effect classes", () => {
+test("classifier requires approval for every deterministic high-impact effect class", () => {
   const mapping = [
     ["destructive", "destructive_operation"],
     ["external_write", "external_write"],
     ["production", "production_release"],
     ["security_change", "security_authority_change"],
     ["governance_change", "governance_boundary_change"],
+    ["software_change", "software_change"],
+    ["process_control", "process_control"],
+    ["high_cost", "high_cost_operation"],
   ] as const;
   for (const [effect, kind] of mapping) {
     const result = classifyCapabilityRequest(request({ effect: { external_write: false, [effect]: true } }));
@@ -101,10 +104,25 @@ test("classifier only requires approval for the five deterministic effect classe
 
   assert.equal(
     classifyCapabilityRequest(request({ effect: { external_write: false, high_cost: true } })).decision,
-    "ALLOW",
-    "high-cost metadata is observation-only until a formal quota model exists",
+    "REQUIRE_APPROVAL",
   );
   assert.equal(classifyCapabilityRequest(request({ effect: { external_write: false, unknown: true } })).decision, "DENY");
+  for (const effect of [
+    "prohibited",
+    "target_unbounded",
+    "credential_exposure",
+    "governance_bypass",
+    "force_push",
+    "out_of_scope",
+  ] as const) {
+    assert.equal(
+      classifyCapabilityRequest(
+        request({ effect: { external_write: false, [effect]: true } }),
+      ).decision,
+      "DENY",
+      effect,
+    );
+  }
 });
 
 test("prepare is side-effect free and approval can execute the exact digest only once", async () => {

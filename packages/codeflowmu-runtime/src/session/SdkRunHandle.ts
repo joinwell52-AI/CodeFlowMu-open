@@ -149,6 +149,8 @@ export interface SdkRunHandleOptions {
   tokenEstimate?: CursorTokenEstimate;
   /** Project root for role-level native-tool gates (PM edit/shell block). */
   projectRoot?: string;
+  /** Canonical TASK id bound to this run, used by operation approvals. */
+  taskId?: string;
 }
 
 export class SdkRunHandle implements RunHandle {
@@ -173,6 +175,7 @@ export class SdkRunHandle implements RunHandle {
   private _operationBoundaryFailureCode: string | undefined;
   private _operationBoundaryMessage: string | undefined;
   private readonly _projectRoot: string | undefined;
+  private readonly _taskId: string | undefined;
   private readonly _gateCheckedToolCallIds = new Set<string>();
   private _lastToolName: string | null = null;
   private _lastAction: string | null = null;
@@ -188,6 +191,7 @@ export class SdkRunHandle implements RunHandle {
     this._maxToolRounds = opts.maxToolRounds;
     this._tokenEstimate = opts.tokenEstimate;
     this._projectRoot = opts.projectRoot;
+    this._taskId = opts.taskId;
     this._settlementPromise = this._driveStream();
   }
 
@@ -347,10 +351,15 @@ export class SdkRunHandle implements RunHandle {
           ...(sdkFailureFields ?? {}),
         },
       });
+      const operationDenied =
+        this._operationBoundaryFailureCode != null &&
+        this._operationBoundaryFailureCode !== OPERATION_APPROVAL_REQUIRED;
       const resolvedStatus =
-        this._turnLimitExceeded || this._roleToolBlocked || this._operationBoundaryFailureCode
+        this._turnLimitExceeded || this._roleToolBlocked || operationDenied
           ? "failed"
-          : this._resolveWaitStatus(result);
+          : this._operationBoundaryFailureCode === OPERATION_APPROVAL_REQUIRED
+            ? "finished"
+            : this._resolveWaitStatus(result);
       const sessionRun: SessionRun & SessionRunWithSdkFailure = {
         run_id: this.run_id,
         started_at: this._startedAt,
@@ -576,6 +585,7 @@ export class SdkRunHandle implements RunHandle {
       projectId: projectRoot.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "project",
       agentId: this.agent_id,
       sessionId: this.session_id,
+      ...(this._taskId ? { taskId: this._taskId } : {}),
     });
     if (operationBoundary.decision !== "ALLOW") {
       if (operationBoundary.decision === "REQUIRE_APPROVAL") {

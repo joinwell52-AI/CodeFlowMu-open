@@ -163,7 +163,7 @@ export function classifyForwardLog(
 }
 
 export function isMobileApiForwardPath(path: string): boolean {
-  return path.startsWith("/api/v2/mobile/");
+  return path.startsWith("/api/v2/mobile/") || path === "/api/v2/project-graph";
 }
 
 export function isMobileGatewayOnline(): boolean {

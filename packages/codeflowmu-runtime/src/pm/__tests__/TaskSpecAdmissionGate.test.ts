@@ -87,7 +87,7 @@ test("rejects unsupported formal tools and multiple authoritative planning artif
         planning_artifacts: ["brief.md", "roadmap.md"],
       }),
     });
-    assert.equal(result.decision, "rejected");
+    assert.equal(result.decision, "needs_revision");
     assert.ok(findingIds(result).includes("TOOL_CAPABILITY_MISMATCH"));
     assert.ok(findingIds(result).includes("ARTIFACT_UNIQUENESS_CONFLICT"));
   } finally {
@@ -112,7 +112,7 @@ project_dir: D:/one
 project_dir: D:/two
 `),
     });
-    assert.equal(result.decision, "rejected");
+    assert.equal(result.decision, "needs_revision");
     assert.ok(
       result.blocking_findings.filter(
         (finding) => finding.id === "INTERNAL_INCONSISTENCY",
@@ -143,6 +143,73 @@ test("rejects permission, lifecycle, and local-candidate Git safety conflicts", 
   }
 });
 
+test("routes an otherwise executable risky task to needs_approval", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cfm-task-admission-"));
+  try {
+    const result = await evaluateTaskSpecAdmission({
+      projectRoot: root,
+      task: task(
+        `# Local candidate release
+
+This runs in a local candidate environment.
+- DEV prepares the verified change.
+- OPS performs git push only after exact ADMIN approval.
+`,
+        { environment: "local_candidate", planning_level: 1 },
+      ),
+    });
+    assert.equal(result.decision, "needs_approval");
+    assert.ok(
+      result.blocking_findings.every(
+        (finding) => finding.recommended_decision === "needs_approval",
+      ),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("every finding is location-rich and admission emits a capability matrix", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cfm-task-admission-"));
+  try {
+    const result = await evaluateTaskSpecAdmission({
+      projectRoot: root,
+      task: task("# Delivery\n- PM must use `pm.missing_tool` to complete the work.", {
+        required_tools: ["pm.missing_tool"],
+      }),
+    });
+    assert.equal(result.decision, "needs_revision");
+    const finding = result.blocking_findings[0]!;
+    for (const key of [
+      "finding_id",
+      "category",
+      "severity",
+      "section",
+      "line_start",
+      "line_end",
+      "original_excerpt",
+      "message",
+      "impact",
+      "required_capability",
+      "current_support",
+      "suggested_fix",
+      "suggested_replacement",
+      "can_auto_fix",
+      "decision_owner",
+    ] as const) {
+      assert.ok(key in finding, key);
+    }
+    assert.ok(result.capability_matrix.length > 0);
+    assert.ok(
+      result.capability_matrix.some(
+        (row) => row.required_capability === "pm.missing_tool",
+      ),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("rejects Level 0 for a long-running cross-module implementation", async () => {
   const root = await mkdtemp(join(tmpdir(), "cfm-task-admission-"));
   try {
@@ -154,7 +221,7 @@ test("rejects Level 0 for a long-running cross-module implementation", async () 
         override_reason: "正文含巡检",
       }),
     });
-    assert.equal(result.decision, "rejected");
+    assert.equal(result.decision, "needs_revision");
     const finding = result.blocking_findings.find(
       (item) => item.id === "CLASSIFICATION_CONFLICT",
     );
@@ -222,7 +289,7 @@ test("rejects project role, port, and root mismatches against the active team mo
         project_root: "another-project",
       }),
     });
-    assert.equal(result.decision, "rejected");
+    assert.equal(result.decision, "needs_revision");
     const fields = result.blocking_findings
       .filter((finding) => finding.id === "INTERNAL_INCONSISTENCY")
       .map((finding) => finding.field);
@@ -264,7 +331,7 @@ test("rejects missing, closed, self, cyclic, and mismatched-thread parents", asy
         projectRoot: root,
         task: task("# Child", { parent }),
       });
-      assert.equal(result.decision, "rejected");
+      assert.equal(result.decision, "needs_revision");
       assert.ok(
         result.blocking_findings.some(
           (finding) =>

@@ -665,6 +665,13 @@ export function projectLedgerTaskFromRow(
     sender: t.sender,
     recipient: t.recipient,
     thread_key: t.thread_key,
+    sprint_id:
+      String(
+        (t as { sprint_id?: unknown }).sprint_id ??
+          yamlFm.sprint_id ??
+          yamlFm.wp_id ??
+          "",
+      ).trim() || undefined,
     bucket: ledgerBucket,
     scope,
     display_status,

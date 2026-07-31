@@ -36,7 +36,17 @@ export type TaskSpecAdmissionFindingId =
 
 export interface TaskSpecAdmissionFinding {
   id: TaskSpecAdmissionFindingId;
+  finding_id: string;
+  category: string;
+  severity: "blocker" | "high" | "medium" | "info";
+  section: string;
+  line_start: number;
+  line_end: number;
+  original_excerpt: string;
   message: string;
+  impact: string;
+  required_capability: string;
+  current_support: string;
   field?: string;
   requirement?: string;
   supported?: string;
@@ -46,8 +56,22 @@ export interface TaskSpecAdmissionFinding {
   evidence?: string[];
   expected?: string;
   actual?: string | string[];
-  suggested_fix?: string;
-  can_auto_fix?: boolean;
+  suggested_fix: string;
+  suggested_replacement: string;
+  can_auto_fix: boolean;
+  decision_owner: string;
+  recommended_decision: "needs_revision" | "needs_approval" | "rejected";
+}
+
+export interface TaskSpecCapabilityMatrixRow {
+  task_step: string;
+  execution_role: string;
+  required_capability: string;
+  available_tools: string[];
+  current_policy: "allow" | "approval" | "deny" | "unsupported";
+  risk: "low" | "medium" | "high" | "prohibited";
+  conclusion: "executable" | "needs_approval" | "needs_revision" | "rejected";
+  suggested_fix: string;
 }
 
 export interface TaskSpecAdmissionAccepted {
@@ -57,20 +81,25 @@ export interface TaskSpecAdmissionAccepted {
   content_digest: string;
   planning_level?: PmPlanningLevel;
   blocking_findings: [];
+  capability_matrix: TaskSpecCapabilityMatrixRow[];
 }
 
-export interface TaskSpecAdmissionRejected {
-  decision: "rejected";
+export interface TaskSpecAdmissionBlocked {
+  decision: "needs_revision" | "needs_approval" | "rejected";
   code: typeof TASK_SPEC_INVALID;
   task_id: string;
   content_digest: string;
   planning_level?: PmPlanningLevel;
   blocking_findings: TaskSpecAdmissionFinding[];
+  capability_matrix: TaskSpecCapabilityMatrixRow[];
 }
+
+/** Backward-compatible name retained for existing callers. */
+export type TaskSpecAdmissionRejected = TaskSpecAdmissionBlocked;
 
 export type TaskSpecAdmissionResult =
   | TaskSpecAdmissionAccepted
-  | TaskSpecAdmissionRejected;
+  | TaskSpecAdmissionBlocked;
 
 export interface TaskSpecAdmissionInput {
   projectRoot: string;
@@ -85,6 +114,13 @@ const SUPPORTED_PM_FORMAL_TOOLS = new Set([
   "pm.close_admin_task",
   "pm.wake_downstream",
   "pm.review_check",
+  "pm.inspect_task_spec",
+  "pm.inspect_capability_matrix",
+  "pm.inspect_project_baseline",
+  "pm.inspect_runtime_topology",
+  "pm.create_child_task",
+  "pm.request_operation_approval",
+  "pm.capture_evidence",
   "write_task",
   "create_task",
 ]);
@@ -160,18 +196,200 @@ export function taskSpecContentDigest(task: ParsedTask): string {
     .digest("hex");
 }
 
+type TaskSpecAdmissionFindingInput = Pick<
+  TaskSpecAdmissionFinding,
+  "id" | "message"
+> &
+  Partial<Omit<TaskSpecAdmissionFinding, "id" | "message">>;
+
+function findingCategory(id: TaskSpecAdmissionFindingId): string {
+  if (id === "TOOL_CAPABILITY_MISMATCH") return "capability";
+  if (id === "PERMISSION_UNEXECUTABLE") return "authorization";
+  if (id === "LIFECYCLE_CONFLICT" || id === "PARENT_INVALID") return "lifecycle";
+  if (id === "ARTIFACT_UNIQUENESS_CONFLICT" || id === "CLASSIFICATION_CONFLICT") {
+    return "planning";
+  }
+  if (id === "ENVIRONMENT_REFERENCE_MISSING") return "environment";
+  if (id === "GATE_NOT_DECIDABLE") return "acceptance_gate";
+  if (id === "GIT_SAFETY_VIOLATION") return "operation_risk";
+  if (id.startsWith("ADMISSION_")) return "admission_integrity";
+  return "consistency";
+}
+
+function findingRecommendedDecision(
+  id: TaskSpecAdmissionFindingId,
+): TaskSpecAdmissionFinding["recommended_decision"] {
+  if (id === "PERMISSION_UNEXECUTABLE") return "rejected";
+  if (id === "GIT_SAFETY_VIOLATION") return "needs_approval";
+  return "needs_revision";
+}
+
+function materializeFinding(
+  finding: TaskSpecAdmissionFindingInput,
+): TaskSpecAdmissionFinding {
+  const recommended = finding.recommended_decision ?? findingRecommendedDecision(finding.id);
+  const severity =
+    finding.severity ??
+    (recommended === "rejected"
+      ? "blocker"
+      : recommended === "needs_approval"
+        ? "high"
+        : "medium");
+  const suggestedFix =
+    finding.suggested_fix ??
+    (recommended === "needs_approval"
+      ? "remove the risky action or request explicit ADMIN pre-authorization"
+      : recommended === "rejected"
+        ? "remove the prohibited requirement; it cannot be authorized"
+        : "revise the task specification so the requirement has one executable interpretation");
+  const excerpt =
+    finding.original_excerpt ??
+    finding.evidence?.[0] ??
+    (Array.isArray(finding.actual) ? finding.actual[0] : finding.actual) ??
+    finding.field ??
+    finding.message;
+  return {
+    ...finding,
+    id: finding.id,
+    finding_id: finding.finding_id ?? finding.id,
+    category: finding.category ?? findingCategory(finding.id),
+    severity,
+    section: finding.section ?? (finding.field ? `frontmatter.${finding.field}` : "task_body"),
+    line_start: Math.max(1, finding.line_start ?? 1),
+    line_end: Math.max(1, finding.line_end ?? finding.line_start ?? 1),
+    original_excerpt: String(excerpt).slice(0, 500),
+    message: finding.message,
+    impact:
+      finding.impact ??
+      (recommended === "rejected"
+        ? "The request crosses a permanent governance boundary."
+        : recommended === "needs_approval"
+          ? "Formal execution must not start until the exact risky operation is approved."
+          : "The task cannot be executed deterministically as written."),
+    required_capability:
+      finding.required_capability ?? finding.requirement ?? finding.field ?? findingCategory(finding.id),
+    current_support:
+      finding.current_support ?? finding.supported ?? "not executable from the current specification",
+    suggested_fix: suggestedFix,
+    suggested_replacement: finding.suggested_replacement ?? suggestedFix,
+    can_auto_fix: finding.can_auto_fix ?? false,
+    decision_owner:
+      finding.decision_owner ?? (recommended === "needs_approval" ? "ADMIN" : "TASK_AUTHOR"),
+    recommended_decision: recommended,
+  };
+}
+
 function addFinding(
   findings: TaskSpecAdmissionFinding[],
-  finding: TaskSpecAdmissionFinding,
+  finding: TaskSpecAdmissionFindingInput,
 ): void {
-  const key = `${finding.id}:${finding.field ?? ""}:${finding.message}`;
+  const complete = materializeFinding(finding);
+  const key = `${complete.id}:${complete.field ?? ""}:${complete.message}`;
   if (
     !findings.some(
       (item) => `${item.id}:${item.field ?? ""}:${item.message}` === key,
     )
   ) {
-    findings.push(finding);
+    findings.push(complete);
   }
+}
+
+function locateFindingInTask(
+  task: ParsedTask,
+  finding: TaskSpecAdmissionFinding,
+): TaskSpecAdmissionFinding {
+  const frontmatterLines = Object.entries(task.frontmatter).map(
+    ([key, value]) => `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`,
+  );
+  const bodyLines = task.body.replace(/\r\n/g, "\n").split("\n");
+  const lines = [...frontmatterLines, "---", ...bodyLines];
+  const candidates = [
+    finding.original_excerpt,
+    finding.field,
+    ...(finding.evidence ?? []),
+    ...(finding.missing ?? []),
+  ]
+    .map((value) => String(value ?? "").trim())
+    .filter((value) => value.length >= 2);
+  let index = lines.findIndex((line) =>
+    candidates.some((candidate) => line.toLowerCase().includes(candidate.toLowerCase())),
+  );
+  if (index < 0) index = Math.min(frontmatterLines.length + 1, Math.max(0, lines.length - 1));
+  const inFrontmatter = index < frontmatterLines.length;
+  let section = inFrontmatter ? "frontmatter" : "task_body";
+  if (!inFrontmatter) {
+    for (let cursor = index; cursor >= frontmatterLines.length + 1; cursor -= 1) {
+      const heading = lines[cursor]?.match(/^#{1,6}\s+(.+)$/);
+      if (heading?.[1]) {
+        section = heading[1].trim();
+        break;
+      }
+    }
+  }
+  return {
+    ...finding,
+    section,
+    line_start: index + 1,
+    line_end: index + 1,
+    original_excerpt: String(lines[index] ?? finding.original_excerpt).trim().slice(0, 500),
+  };
+}
+
+function buildCapabilityMatrix(task: ParsedTask): TaskSpecCapabilityMatrixRow[] {
+  const explicitTools = [
+    ...stringList(task.frontmatter["required_tools"]),
+    ...stringList(task.frontmatter["formal_tools"]),
+  ];
+  const steps = task.body
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => /^(?:\d+[.)]|[-*])\s+/.test(line))
+    .slice(0, 80);
+  if (steps.length === 0) steps.push(task.body.trim().split(/\r?\n/, 1)[0] || "execute task");
+  return steps.map((step) => {
+    const roleMatch = step.match(/\b(PM|DEV|QA|OPS|ADMIN|EVAL)(?:-\d+)?\b/i);
+    const executionRole = roleMatch?.[1]?.toUpperCase() ?? "UNASSIGNED";
+    const mentionedTool = explicitTools.find((tool) => step.includes(tool));
+    const risky =
+      /\bpush\b|\btag\b|\brelease\b|部署|删除|清理|安装|卸载|重启|权限|上传|发送|提交表单/i.test(
+        step,
+      );
+    const prohibited = /绕过|冒充|force\s+push|push\s+--force|凭据.*(?:回显|外传)/i.test(step);
+    const unsupported = Boolean(
+      mentionedTool && !SUPPORTED_PM_FORMAL_TOOLS.has(mentionedTool),
+    );
+    return {
+      task_step: step.replace(/^(?:\d+[.)]|[-*])\s+/, "").slice(0, 500),
+      execution_role: executionRole,
+      required_capability: mentionedTool ?? (risky ? "operation.approval" : "task.execution"),
+      available_tools: mentionedTool && SUPPORTED_PM_FORMAL_TOOLS.has(mentionedTool)
+        ? [mentionedTool]
+        : [],
+      current_policy: prohibited
+        ? "deny"
+        : unsupported
+          ? "unsupported"
+          : risky
+            ? "approval"
+            : "allow",
+      risk: prohibited ? "prohibited" : risky ? "high" : "low",
+      conclusion: prohibited
+        ? "rejected"
+        : unsupported
+          ? "needs_revision"
+          : risky
+            ? "needs_approval"
+            : "executable",
+      suggested_fix: prohibited
+        ? "remove the prohibited operation"
+        : unsupported
+          ? "replace the unavailable tool or add a supported capability"
+          : risky
+            ? "bind exact targets, preview, digest, expiry and rollback in an ADMIN approval"
+            : "none",
+    };
+  });
 }
 
 function collectNamedValues(body: string, name: string): string[] {
@@ -789,20 +1007,29 @@ export async function evaluateTaskSpecAdmission(
     task_id: taskIdOf(task),
     content_digest: taskSpecContentDigest(task),
     ...(planningLevel != null ? { planning_level: planningLevel } : {}),
+    capability_matrix: buildCapabilityMatrix(task),
   };
-  return findings.length > 0
-    ? {
-        ...base,
-        decision: "rejected",
-        code: TASK_SPEC_INVALID,
-        blocking_findings: findings,
-      }
-    : {
-        ...base,
-        decision: "accepted",
-        code: TASK_SPEC_VALID,
-        blocking_findings: [],
-      };
+  if (findings.length === 0) {
+    return {
+      ...base,
+      decision: "accepted",
+      code: TASK_SPEC_VALID,
+      blocking_findings: [],
+    };
+  }
+  const located = findings.map((finding) => locateFindingInTask(task, finding));
+  const decisions = new Set(located.map((finding) => finding.recommended_decision));
+  const decision: TaskSpecAdmissionBlocked["decision"] = decisions.has("rejected")
+    ? "rejected"
+    : decisions.has("needs_revision")
+      ? "needs_revision"
+      : "needs_approval";
+  return {
+    ...base,
+    decision,
+    code: TASK_SPEC_INVALID,
+    blocking_findings: located,
+  };
 }
 
 export function taskSpecAdmissionRecordPath(
@@ -871,9 +1098,17 @@ export async function verifyTaskSpecAdmissionForDispatch(input: {
   task: ParsedTask;
 }): Promise<TaskSpecAdmissionResult> {
   const evaluated = await evaluateTaskSpecAdmission(input);
-  if (evaluated.decision === "rejected") {
+  if (evaluated.decision !== "accepted") {
     await persistTaskSpecAdmissionResult(input.projectRoot, evaluated);
-    return evaluated;
+    // A non-accepted preview must never enter Runtime. If such a file already
+    // exists in the formal inbox (legacy/manual write), dispatch treats it as
+    // rejected while the persisted admission record keeps the precise
+    // needs_revision / needs_approval authoring decision.
+    return {
+      ...evaluated,
+      decision: "rejected",
+      code: TASK_SPEC_INVALID,
+    };
   }
 
   const sender = String(
@@ -920,7 +1155,7 @@ export async function verifyTaskSpecAdmissionForDispatch(input: {
       decision: "rejected",
       code: TASK_SPEC_INVALID,
       blocking_findings: [
-        {
+        materializeFinding({
           id: "ADMISSION_PROOF_MISSING",
           field: "submission_id",
           message:
@@ -930,8 +1165,9 @@ export async function verifyTaskSpecAdmissionForDispatch(input: {
           suggested_fix:
             "review the submission in Task Delivery Review and formalize it again",
           can_auto_fix: false,
-        },
+        }),
       ],
+      capability_matrix: evaluated.capability_matrix,
     };
   }
 
@@ -965,7 +1201,7 @@ export async function verifyTaskSpecAdmissionForDispatch(input: {
       decision: "rejected",
       code: TASK_SPEC_INVALID,
       blocking_findings: [
-        {
+        materializeFinding({
           id: "ADMISSION_PROOF_MISSING",
           field: "submission_id",
           message:
@@ -977,8 +1213,9 @@ export async function verifyTaskSpecAdmissionForDispatch(input: {
           suggested_fix:
             "retry formalization from Task Delivery Review; do not wake the task directly",
           can_auto_fix: false,
-        },
+        }),
       ],
+      capability_matrix: evaluated.capability_matrix,
     };
   }
 
@@ -996,7 +1233,7 @@ export async function verifyTaskSpecAdmissionForDispatch(input: {
       decision: "rejected",
       code: TASK_SPEC_INVALID,
       blocking_findings: [
-        {
+        materializeFinding({
           id: "ADMISSION_DIGEST_MISMATCH",
           field: "content_digest",
           message:
@@ -1006,8 +1243,9 @@ export async function verifyTaskSpecAdmissionForDispatch(input: {
           suggested_fix:
             "create a new submission revision and run admission again",
           can_auto_fix: false,
-        },
+        }),
       ],
+      capability_matrix: evaluated.capability_matrix,
     };
   }
   return evaluated;

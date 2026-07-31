@@ -16,6 +16,15 @@ export {
 } from "./OperationApprovalService.ts";
 export { buildGitPushApprovalInput, type GitPushSubject } from "./GitPushApproval.ts";
 export {
+  FilesystemCleanupPreflightError,
+  buildFilesystemCleanupApprovalInput,
+  executeFilesystemCleanupApproval,
+  inspectFilesystemCleanup,
+  type FilesystemCleanupManifestEntry,
+  type FilesystemCleanupMode,
+  type FilesystemCleanupPreflight,
+} from "./FilesystemCleanupApproval.ts";
+export {
   evaluateNativeOperationBoundary,
   OPERATION_APPROVAL_REQUIRED,
   OPERATION_BOUNDARY_DENIED,

@@ -87,6 +87,7 @@
     taskAttachmentPreviewCache: {},
     tasksListCollapsed: false,
     tasksViewMode: "list",
+    projectGraph: null,
   };
 
   var CHAT_LOCAL_KEY = "cfm_mobile_chat_log";
@@ -1875,6 +1876,7 @@
   function renderMobileTaskTimeline(tasks) {
     var host = $("taskTimelineList");
     if (!host) return;
+    if (renderMobileProjectedTaskTree(host, tasks)) return;
     var groups = buildMobileTaskTimelineGroups(tasks);
     if (!groups.length) {
       host.innerHTML = "";
@@ -1935,6 +1937,168 @@
     bindItemCards(host);
   }
 
+  function renderMobileProjectedTaskTree(host, tasks) {
+    var graph = state.projectGraph;
+    if (!graph || !Array.isArray(graph.nodes)) return false;
+    var taskById = {};
+    (tasks || []).forEach(function (task) {
+      var id = taskIdFromItem(task);
+      if (id) taskById[String(id).toUpperCase()] = task;
+    });
+    var taskNodes = graph.nodes.filter(function (node) {
+      return (
+        node &&
+        node.type === "task" &&
+        !!taskById[String(node.task_id || "").toUpperCase()]
+      );
+    });
+    if (!taskNodes.length) return false;
+
+    var byId = {};
+    graph.nodes.forEach(function (node) {
+      if (node && node.id) byId[node.id] = node;
+    });
+    var visible = {};
+    taskNodes.forEach(function (node) {
+      visible[node.id] = true;
+      var parent = node.parent_id;
+      while (parent && byId[parent] && !visible[parent]) {
+        visible[parent] = true;
+        parent = byId[parent].parent_id;
+      }
+    });
+    graph.nodes.forEach(function (node) {
+      if (node && node.parent_id && visible[node.parent_id]) visible[node.id] = true;
+    });
+    var children = {};
+    graph.nodes.forEach(function (node) {
+      if (!node || !visible[node.id]) return;
+      var parent = node.parent_id || "__root__";
+      if (!children[parent]) children[parent] = [];
+      children[parent].push(node);
+    });
+    var typeOrder = {
+      project: 0,
+      sprint: 1,
+      task: 2,
+      report: 3,
+      review: 4,
+      approval: 5,
+      issue: 6,
+      runtime_event: 7,
+      unlinked: 8,
+    };
+    Object.keys(children).forEach(function (key) {
+      children[key].sort(function (a, b) {
+        return (
+          (typeOrder[a.type] == null ? 9 : typeOrder[a.type]) -
+            (typeOrder[b.type] == null ? 9 : typeOrder[b.type]) ||
+          String(a.created_at || a.label || "").localeCompare(
+            String(b.created_at || b.label || ""),
+          )
+        );
+      });
+    });
+    var stageLabel = {
+      todo: "待开始",
+      doing: "进行中",
+      waiting_qa: "待 QA",
+      waiting_admin: "待 ADMIN",
+      done: "已完成",
+    };
+    var rows = [];
+    function renderNode(node, depth) {
+      var task =
+        node.type === "task"
+          ? taskById[String(node.task_id || "").toUpperCase()]
+          : null;
+      var label = node.label || node.id;
+      var relation = [
+        String(node.type || "").toUpperCase(),
+        node.workflow_stage ? stageLabel[node.workflow_stage] || node.workflow_stage : "",
+        node.lifecycle ? "lifecycle:" + node.lifecycle : "",
+        node.anomaly ? "⚠ " + node.anomaly : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      rows.push(
+        '<div class="mobile-task-line-node" style="--mobile-tree-indent:' +
+          Math.min(depth, 5) * 10 +
+          'px">' +
+          '<div class="mobile-task-line-time">' +
+          esc(node.created_at ? formatTaskTimeMinute(node.created_at, node) : "") +
+          "</div>" +
+          '<div class="mobile-task-line-track"><span></span></div>' +
+          '<div class="mobile-task-line-content">' +
+          (task
+            ? itemCardHtml(task, 0)
+            : '<div class="task-card project-graph-evidence"><strong>' +
+              esc(label) +
+              "</strong></div>") +
+          '<div class="mobile-task-line-relation mono">' +
+          esc(relation) +
+          "</div>" +
+          "</div></div>",
+      );
+      var nodeChildren = children[node.id] || [];
+      var structural = nodeChildren.filter(function (child) {
+        return ["project", "sprint", "task", "unlinked"].indexOf(child.type) >= 0;
+      });
+      var evidence = nodeChildren.filter(function (child) {
+        return ["project", "sprint", "task", "unlinked"].indexOf(child.type) < 0;
+      });
+      structural.forEach(function (child) {
+        renderNode(child, depth + 1);
+      });
+      var evidencePreview = evidence.length > 3 ? evidence.slice(-3) : evidence;
+      evidencePreview.forEach(function (child) {
+        renderNode(child, depth + 1);
+      });
+      if (evidence.length > evidencePreview.length) {
+        rows.push(
+          '<div class="mobile-task-line-node" style="--mobile-tree-indent:' +
+            Math.min(depth + 1, 5) * 10 +
+            'px"><div class="mobile-task-line-time"></div>' +
+            '<div class="mobile-task-line-track"><span></span></div>' +
+            '<div class="mobile-task-line-content">' +
+            '<div class="task-card project-graph-evidence"><strong>已折叠更早的 ' +
+            (evidence.length - evidencePreview.length) +
+            " 条证据</strong></div>" +
+            '<div class="mobile-task-line-relation mono">EVIDENCE · ' +
+            evidence.length +
+            "</div></div></div>",
+        );
+      }
+    }
+    var roots = (children.__root__ || []).filter(function (node) {
+      return node.type === "project";
+    });
+    if (!roots.length) {
+      roots = taskNodes.filter(function (node) {
+        return !node.parent_id || !visible[node.parent_id];
+      });
+    }
+    roots.forEach(function (node) {
+      renderNode(node, 0);
+    });
+    host.innerHTML =
+      '<section class="mobile-task-line-group">' +
+      '<div class="mobile-task-line-group-head">' +
+      '<span class="mobile-task-line-root-badge">GRAPH</span>' +
+      '<div class="mobile-task-line-group-title"><strong>' +
+      esc(graph.project_id || "project") +
+      '</strong><span class="mono">' +
+      taskNodes.length +
+      " TASK · " +
+      Number(graph.anomaly_count || 0) +
+      " ⚠</span></div></div>" +
+      '<div class="mobile-task-line-nodes">' +
+      rows.join("") +
+      "</div></section>";
+    bindItemCards(host);
+    return true;
+  }
+
   function itemCardHtmlFlat(item) {
     return itemCardHtml(item, 0);
   }
@@ -1951,6 +2115,17 @@
     return label === key ? String(type || "") : label;
   }
 
+  function mobileBusinessStageForItem(item) {
+    var id = String(taskIdFromItem(item) || "").toUpperCase();
+    var nodes = state.projectGraph && Array.isArray(state.projectGraph.nodes)
+      ? state.projectGraph.nodes
+      : [];
+    var node = nodes.find(function (row) {
+      return row && row.type === "task" && String(row.task_id || "").toUpperCase() === id;
+    });
+    return node && node.workflow_stage ? String(node.workflow_stage) : "";
+  }
+
   function itemCardHtml(item, depth) {
     depth = depth || 0;
     var kind = item.kind || "task";
@@ -1960,6 +2135,14 @@
     var alertCls = st === "blocked" || st === "failed" || st === "task_spec_rejected" ? " card-alert" : "";
     var sender = item.sender || taskSenderCode(item) || "—";
     var recipient = item.recipient || taskRecipientCode(item) || "—";
+    var businessStage = kind === "task" ? mobileBusinessStageForItem(item) : "";
+    var businessLabel = {
+      todo: "待开始",
+      doing: "进行中",
+      waiting_qa: "待 QA",
+      waiting_admin: "待 ADMIN",
+      done: "已完成",
+    }[businessStage] || "";
     var timeStr = formatTaskTimeMinute(item.updated_at || item.created_at, item);
     var metaHtml =
       '<div class="task-meta task-meta-route">' +
@@ -1972,6 +2155,9 @@
       esc(timeStr) +
       "</span>" +
       (item.priority ? '<span class="badge priority">' + esc(item.priority) + "</span>" : "") +
+      (businessLabel
+        ? '<span class="badge business-stage">' + esc(businessLabel) + "</span>"
+        : "") +
       (kind === "approval" && item.approval_type
         ? '<span class="badge type">' +
           esc(approvalTypeLabel(item.approval_type)) +
@@ -3525,6 +3711,23 @@
     return state.tasks;
   }
 
+  async function loadProjectGraph() {
+    if (!isBound()) {
+      state.projectGraph = null;
+      return null;
+    }
+    try {
+      var data = await api("/api/v2/project-graph");
+      state.projectGraph =
+        data && data.schema_version && Array.isArray(data.nodes) ? data : null;
+      clearApiError("projectGraph");
+    } catch (e) {
+      state.projectGraph = null;
+      setApiError("projectGraph", e.message);
+    }
+    return state.projectGraph;
+  }
+
   async function loadTaskSubmissions() {
     if (!isBound()) {
       state.taskSubmissions = [];
@@ -3608,6 +3811,7 @@
       await loadBootstrap();
       await Promise.all([
         loadTasks(),
+        loadProjectGraph(),
         loadTaskSubmissions(),
         loadRelationPickerTasks(),
         loadReports(),

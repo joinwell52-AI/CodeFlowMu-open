@@ -113,9 +113,10 @@ afterEach(() => {
   }
 });
 
-test("isMobileApiForwardPath allows only /api/v2/mobile/*", () => {
+test("isMobileApiForwardPath allows mobile APIs and the shared project graph", () => {
   assert.equal(isMobileApiForwardPath("/api/v2/mobile/bootstrap"), true);
   assert.equal(isMobileApiForwardPath("/api/v2/mobile/panel/status"), true);
+  assert.equal(isMobileApiForwardPath("/api/v2/project-graph"), true);
   assert.equal(isMobileApiForwardPath("/api/v2/other"), false);
   assert.equal(isMobileApiForwardPath("/health"), false);
 });

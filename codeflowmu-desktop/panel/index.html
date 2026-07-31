@@ -828,7 +828,8 @@ select.ci option{background:#1e3250}
 .adm-flow-seg{height:6px;border-radius:999px}
 .task-kanban-board{background:linear-gradient(180deg,rgba(2,6,23,.4),rgba(15,23,42,.22))}
 .kanban-col{border-radius:8px;background:rgba(9,14,25,.72);border-color:rgba(148,163,184,.12);box-shadow:0 12px 26px rgba(0,0,0,.13)}
-.kanban-col.col-inbox{border-top:2px solid #60a5fa}.kanban-col.col-active{border-top:2px solid #fbbf24}.kanban-col.col-review{border-top:2px solid #a78bfa}.kanban-col.col-done{border-top:2px solid #22c55e}.kanban-col.col-archive{border-top:2px solid #64748b}
+.kanban-col.col-inbox,.kanban-col.col-todo{border-top:2px solid #60a5fa}.kanban-col.col-active,.kanban-col.col-doing{border-top:2px solid #fbbf24}.kanban-col.col-review,.kanban-col.col-waiting_qa{border-top:2px solid #a78bfa}.kanban-col.col-waiting_admin{border-top:2px solid #fb7185}.kanban-col.col-done{border-top:2px solid #22c55e}.kanban-col.col-archive{border-top:2px solid #64748b}
+.task-line-card.task-line-evidence{opacity:.86;border-style:dashed}
 .kanban-col-hd{padding:12px 12px 8px;background:rgba(2,6,23,.26)}
 .kanban-col-title{font-size:15px;text-transform:uppercase;letter-spacing:.03em}
 .kanban-col-badge{border:1px solid rgba(148,163,184,.18);background:rgba(255,255,255,.035)}
@@ -7730,6 +7731,7 @@ function isTransientSdkPayload(raw,st,errMsg){
 // State
 // ════════════════════════════════════════════
 let tasks=[], taskSubmissions=[], reports=[], issues=[], events=[], doorbells=[], failures=[], sysEvents=[], approvals=[], chatHistory=[], ledgerThreads=[], diagnosticsList=[], diagnosticsSummary={};
+let projectGraphProjection=null;
 let taskPrimaryTab='formal', selectedTaskSubmissionId='';
 window._diagNavOpen=false;
 let issueStatusTab='open', issueSearchQ='', _isSelectedFn=null;
@@ -11003,7 +11005,7 @@ async function loadAll(){
     }
   } catch (e) {}
 
-  const[tr,subr,rr,ir,ar,sr,lr,dr,_teamLoad,_sessSync]=await Promise.allSettled([
+  const[tr,subr,rr,ir,ar,sr,lr,dr,pgr,_teamLoad,_sessSync]=await Promise.allSettled([
     fetch('/api/v2/tasks?limit=200').then(r=>r.json()),
     fetch('/api/v2/task-submissions?limit=200',{cache:'no-store'}).then(r=>r.json()),
     fetch('/api/v2/reports?limit=200').then(r=>r.json()),
@@ -11012,6 +11014,7 @@ async function loadAll(){
     fetch('/api/v2/reports/done-seqs').then(r=>r.json()),
     fetch('/api/v2/ledger/threads').then(r=>r.json()),
     fetch('/api/v2/diagnostics').then(r=>r.json()),
+    fetch('/api/v2/project-graph',{cache:'no-store'}).then(r=>r.json()),
     loadTeam(),
     syncActiveSessions(),
   ]);
@@ -11029,6 +11032,9 @@ async function loadAll(){
   if(lr.status==='fulfilled'){
     const lv=lr.value;
     ledgerThreads=Array.isArray(lv)?lv:(Array.isArray(lv?.threads)?lv.threads:[]);
+  }
+  if(pgr.status==='fulfilled'&&pgr.value?.schema_version){
+    projectGraphProjection=pgr.value;
   }
   if(rr.status==='fulfilled')reports=parseReportsApiResponse(rr.value);
   if(ir.status==='fulfilled'){
@@ -13607,6 +13613,21 @@ function renderApprovals(el){
         ${a.summary ? `<div style="margin-top:4px"><span style="color:var(--text3)">摘要：</span>${esc(String(a.summary).slice(0,320))}${String(a.summary).length > 320 ? '…' : ''}</div>` : ''}
       </div>`
       : '';
+    const approvalSnapshot=a.request&&a.request.snapshot?a.request.snapshot:{};
+    const isCleanup=a.request&&a.request.action&&a.request.action.executor==='filesystem.cleanup';
+    const operationDetailHtml=isCleanup
+      ?`<div class="ap-context" style="font-size:13px;margin:6px 0;line-height:1.55;color:var(--text2)">
+        <div><span style="color:var(--text3)">精确目标：</span>${esc(operationTarget)}</div>
+        <div><span style="color:var(--text3)">影响：</span>${esc(String(approvalSnapshot.file_count||0))} files · ${esc(String(approvalSnapshot.directory_count||0))} dirs · ${esc(String(approvalSnapshot.total_size||0))} bytes</div>
+        <div><span style="color:var(--text3)">类型：</span>${esc(JSON.stringify(approvalSnapshot.file_types||{}))}</div>
+        <div><span style="color:var(--text3)">时间范围：</span>${esc(approvalSnapshot.earliest_modified_at||'—')} → ${esc(approvalSnapshot.latest_modified_at||'—')}</div>
+        <div><span style="color:var(--text3)">保护排除：</span>${esc(JSON.stringify(approvalSnapshot.protected_exclusions||[]))}</div>
+        <div><span style="color:var(--text3)">处置：</span>${esc(approvalSnapshot.requested_mode||'quarantine')} · 保留 ${esc(String(approvalSnapshot.retention_days||14))} 天 · ${esc(approvalSnapshot.recovery||a.recovery||'')}</div>
+        <div class="mono" style="word-break:break-all"><span style="color:var(--text3)">Digest：</span>${esc(a.operation_digest||'')}</div>
+      </div>`
+      :(a.operation_digest
+        ?`<div class="mono" style="font-size:12px;color:var(--text3);word-break:break-all;margin:5px 0">Digest: ${esc(a.operation_digest)}</div>`
+        :'');
 
     const card=document.createElement('div');
     card.className='tc-card';
@@ -13627,6 +13648,7 @@ function renderApprovals(el){
       </div>
       ${adminQuestionHtml}
       ${contextHtml}
+      ${operationDetailHtml}
       ${triggerReasonHtml}
       ${!contextHtml && a.preview ? `<div class="tc-preview" style="font-size:14px;margin:4px 0;color:var(--text2)">${esc(a.preview.slice(0,200))}</div>` : ''}
       ${statusHint}
@@ -15819,7 +15841,18 @@ function taskListStatusCellHtml(f){
   const tip=taskListStatusCellTitle(f);
   const openChildren=openChildTasksForMainlineArchive(f);
   const childBadge=openChildren.length?`<span class="status-badge warn" style="background:rgba(251,191,36,.14);color:#fbbf24;border:1px solid rgba(251,191,36,.35)">${esc(t('task.archiveBlockedChildrenBadge',{n:openChildren.length}))}</span>`:'';
-  return `<td class="status-cell"${tip?` title="${esc(tip)}"`:''}>${childBadge||taskStatusBadge(f)}${executionGateCardHint(f)}</td>`;
+  const graphNode=_projectGraphTaskNode(f);
+  const businessLabel={
+    todo:lang==='en'?'To do':'待开始',
+    doing:lang==='en'?'Doing':'进行中',
+    waiting_qa:lang==='en'?'Waiting QA':'待 QA',
+    waiting_admin:lang==='en'?'Waiting ADMIN':'待 ADMIN',
+    done:lang==='en'?'Done':'已完成',
+  }[graphNode?.workflow_stage]||'';
+  const businessBadge=businessLabel
+    ?`<span class="status-badge" style="margin-right:4px;background:rgba(59,130,246,.12);color:#93c5fd;border:1px solid rgba(59,130,246,.3)">${esc(businessLabel)}</span>`
+    :'';
+  return `<td class="status-cell"${tip?` title="${esc(tip)}"`:''}>${businessBadge}${childBadge||taskStatusBadge(f)}${executionGateCardHint(f)}</td>`;
 }
 
 /** REVIEW 未通过 tooltip / 详情全文 */
@@ -18226,6 +18259,23 @@ function _kanbanTaskPool(){
   return taskPageVisiblePool();
 }
 
+function _projectGraphTaskNode(task){
+  const id=taskIdPrefix(String(task&&task.filename||task&&task.task_id||'')).toUpperCase();
+  if(!id||!Array.isArray(projectGraphProjection?.nodes))return null;
+  return projectGraphProjection.nodes.find(node=>
+    node?.type==='task'&&String(node.task_id||'').toUpperCase()===id
+  )||null;
+}
+
+function _taskBusinessStage(task){
+  const projected=_projectGraphTaskNode(task)?.workflow_stage;
+  if(['todo','doing','waiting_qa','waiting_admin','done'].includes(projected))return projected;
+  const scope=taskEffectiveScopeKey(task);
+  if(scope==='done'||scope==='archive')return 'done';
+  if(scope==='active'||scope==='review')return 'doing';
+  return 'todo';
+}
+
 function _renderKanbanSection() {
   const kanbanBoard = document.getElementById('task-kanban-board');
   if (!kanbanBoard) return;
@@ -18234,22 +18284,16 @@ function _renderKanbanSection() {
 
   // 五个物理生命周期列配置
   const cols = [
-    { id: 'inbox',   title: t('kanban.col.inbox'),   desc: 'inbox' },
-    { id: 'active',  title: t('kanban.col.active'), desc: 'active' },
-    { id: 'review',  title: t('kanban.col.review'),   desc: 'review' },
-    { id: 'done',    title: t('kanban.col.done'),   desc: 'done' },
-    { id: 'archive', title: t('kanban.col.archive'),   desc: 'archive' }
+    { id: 'todo',          title: lang==='en'?'To do':'待开始' },
+    { id: 'doing',         title: lang==='en'?'Doing':'进行中' },
+    { id: 'waiting_qa',    title: lang==='en'?'Waiting QA':'待 QA' },
+    { id: 'waiting_admin', title: lang==='en'?'Waiting ADMIN':'待 ADMIN' },
+    { id: 'done',          title: lang==='en'?'Done':'已完成' }
   ];
 
   kanbanBoard.innerHTML = cols.map(col => {
     // 筛选当前 scope 为该列的任务
-    let colTasks = pool.filter(t => {
-      const scope = taskEffectiveScopeKey(t);
-      if (col.id === 'inbox') {
-        return scope === 'inbox' || scope === 'lifecycle' || scope === 'admin';
-      }
-      return scope === col.id;
-    });
+    let colTasks = pool.filter(task => _taskBusinessStage(task)===col.id);
 
     // 针对每个 Agent 看板过滤器进行二次角色过滤（Thread 看板模式下不按角色收窄）
     if (_tsRole && !window._activeThreadId) {
@@ -18257,7 +18301,7 @@ function _renderKanbanSection() {
     }
     const oldest=colTasks.reduce((m,t)=>Math.max(m,taskAgeHours(t)),0);
     const humanCount=colTasks.filter(taskNeedsHuman).length;
-    const throughput=(col.id==='done'||col.id==='archive')?colTasks.length:0;
+    const throughput=col.id==='done'?colTasks.length:0;
 
     // 排序：P0 靠前，修改时间靠前
     colTasks.sort((a, b) => {
@@ -18285,6 +18329,7 @@ function _renderKanbanSection() {
       const reviewsN=taskFormalReviews(task).length;
       const humanGateN=taskHumanGateApprovals(task).length;
       const needsHuman=taskNeedsHuman(task);
+      const businessStage=_taskBusinessStage(task);
       const reportBadge = hasReport
         ? `<span class="badge" style="background:rgba(16,185,129,.15);color:#10b981;border:1px solid rgba(16,185,129,.35);padding:1px 5px;border-radius:4.5px;cursor:pointer;font-weight:600;font-size:14px" onclick="event.stopPropagation();rpOpenPreviewForTask('${sfn}')">${viewReportLabel}</span>`
         : '';
@@ -18305,6 +18350,7 @@ function _renderKanbanSection() {
             <span class="badge b-T" style="font-size:15px;padding:1px 4px">TASK</span>
             ${prioBadgeHtml}
             ${needsHuman ? `<span class="kb-evidence warn">needs_human</span>` : ''}
+            <span class="kb-evidence">${esc(businessStage)}</span>
             ${isLocked ? `<span class="ts-status ts-st-dispatched" style="font-size:14.5px;padding:1px 4px">${esc(t('ts.dispatched'))}</span>` : ''}
             ${ghost === 'red' ? `<span class="ghost-badge red" style="font-size:14.5px;padding:1px 4px">⚠ 超48h</span>` : ghost === 'amber' ? `<span class="ghost-badge" style="font-size:14.5px;padding:1px 4px;background:#fbbf24;color:#1e293b">⚠ 超24h</span>` : ''}
             ${reportBadge}
@@ -18420,9 +18466,137 @@ function buildTaskTimelineGroups(taskList){
   }).sort((a,b)=>taskTimelineTimestamp(b.root)-taskTimelineTimestamp(a.root));
 }
 
+function _renderProjectedTaskTree(host){
+  const graph=projectGraphProjection;
+  if(!graph||!Array.isArray(graph.nodes))return false;
+  const pool=taskPageVisiblePool();
+  const visibleTaskIds=new Set(pool.map(task=>
+    taskIdPrefix(String(task.filename||'')).toUpperCase()
+  ).filter(Boolean));
+  const taskNodes=graph.nodes.filter(node=>
+    node?.type==='task'&&visibleTaskIds.has(String(node.task_id||'').toUpperCase())
+  );
+  if(!taskNodes.length)return false;
+
+  const visibleIds=new Set(taskNodes.map(node=>node.id));
+  graph.nodes.filter(node=>node?.parent_id&&visibleIds.has(node.parent_id))
+    .forEach(node=>visibleIds.add(node.id));
+  const byId=new Map(graph.nodes.map(node=>[node.id,node]));
+  taskNodes.forEach(node=>{
+    let parent=node.parent_id;
+    while(parent&&byId.has(parent)&&!visibleIds.has(parent)){
+      visibleIds.add(parent);
+      parent=byId.get(parent)?.parent_id;
+    }
+  });
+  const children=new Map();
+  graph.nodes.filter(node=>visibleIds.has(node.id)).forEach(node=>{
+    const key=node.parent_id||'__root__';
+    if(!children.has(key))children.set(key,[]);
+    children.get(key).push(node);
+  });
+  children.forEach(rows=>rows.sort((a,b)=>{
+    const order={project:0,sprint:1,task:2,report:3,review:4,approval:5,issue:6,runtime_event:7,unlinked:8};
+    return (order[a.type]??9)-(order[b.type]??9)||
+      String(a.created_at||a.label||'').localeCompare(String(b.created_at||b.label||''));
+  }));
+  const taskById=new Map(pool.map(task=>[
+    taskIdPrefix(String(task.filename||'')).toUpperCase(),task
+  ]));
+  const stageLabel={
+    todo:lang==='en'?'To do':'待开始',
+    doing:lang==='en'?'Doing':'进行中',
+    waiting_qa:lang==='en'?'Waiting QA':'待 QA',
+    waiting_admin:lang==='en'?'Waiting ADMIN':'待 ADMIN',
+    done:lang==='en'?'Done':'已完成',
+  };
+  const typeLabel={
+    project:'PROJECT',sprint:'SPRINT/WP',task:'TASK',report:'REPORT',
+    review:'REVIEW',approval:'APPROVAL',issue:'ISSUE',
+    runtime_event:'RUNTIME',unlinked:'UNLINKED',
+  };
+  const rows=[];
+  const renderNode=(node,depth)=>{
+    const task=node.type==='task'
+      ?taskById.get(String(node.task_id||'').toUpperCase())
+      :null;
+    const fn=String(task?.filename||node.source?.filename||'');
+    if(task&&fn)_taskReg[fn]=task;
+    const status=node.type==='task'
+      ?(stageLabel[node.workflow_stage]||node.workflow_stage||'todo')
+      :(node.status||'');
+    const meta=[
+      node.task_id&&node.type!=='task'?node.task_id:'',
+      node.role||'',
+      node.lifecycle?`lifecycle:${node.lifecycle}`:'',
+      node.anomaly?`⚠ ${node.anomaly}`:'',
+    ].filter(Boolean).join(' · ');
+    const time=node.created_at
+      ?new Date(node.created_at).toLocaleString(_localeTag())
+      :'';
+    rows.push(`<div class="task-line-node-row">
+      <div class="task-line-time">${esc(time)}</div>
+      <div class="task-line-card-wrap${node.type==='project'?' is-root':''}" style="--task-line-depth:${Math.min(depth,12)}">
+        <div class="task-line-card${node.type!=='task'?' task-line-evidence':''}" data-fn="${esc(fn)}" data-node-type="${esc(node.type)}">
+          <span class="task-line-role">${esc(typeLabel[node.type]||String(node.type||'').toUpperCase())}</span>
+          <div class="task-line-main">
+            <div class="task-line-title">${esc(node.label||node.id)}</div>
+            <div class="task-line-meta">${esc(meta)}</div>
+          </div>
+          ${status?`<span class="task-line-status scope-${esc(node.workflow_stage||node.status||'')}">${esc(status)}</span>`:''}
+        </div>
+      </div>
+    </div>`);
+    const nodeChildren=children.get(node.id)||[];
+    const structural=nodeChildren.filter(child=>['project','sprint','task','unlinked'].includes(child.type));
+    const evidence=nodeChildren.filter(child=>!['project','sprint','task','unlinked'].includes(child.type));
+    structural.forEach(child=>renderNode(child,depth+1));
+    const evidencePreview=evidence.length>4?evidence.slice(-4):evidence;
+    evidencePreview.forEach(child=>renderNode(child,depth+1));
+    if(evidence.length>evidencePreview.length){
+      rows.push(`<div class="task-line-node-row">
+        <div class="task-line-time"></div>
+        <div class="task-line-card-wrap" style="--task-line-depth:${Math.min(depth+1,12)}">
+          <div class="task-line-card task-line-evidence">
+            <span class="task-line-role">EVIDENCE</span>
+            <div class="task-line-main">
+              <div class="task-line-title">${esc(lang==='en'
+                ?`${evidence.length-evidencePreview.length} earlier evidence records collapsed`
+                :`已折叠更早的 ${evidence.length-evidencePreview.length} 条证据`)}</div>
+              <div class="task-line-meta">${esc(lang==='en'?'Use reports/issues filters for the complete record':'完整记录可在报告/问题页面筛选查看')}</div>
+            </div>
+            <span class="task-line-status">${evidence.length}</span>
+          </div>
+        </div>
+      </div>`);
+    }
+  };
+  const roots=(children.get('__root__')||[]).filter(node=>node.type==='project');
+  const fallbackRoots=taskNodes.filter(node=>!node.parent_id||!visibleIds.has(node.parent_id));
+  (roots.length?roots:fallbackRoots).forEach(node=>renderNode(node,0));
+  host.innerHTML=`<div class="task-line-content">
+    <section class="task-line-group">
+      <div class="task-line-group-hd">
+        <span class="task-line-role">GRAPH</span>
+        <span class="task-line-group-title">${esc(graph.project_id||'project')} · ${taskNodes.length} TASK</span>
+        <span class="task-line-group-count">${graph.nodes.filter(node=>visibleIds.has(node.id)&&node.anomaly).length} ⚠</span>
+      </div>
+      <div class="task-line-nodes">${rows.join('')}</div>
+    </section>
+  </div>`;
+  host.querySelectorAll('.task-line-card[data-node-type="task"][data-fn]').forEach(card=>{
+    card.addEventListener('click',()=>{
+      const fn=card.dataset.fn||'';
+      if(fn)openTaskDetail(_taskReg[fn]||{filename:fn});
+    });
+  });
+  return true;
+}
+
 function _renderTaskTimeline(){
   const host=document.getElementById('task-timeline-board');
   if(!host)return;
+  if(_renderProjectedTaskTree(host))return;
   const groups=buildTaskTimelineGroups(taskPageVisiblePool());
   if(!groups.length){
     host.innerHTML=`<div class="task-line-empty">${esc(t('tp.timelineEmpty'))}</div>`;
@@ -18482,7 +18656,7 @@ function syncTaskPrimaryTabChrome(){
   const review=taskPrimaryTab==='submissions';
   document.getElementById('task-primary-formal')?.classList.toggle('on',!review);
   document.getElementById('task-primary-submissions')?.classList.toggle('on',review);
-  const blocked=taskSubmissions.filter(row=>['rejected','failed','formalization_failed'].includes(String(row.status))).length;
+  const blocked=taskSubmissions.filter(row=>['needs_revision','needs_approval','rejected','failed','formalization_failed'].includes(String(row.status))).length;
   const badge=document.getElementById('task-submission-badge');
   if(badge){
     badge.textContent=String(blocked);
@@ -18509,7 +18683,8 @@ function syncTaskPrimaryTabChrome(){
 
 function submissionStatusLabel(status){
   return ({
-    draft:'草稿',checking:'审查中',accepted:'已通过',rejected:'已拒绝',
+    draft:'草稿',checking:'审查中',accepted:'已通过',
+    needs_revision:'需要修订',needs_approval:'需要审批',rejected:'已拒绝',
     failed:'审查失败',abandoned:'已放弃',formalizing:'正式化中',
     created:'已生成正式任务',formalization_failed:'正式化失败'
   })[status]||status||'未知';
@@ -18518,6 +18693,8 @@ function submissionStatusLabel(status){
 function submissionStatusColor(status){
   if(status==='created'||status==='accepted')return '#4ade80';
   if(status==='rejected'||status==='failed'||status==='formalization_failed')return '#fca5a5';
+  if(status==='needs_approval')return '#fbbf24';
+  if(status==='needs_revision')return '#93c5fd';
   if(status==='abandoned')return 'var(--text3)';
   return '#fbbf24';
 }
@@ -18547,13 +18724,30 @@ function renderTaskSubmissionBoard(){
   }).join('');
   const findings=(selected?.blocking_findings||[]).map((finding,index)=>`
     <div style="margin-top:10px;padding:12px;border:1px solid rgba(248,113,113,.35);border-radius:9px;background:rgba(127,29,29,.12)">
-      <div style="font-weight:700;color:#fca5a5">${index+1}. ${esc(finding.id||'BLOCKING_FINDING')}${finding.field?' · '+esc(finding.field):''}</div>
+      <div style="font-weight:700;color:#fca5a5">${index+1}. ${esc(finding.finding_id||finding.id||'BLOCKING_FINDING')}${finding.severity?' · '+esc(finding.severity):''}${finding.field?' · '+esc(finding.field):''}</div>
+      ${finding.section?`<div style="margin-top:4px;color:var(--text3)">位置：${esc(finding.section)} · 行 ${Number(finding.line_start||0)}–${Number(finding.line_end||finding.line_start||0)}</div>`:''}
+      ${finding.original_excerpt?`<pre style="margin-top:6px;white-space:pre-wrap;color:#cbd5e1">${esc(finding.original_excerpt)}</pre>`:''}
       <div style="margin-top:6px">${esc(finding.message||'')}</div>
+      ${finding.impact?`<div style="margin-top:6px"><span style="color:var(--text3)">影响：</span>${esc(finding.impact)}</div>`:''}
+      ${finding.required_capability?`<div style="margin-top:4px"><span style="color:var(--text3)">所需能力：</span>${esc(finding.required_capability)}</div>`:''}
+      ${finding.current_support?`<div style="margin-top:4px"><span style="color:var(--text3)">当前支持：</span>${esc(finding.current_support)}</div>`:''}
       ${finding.expected?`<div style="margin-top:6px"><span style="color:var(--text3)">期望：</span>${esc(String(finding.expected))}</div>`:''}
       ${finding.actual?`<div style="margin-top:4px"><span style="color:var(--text3)">实际：</span>${esc(Array.isArray(finding.actual)?finding.actual.join(', '):String(finding.actual))}</div>`:''}
       ${finding.suggested_fix?`<div style="margin-top:4px;color:#93c5fd"><span style="color:var(--text3)">修复建议：</span>${esc(finding.suggested_fix)}</div>`:''}
+      ${finding.suggested_replacement?`<div style="margin-top:4px;color:#a7f3d0"><span style="color:var(--text3)">替换文本：</span>${esc(finding.suggested_replacement)}</div>`:''}
     </div>`).join('');
-  const editable=selected&&!selected.legacy_anomaly&&['rejected','failed','formalization_failed'].includes(selected.status);
+  const matrixRows=(selected?.capability_matrix||[]).map(item=>`
+    <tr>
+      <td>${esc(item.task_step||'')}</td><td>${esc(item.execution_role||'')}</td>
+      <td>${esc(item.required_capability||'')}</td><td>${esc(item.current_policy||'')}</td>
+      <td>${esc(item.risk||'')}</td><td>${esc(item.conclusion||'')}</td>
+      <td>${esc(item.suggested_fix||'')}</td>
+    </tr>`).join('');
+  const capabilityMatrix=matrixRows?`
+    <details style="margin-top:14px"><summary style="cursor:pointer;color:#93c5fd">能力矩阵 (${(selected?.capability_matrix||[]).length})</summary>
+      <div style="overflow:auto;margin-top:8px"><table class="tbl"><thead><tr><th>任务步骤</th><th>角色</th><th>所需能力</th><th>策略</th><th>风险</th><th>结论</th><th>建议</th></tr></thead><tbody>${matrixRows}</tbody></table></div>
+    </details>`:'';
+  const editable=selected&&!selected.legacy_anomaly&&['needs_revision','needs_approval','rejected','failed','formalization_failed'].includes(selected.status);
   const legacyOptionLabels={
     convert_to_submission:'转为新的投递记录后修订',
     mark_legacy_invalid:'标记为旧版无效任务并保留审计',
@@ -18578,9 +18772,15 @@ function renderTaskSubmissionBoard(){
         <span style="color:${submissionStatusColor(selected?.status)}">${esc(submissionStatusLabel(selected?.status))}</span>
       </div>
       <div style="margin-top:8px;font-size:12px;color:var(--text3)">${esc(selected?.submission_id||'')} · 正式任务 ${esc(selected?.formal_task_id||'未生成')} · digest ${esc((selected?.content_digest||'').slice(0,16))}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <button class="hbtn" onclick="downloadTaskAdmission('md')">下载 Markdown</button>
+        <button class="hbtn" onclick="downloadTaskAdmission('json')">下载 JSON</button>
+        <button class="hbtn" onclick="copyTaskAdmissionSuggestions()">复制建议</button>
+      </div>
       ${selected?.error?`<div style="margin-top:10px;color:#fca5a5">${esc(selected.error)}</div>`:''}
       ${legacyOptions}
       ${findings||'<div style="margin-top:14px;color:#4ade80">当前没有阻塞项。</div>'}
+      ${capabilityMatrix}
       <div style="margin-top:16px"><label style="display:block;margin-bottom:5px;color:var(--text3)">任务标题</label>
         <input id="submission-revise-subject" class="ci" value="${esc(selected?.subject||'')}" ${editable?'':'disabled'} style="width:100%">
       </div>
@@ -18618,6 +18818,70 @@ async function reviseTaskSubmissionFromPanel(submissionId){
   }catch(error){showToast('重新审查失败：'+String(error?.message||error),'#fca5a5',5000);}
 }
 
+function selectedTaskSubmission(){
+  return taskSubmissions.find(row=>row.submission_id===selectedTaskSubmissionId)||null;
+}
+
+function downloadTaskAdmission(format){
+  const row=selectedTaskSubmission();
+  if(!row)return;
+  const findings=Array.isArray(row.blocking_findings)?row.blocking_findings:[];
+  const matrix=Array.isArray(row.capability_matrix)?row.capability_matrix:[];
+  let content='';
+  let type='application/json';
+  let extension='json';
+  if(format==='md'){
+    type='text/markdown;charset=utf-8';
+    extension='md';
+    content=[
+      `# 任务书准入审查：${row.subject||row.submission_id}`,'',
+      `- submission_id: ${row.submission_id}`,
+      `- decision: ${row.decision||row.status}`,
+      `- revision: ${Number(row.admission_revision||0)}`,
+      `- formal_task_id: ${row.formal_task_id||'未生成'}`,'',
+      '## Findings','',
+      ...findings.flatMap((finding,index)=>[
+        `### ${index+1}. ${finding.finding_id||finding.id||'FINDING'}`,'',
+        `- severity: ${finding.severity||''}`,
+        `- category: ${finding.category||''}`,
+        `- location: ${finding.section||''}:${Number(finding.line_start||0)}`,
+        `- message: ${finding.message||''}`,
+        `- impact: ${finding.impact||''}`,
+        `- suggested_fix: ${finding.suggested_fix||''}`,
+        `- suggested_replacement: ${finding.suggested_replacement||''}`,'',
+      ]),
+      '## Capability Matrix','',
+      '| 任务步骤 | 执行角色 | 所需能力 | 当前策略 | 风险 | 结论 | 修改建议 |',
+      '|---|---|---|---|---|---|---|',
+      ...matrix.map(item=>`| ${String(item.task_step||'').replace(/\|/g,'\\|')} | ${item.execution_role||''} | ${item.required_capability||''} | ${item.current_policy||''} | ${item.risk||''} | ${item.conclusion||''} | ${String(item.suggested_fix||'').replace(/\|/g,'\\|')} |`),
+      '',
+    ].join('\n');
+  }else{
+    content=JSON.stringify({
+      submission_id:row.submission_id,subject:row.subject,decision:row.decision,
+      status:row.status,admission_revision:row.admission_revision,
+      formal_task_id:row.formal_task_id,content_digest:row.content_digest,
+      blocking_findings:findings,capability_matrix:matrix,
+    },null,2);
+  }
+  const url=URL.createObjectURL(new Blob([content],{type}));
+  const anchor=document.createElement('a');
+  anchor.href=url;
+  anchor.download=`${row.submission_id||'task-admission'}.${extension}`;
+  anchor.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+async function copyTaskAdmissionSuggestions(){
+  const row=selectedTaskSubmission();
+  if(!row)return;
+  const text=(row.blocking_findings||[])
+    .map((finding,index)=>`${index+1}. ${finding.suggested_replacement||finding.suggested_fix||finding.message||''}`)
+    .join('\n');
+  await navigator.clipboard.writeText(text);
+  showToast('已复制修订建议','#4ade80');
+}
+
 async function abandonTaskSubmissionFromPanel(submissionId){
   if(!confirm('确认放弃这次投递？该记录会保留用于审计。'))return;
   const response=await fetch('/api/v2/task-submissions/'+encodeURIComponent(submissionId)+'/abandon',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
@@ -18636,13 +18900,15 @@ function showRejectedTaskSubmission(payload,messageNode){
     selectedTaskSubmissionId=payload.submission.submission_id;
   }
   taskPrimaryTab='submissions';
+  const decision=String(payload?.decision||payload?.submission?.decision||'rejected');
+  const label=decision==='needs_approval'?'任务书需要风险预授权':decision==='needs_revision'?'任务书需要修订':'任务书被拒绝';
   if(messageNode){
-    messageNode.textContent='任务书未通过准入审查，未生成正式 TASK。请在“投递审查”中查看并修订。';
+    messageNode.textContent=label+'，未生成正式 TASK。请在“投递审查”中查看详情。';
     messageNode.style.cssText='display:block;color:var(--red)';
   }
   if(typeof navTo==='function')navTo('tasks');
   renderTaskPage();
-  showToast('任务书未通过审查；没有生成正式任务。','#fca5a5',6000);
+  showToast(label+'；没有生成正式任务。',decision==='needs_approval'?'#fbbf24':'#fca5a5',6000);
 }
 
 function renderTaskPage(){
@@ -24809,11 +25075,13 @@ function _renderGitDashboardCard(d){
   if(d.error){card.innerHTML='<div style="color:var(--red);font-size:14px">'+esc(d.error)+'</div>';return;}
   const productUncommitted=Number(d.productUncommitted??d.uncommitted??0);
   const runtimeUncommitted=Number(d.runtimeUncommitted??0);
+  const workspaceUncommitted=Number(d.workspaceUncommitted??0);
+  const excludedUncommitted=runtimeUncommitted+workspaceUncommitted;
   const dirtyEl=productUncommitted>0
     ?`<span class="git-dirty">`+esc(`Product files: ${productUncommitted} uncommitted`)+'</span>'
     :`<span class="git-clean">`+esc(t('git.cleanShort'))+'</span>';
   const trackingEl=_renderGitTrackingState(d,12);
-  const runtimeEl=`<span style="font-size:12px;color:var(--text3)">`+esc(`FCoP runtime records: ${runtimeUncommitted} ignored`)+'</span>';
+  const runtimeEl=`<span style="font-size:12px;color:var(--text3)">`+esc(`Non-mother changes: ${excludedUncommitted} (project workspace ${workspaceUncommitted} · FCoP/runtime config ${runtimeUncommitted}; excluded from mother commit)`)+'</span>';
   card.innerHTML=`
     <div class="git-row">
       <span style="color:var(--text3);font-size:14px">${esc(t('git.branch'))}</span>
@@ -24868,11 +25136,13 @@ function _applyGitStatusData(d, target){
         </div>`:'';
       const productUncommitted=Number(d.productUncommitted??d.uncommitted??0);
       const runtimeUncommitted=Number(d.runtimeUncommitted??0);
+      const workspaceUncommitted=Number(d.workspaceUncommitted??0);
+      const excludedUncommitted=runtimeUncommitted+workspaceUncommitted;
       const dirtyEl=productUncommitted>0
         ?`<span class="git-dirty">`+esc(`● ${productUncommitted} 个产品文件未提交`)+'</span>'
         :`<span class="git-clean">`+esc(t('git.cleanShort'))+'</span>';
       const trackingEl=_renderGitTrackingState(d,13);
-      const runtimeEl=`<span style="font-size:13px;color:var(--text3)">· FCoP 运行记录 ${runtimeUncommitted}（不参与提交）</span>`;
+      const runtimeEl=`<span style="font-size:13px;color:var(--text3)">· 非母版变更 ${excludedUncommitted}（项目工作区 ${workspaceUncommitted} · FCoP/运行配置 ${runtimeUncommitted}，不参与母版提交）</span>`;
       card.innerHTML=`
         ${scopeLine}
         <div class="git-row">

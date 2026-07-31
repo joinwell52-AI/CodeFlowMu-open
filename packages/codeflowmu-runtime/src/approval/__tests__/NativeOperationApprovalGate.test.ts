@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { evaluateNativeOperationBoundary } from "../NativeOperationApprovalGate.ts";
@@ -103,6 +106,38 @@ test("ordinary docs remain writable outside governance storage", async () => {
     args: { path: "docs/new-design-note.md" },
   });
   assert.equal(decision.decision, "ALLOW");
+});
+
+test("structured cleanup creates an approval while source deletion is denied", async () => {
+  const projectRoot = mkdtempSync(join(tmpdir(), "cfm-native-cleanup-"));
+  try {
+    const cache = join(projectRoot, "cache");
+    mkdirSync(cache, { recursive: true });
+    writeFileSync(join(cache, "runtime.log"), "log");
+    const cleanup = await evaluateNativeOperationBoundary({
+      ...base,
+      projectRoot,
+      toolName: "filesystem.cleanup",
+      args: { targets: [cache], mode: "quarantine" },
+    });
+    assert.equal(cleanup.decision, "REQUIRE_APPROVAL");
+    if (cleanup.decision === "REQUIRE_APPROVAL") {
+      assert.equal(cleanup.input.request.action.executor, "filesystem.cleanup");
+      assert.equal(cleanup.input.request.snapshot["file_count"], 1);
+    }
+
+    const source = join(projectRoot, "new-source.ts");
+    writeFileSync(source, "export const value = 1;\n");
+    const denied = await evaluateNativeOperationBoundary({
+      ...base,
+      projectRoot,
+      toolName: "delete_file",
+      args: { path: source },
+    });
+    assert.equal(denied.decision, "DENY");
+  } finally {
+    rmSync(projectRoot, { recursive: true, force: true });
+  }
 });
 
 test("format text is harmless but a real disk format command is denied", async () => {

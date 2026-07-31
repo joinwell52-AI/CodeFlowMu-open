@@ -92,6 +92,18 @@ export const PM_RUNTIME_CONTROL_TOOLS = [
   "pm.review_check",
   "pm.write_planning_artifact",
   "pm.record_planning_skill_evidence",
+  "pm.inspect_task_spec",
+  "pm.inspect_capability_matrix",
+  "pm.inspect_project_baseline",
+  "pm.inspect_runtime_topology",
+  "pm.create_child_task",
+  "pm.request_operation_approval",
+  "pm.capture_evidence",
+  "software.inventory",
+  "software.search",
+  "software.request_install",
+  "software.verify_package",
+  "software.install",
 ] as const;
 
 export function roleCodeFromAgentId(agentId: string): string {
@@ -246,8 +258,16 @@ export function toolsForAgent(
   layer: AgentLayer,
 ): readonly string[] {
   const base = toolsForProfile(profileForAgent(agentId, layer));
-  if (roleCodeFromAgentId(agentId) !== "PM") return base;
-  return [...new Set([...base, ...PM_RUNTIME_CONTROL_TOOLS])];
+  const role = roleCodeFromAgentId(agentId);
+  if (role === "OPS") return [...new Set([...base, "software.install"])];
+  if (role !== "PM") return base;
+  return [
+    ...new Set(
+      [...base, ...PM_RUNTIME_CONTROL_TOOLS].filter(
+        (tool) => tool !== "software.install",
+      ),
+    ),
+  ];
 }
 
 /**

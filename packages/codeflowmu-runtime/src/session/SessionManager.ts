@@ -69,7 +69,7 @@ import {
   rebuildSdkFailureForSessionEnd,
   type SessionRunWithSdkFailure,
 } from "./sdk-failure-classifier.ts";
-
+import { OPERATION_APPROVAL_REQUIRED } from "../approval/index.ts";
 
 /**
  * Payload passed into `Agent.send()` for a freshly started session.
@@ -1032,11 +1032,14 @@ export class SessionManager {
     const settledWithSdkError =
       typeof (settledRun as SessionRun & { sdk_error?: unknown }).sdk_error === "string" &&
       String((settledRun as SessionRun & { sdk_error?: unknown }).sdk_error).trim().length > 0;
+    const actionPausedForApproval =
+      settledRun.failure_code === OPERATION_APPROVAL_REQUIRED;
     const settledWithFailure =
-      settledRun.status === "failed" ||
-      Boolean(settledRun.failure_code) ||
-      settledWithSdkError ||
-      err != null;
+      !actionPausedForApproval &&
+      (settledRun.status === "failed" ||
+        Boolean(settledRun.failure_code) ||
+        settledWithSdkError ||
+        err != null);
 
     // A stale or earlier REPORT must never turn a failed SDK run into a
     // completed session. Runtime failure evidence takes precedence.
@@ -1049,6 +1052,15 @@ export class SessionManager {
         (err != null && isTransientSdkError(err))
           ? { failure_code: TRANSIENT_SDK_DELAYED }
           : {}),
+      };
+    } else if (actionPausedForApproval) {
+      // Cursor SDK cannot suspend one in-flight native tool call. The run is
+      // cancelled before side effects, but the durable session/task remains a
+      // recoverable approval wait instead of being recorded as a failure.
+      protocolStatus = "completed";
+      finalRun = {
+        ...finalRun,
+        status: "finished",
       };
     } else if (reportOnDisk) {
       protocolStatus = "completed";
@@ -1091,7 +1103,9 @@ export class SessionManager {
     await this._releaseLease(sessionId);
 
     let settlement_reason: string;
-    if (reportOnDisk && protocolStatus === "completed") {
+    if (actionPausedForApproval) {
+      settlement_reason = "waiting_operation_approval";
+    } else if (reportOnDisk && protocolStatus === "completed") {
       settlement_reason = "completed-with-report";
     } else if (reportOnDisk && protocolStatus === "cancelled") {
       settlement_reason = "cancelled-after-success";

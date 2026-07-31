@@ -11,12 +11,37 @@ import { PM_BUILTIN_SKILLS } from "../PmSkillManifest.ts";
 
 describe("PmRuntimeControlTools", () => {
   it("keeps every PM builtin manifest skill backed by a real Runtime tool", () => {
-    assert.deepEqual(
-      [...PM_RUNTIME_CONTROL_TOOL_NAMES].sort(),
-      PM_BUILTIN_SKILLS.map((skill) => skill.skill_id).sort(),
-    );
+    const runtimeTools = new Set(PM_RUNTIME_CONTROL_TOOL_NAMES);
+    for (const skill of PM_BUILTIN_SKILLS) {
+      assert.equal(runtimeTools.has(skill.skill_id), true, skill.skill_id);
+    }
     for (const definition of PM_RUNTIME_CONTROL_TOOL_DEFINITIONS) {
       assert.equal(definition.inputSchema.type, "object");
+    }
+  });
+
+  it("exposes structured inspection, approval and evidence tools", () => {
+    const names = new Set(PM_RUNTIME_CONTROL_TOOL_NAMES);
+    for (const name of [
+      "pm.inspect_task_spec",
+      "pm.inspect_capability_matrix",
+      "pm.inspect_project_baseline",
+      "pm.inspect_runtime_topology",
+      "pm.create_child_task",
+      "pm.request_operation_approval",
+      "pm.capture_evidence",
+      "software.inventory",
+      "software.search",
+      "software.request_install",
+      "software.verify_package",
+      "software.install",
+    ] as const) {
+      assert.equal(names.has(name), true, name);
+      assert.ok(
+        PM_RUNTIME_CONTROL_TOOL_DEFINITIONS.some(
+          (definition) => definition.name === name,
+        ),
+      );
     }
   });
 
@@ -77,6 +102,17 @@ describe("PmRuntimeControlTools", () => {
     });
     assert.equal(result.ok, false);
     assert.equal(result.outcome, "error");
+  });
+
+  it("keeps software.install OPS-only", async () => {
+    const rejected = await invokePmRuntimeControlTool({
+      toolName: "software.install",
+      args: { approval_id: "APPROVAL-1", execution_token: "secret" },
+      agentId: "PM-01",
+      panelUrl: "http://127.0.0.1:1",
+    });
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error, "software.install is OPS-only");
   });
 
   it("forwards planning evidence with the real caller Session", async () => {

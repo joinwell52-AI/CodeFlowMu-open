@@ -282,7 +282,7 @@ test("SdkRunHandle: exact git push creates a pre-action approval and leaves remo
     projectRoot: repo,
   });
   const settled = await handle.whenSettled();
-  assert.equal(settled.status, "failed");
+  assert.equal(settled.status, "finished");
   assert.equal(settled.failure_code, OPERATION_APPROVAL_REQUIRED);
   assert.match(cancelReason ?? "", /operation_boundary:shell/);
   const approvals = new OperationApprovalService({ projectRoot: repo }).list();

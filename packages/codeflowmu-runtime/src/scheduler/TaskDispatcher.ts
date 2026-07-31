@@ -133,6 +133,7 @@ import {
   SdkCooldownActiveError,
 } from "../_internal/SdkCooldownRegistry.ts";
 import { zeroToolcallCircuitBreaker } from "../_internal/ZeroToolcallCircuitBreaker.ts";
+import { OPERATION_APPROVAL_REQUIRED } from "../approval/index.ts";
 import {
   enqueueAgentTask,
   isTaskPaused,
@@ -2079,16 +2080,17 @@ export class TaskDispatcher {
       return;
     }
     const st = String(payload?.status ?? "").toLowerCase();
-    if (st !== "failed" && st !== "timeout") return;
-    if (payload?.report_written === true) return;
-
     const rawTaskId =
       String(payload?.task_id ?? "").trim() || filename.replace(/\.md$/i, "");
     const taskId = resolveCanonicalTaskId(filename, { task_id: rawTaskId });
     const failureCode = String(payload?.failure_code ?? "").trim().toUpperCase();
     const failureCategory = String(payload?.failure_category ?? "").trim().toLowerCase();
+    const operationApprovalWait = failureCode === OPERATION_APPROVAL_REQUIRED;
+    if (!operationApprovalWait && st !== "failed" && st !== "timeout") return;
+    if (payload?.report_written === true) return;
     const isGovernanceBlock =
       failureCode === "CODEFLOWMU_POLICY_BLOCKED" ||
+      operationApprovalWait ||
       failureCategory === "policy_blocked" ||
       failureCategory === "governance";
     if (isGovernanceBlock) {
@@ -2098,6 +2100,16 @@ export class TaskDispatcher {
           payload?.reason ??
           "governance policy rejected this action",
       );
+      let approvalId = "";
+      if (operationApprovalWait) {
+        try {
+          const parsed = JSON.parse(reason) as Record<string, unknown>;
+          approvalId = String(parsed["approval_id"] ?? "").trim();
+        } catch {
+          approvalId =
+            reason.match(/"approval_id"\s*:\s*"([^"]+)"/)?.[1] ?? "";
+        }
+      }
       const rec = this._dispatchRetryRegistry.recordFailure(
         retryKey,
         new Error(reason),
@@ -2121,6 +2133,7 @@ export class TaskDispatcher {
             retry_policy: "manual",
             guard_worked: true,
             runtime_crashed: false,
+            ...(approvalId ? { approval_id: approvalId } : {}),
           }),
           "utf-8",
         );
@@ -2136,7 +2149,9 @@ export class TaskDispatcher {
         by: "runtime",
         from: "dispatched",
         to: "waiting_admin_decision",
-        note: `${failureCode || "CODEFLOWMU_POLICY_BLOCKED"}: guard worked; manual decision required`,
+        note: `${failureCode || "CODEFLOWMU_POLICY_BLOCKED"}: ${
+          approvalId ? `approval_id=${approvalId}; ` : ""
+        }guard worked; manual decision required`,
       }).catch(() => undefined);
       this._panelEvents?.emit("codeflowmu.task_blocked", {
         event: "TASK_GOVERNANCE_BLOCKED",
@@ -2150,6 +2165,7 @@ export class TaskDispatcher {
         guard_worked: true,
         runtime_crashed: false,
         decision_required: rec.decisionRequired,
+        ...(approvalId ? { approval_id: approvalId } : {}),
       });
       return;
     }

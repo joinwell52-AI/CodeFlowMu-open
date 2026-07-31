@@ -53,7 +53,7 @@ test("submission idempotency key returns the same durable record", async () => {
   }
 });
 
-test("rejected submission persists structured findings and no formal identity", async () => {
+test("needs-revision submission persists structured findings and no formal identity", async () => {
   const root = await mkdtemp(join(tmpdir(), "cfm-submission-store-"));
   try {
     const draft = await createTaskSubmission(root, {
@@ -62,8 +62,8 @@ test("rejected submission persists structured findings and no formal identity", 
       thread_key: "runtime-thread",
     });
     const checked = await checkTaskSubmission(root, draft.submission_id);
-    assert.equal(checked.status, "rejected");
-    assert.equal(checked.decision, "rejected");
+    assert.equal(checked.status, "needs_revision");
+    assert.equal(checked.decision, "needs_revision");
     assert.equal(checked.formal_task_id, null);
     assert.ok(
       checked.blocking_findings.some(
@@ -78,13 +78,13 @@ test("rejected submission persists structured findings and no formal identity", 
     const raw = JSON.parse(
       await readFile(taskSubmissionPath(root, draft.submission_id), "utf8"),
     );
-    assert.equal(raw.status, "rejected");
+    assert.equal(raw.status, "needs_revision");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("revision preserves rejection history and increments admission revision", async () => {
+test("revision preserves needs-revision history and increments admission revision", async () => {
   const root = await mkdtemp(join(tmpdir(), "cfm-submission-store-"));
   try {
     const draft = await createTaskSubmission(root, {
@@ -100,7 +100,7 @@ test("revision preserves rejection history and increments admission revision", a
     assert.equal(revised.admission_revision, 2);
     assert.equal(revised.status, "draft");
     assert.ok(
-      revised.history.some((entry) => entry.decision === "rejected"),
+      revised.history.some((entry) => entry.decision === "needs_revision"),
     );
     const accepted = await checkTaskSubmission(root, draft.submission_id);
     assert.equal(accepted.status, "accepted");

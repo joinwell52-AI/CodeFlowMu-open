@@ -23,6 +23,17 @@ export const PM_DEV_COLD_DISPATCH_FCOP_TOOLS = [
   "pm.close_admin_task",
   "pm.wake_downstream",
   "pm.review_check",
+  "pm.inspect_task_spec",
+  "pm.inspect_capability_matrix",
+  "pm.inspect_project_baseline",
+  "pm.inspect_runtime_topology",
+  "pm.create_child_task",
+  "pm.request_operation_approval",
+  "pm.capture_evidence",
+  "software.inventory",
+  "software.search",
+  "software.request_install",
+  "software.verify_package",
 ] as const;
 
 /** Defense-in-depth: PM must not mutate project files on dev cold dispatch. */

@@ -10,6 +10,7 @@ import { basename, dirname, join } from "node:path";
 
 import {
   evaluateTaskSpecAdmission,
+  type TaskSpecCapabilityMatrixRow,
   type TaskSpecAdmissionFinding,
 } from "@codeflowmu/runtime";
 import {
@@ -22,6 +23,8 @@ export type TaskSubmissionStatus =
   | "draft"
   | "checking"
   | "accepted"
+  | "needs_revision"
+  | "needs_approval"
   | "rejected"
   | "failed"
   | "abandoned"
@@ -33,7 +36,7 @@ export interface TaskSubmissionHistoryEntry {
   at: string;
   status: TaskSubmissionStatus;
   admission_revision: number;
-  decision: "accepted" | "rejected" | null;
+  decision: "accepted" | "needs_revision" | "needs_approval" | "rejected" | null;
   content_digest: string;
   idempotency_key: string;
   note?: string;
@@ -58,9 +61,10 @@ export interface TaskSubmissionRecord {
   content_digest: string;
   formal_task_id: string | null;
   pending_formal_task_id?: string;
-  decision: "accepted" | "rejected" | null;
+  decision: "accepted" | "needs_revision" | "needs_approval" | "rejected" | null;
   code: string | null;
   blocking_findings: TaskSpecAdmissionFinding[];
+  capability_matrix: TaskSpecCapabilityMatrixRow[];
   checked_at?: string;
   formalized_at?: string;
   superseded_by?: string;
@@ -151,7 +155,7 @@ function normalizePriority(value: string | undefined): "P0" | "P1" | "P2" | "P3"
 function historyKey(
   record: TaskSubmissionRecord,
   status: TaskSubmissionStatus,
-  decision: "accepted" | "rejected" | null,
+  decision: TaskSubmissionRecord["decision"],
 ): string {
   return [
     record.submission_id,
@@ -164,7 +168,7 @@ function historyKey(
 function appendHistory(
   record: TaskSubmissionRecord,
   status: TaskSubmissionStatus,
-  decision: "accepted" | "rejected" | null,
+  decision: TaskSubmissionRecord["decision"],
   note?: string,
 ): void {
   const idempotencyKey = historyKey(record, status, decision);
@@ -356,6 +360,7 @@ async function listLegacyRejectedTaskSubmissions(
         decision: "rejected",
         code: String(proof["code"] ?? "TASK_SPEC_INVALID"),
         blocking_findings: findings,
+        capability_matrix: [],
         checked_at: checkedAt || undefined,
         legacy_anomaly: true,
         legacy_task_path: hit.path,
@@ -492,6 +497,7 @@ export async function createTaskSubmission(
       decision: null,
       code: null,
       blocking_findings: [],
+      capability_matrix: [],
       ...(draft.idempotency_key
         ? { idempotency_key: draft.idempotency_key.trim() }
         : {}),
@@ -530,8 +536,8 @@ export async function checkTaskSubmission(
       record.decision = result.decision;
       record.code = result.code;
       record.blocking_findings = result.blocking_findings.map(enrichFinding);
-      record.status =
-        result.decision === "accepted" ? "accepted" : "rejected";
+      record.capability_matrix = result.capability_matrix;
+      record.status = result.decision;
       record.checked_at = new Date().toISOString();
       record.updated_at = record.checked_at;
       appendHistory(record, record.status, result.decision);
@@ -545,6 +551,7 @@ export async function checkTaskSubmission(
       record.decision = null;
       record.code = "TASK_SPEC_ADMISSION_FAILED";
       record.blocking_findings = [];
+      record.capability_matrix = [];
       record.error = error instanceof Error ? error.message : String(error);
       record.updated_at = new Date().toISOString();
       appendHistory(record, "failed", null, record.error);

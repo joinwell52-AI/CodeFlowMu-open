@@ -792,3 +792,55 @@ test("sdk_error takes precedence over an existing REPORT and marks session faile
   });
 });
 
+test("operation approval wait settles the session without marking the task run failed", async () => {
+  await withTempSessionDir(async ({ sessionStore, transcriptWriter, agentStore, rootDir }) => {
+    const sdk = new InMemorySdkAdapter();
+    sdk.sendHandleFactory = (spec) =>
+      new InMemoryRunHandle({
+        sessionId: spec.sessionId,
+        agentId: spec.agentId,
+        runId: "run-waiting-approval",
+        manualSettle: true,
+      });
+    const registry = new AgentRegistry({ store: agentStore, sdk });
+    const manager = new SessionManager({
+      registry,
+      sdk,
+      sessionStore,
+      transcriptWriter,
+      projectRoot: rootDir,
+    });
+    await registry.register(validAgentSpec());
+
+    let endedPayload: Record<string, unknown> | null = null;
+    manager.onEvent((event) => {
+      if (event.event_type === "runtime.session_ended") {
+        endedPayload = event.payload as Record<string, unknown>;
+      }
+    });
+    const handle = await manager.startSession("DEV-01", "TASK-waiting-approval", {
+      text: "push candidate",
+    });
+    (handle.activeRun as InMemoryRunHandle).settle({
+      status: "finished",
+      sdkError:
+        '{"code":"OPERATION_APPROVAL_REQUIRED","approval_id":"APPROVAL-20260731-test"}',
+      failureCode: "OPERATION_APPROVAL_REQUIRED",
+    });
+    await manager.awaitSettled(handle.session_id);
+
+    const persisted = await sessionStore.load(handle.session_id);
+    assert.equal(persisted?.protocol.status, "completed");
+    assert.ok(endedPayload);
+    assert.equal((endedPayload as Record<string, unknown>)["status"], "completed");
+    assert.equal(
+      (endedPayload as Record<string, unknown>)["settlement_reason"],
+      "waiting_operation_approval",
+    );
+    assert.equal(
+      (endedPayload as Record<string, unknown>)["failure_code"],
+      "OPERATION_APPROVAL_REQUIRED",
+    );
+  });
+});
+

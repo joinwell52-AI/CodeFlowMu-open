@@ -103,6 +103,8 @@ const DEV_OPS_ALLOW = uniqueTools(
   ["read_task"],
 );
 
+const OPS_ALLOW = new Set([...DEV_OPS_ALLOW, "software.install"]);
+
 const QA_ALLOW = uniqueTools(
   FCOP_READ,
   FCOP_EXECUTOR,
@@ -128,6 +130,17 @@ const PM_ALLOW = uniqueTools(
     "pm.review_check",
     "pm.write_planning_artifact",
     "pm.record_planning_skill_evidence",
+    "pm.inspect_task_spec",
+    "pm.inspect_capability_matrix",
+    "pm.inspect_project_baseline",
+    "pm.inspect_runtime_topology",
+    "pm.create_child_task",
+    "pm.request_operation_approval",
+    "pm.capture_evidence",
+    "software.inventory",
+    "software.search",
+    "software.request_install",
+    "software.verify_package",
   ],
 );
 
@@ -172,8 +185,9 @@ export function allowedToolsForRole(role: ToolGuardRole): Set<string> {
     case "PM":
       return PM_ALLOW;
     case "DEV":
-    case "OPS":
       return DEV_OPS_ALLOW;
+    case "OPS":
+      return OPS_ALLOW;
     case "QA":
       return QA_ALLOW;
     case "ADMIN":

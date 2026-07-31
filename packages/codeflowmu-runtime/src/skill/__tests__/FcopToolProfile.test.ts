@@ -93,10 +93,15 @@ describe("FcopToolProfile", () => {
     assert.equal(profileForLayer("admin"), "admin");
   });
 
-  it("exposes Runtime control tools only to the PM seat", () => {
+  it("exposes planning tools to PM and software.install only to OPS", () => {
     const pm = new Set(toolsForAgent("PM-01", "leader"));
-    for (const tool of PM_RUNTIME_CONTROL_TOOLS) assert(pm.has(tool));
+    for (const tool of PM_RUNTIME_CONTROL_TOOLS) {
+      assert.equal(pm.has(tool), tool !== "software.install", tool);
+    }
     const planner = new Set(toolsForAgent("PLANNER-01", "leader"));
     for (const tool of PM_RUNTIME_CONTROL_TOOLS) assert(!planner.has(tool));
+    const ops = new Set(toolsForAgent("OPS-01", "worker"));
+    assert.equal(ops.has("software.install"), true);
+    assert.equal(ops.has("software.request_install"), false);
   });
 });

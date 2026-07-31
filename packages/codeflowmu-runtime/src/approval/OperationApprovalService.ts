@@ -19,6 +19,9 @@ export const OPERATION_APPROVAL_KINDS = [
   "production_release",
   "security_authority_change",
   "governance_boundary_change",
+  "software_change",
+  "process_control",
+  "high_cost_operation",
 ] as const;
 
 export type OperationApprovalKind = (typeof OPERATION_APPROVAL_KINDS)[number];
@@ -41,8 +44,15 @@ export type OperationEffects = {
   production?: boolean;
   security_change?: boolean;
   governance_change?: boolean;
-  /** Observation only in this release; it MUST NOT create or deny approval without a quota model. */
+  software_change?: boolean;
+  process_control?: boolean;
   high_cost?: boolean;
+  prohibited?: boolean;
+  target_unbounded?: boolean;
+  credential_exposure?: boolean;
+  governance_bypass?: boolean;
+  force_push?: boolean;
+  out_of_scope?: boolean;
   unknown?: boolean;
 };
 
@@ -156,6 +166,9 @@ const KIND_PRIORITY: OperationApprovalKind[] = [
   "production_release",
   "destructive_operation",
   "external_write",
+  "software_change",
+  "process_control",
+  "high_cost_operation",
 ];
 
 function normalizeString(value: unknown): string {
@@ -187,6 +200,9 @@ function matchedKinds(effect: OperationEffects): OperationApprovalKind[] {
   if (effect.production) kinds.push("production_release");
   if (effect.security_change) kinds.push("security_authority_change");
   if (effect.governance_change) kinds.push("governance_boundary_change");
+  if (effect.software_change) kinds.push("software_change");
+  if (effect.process_control) kinds.push("process_control");
+  if (effect.high_cost) kinds.push("high_cost_operation");
   return kinds;
 }
 
@@ -212,6 +228,18 @@ export function classifyCapabilityRequest(request: CapabilityRequest): {
   }
   if (request.effect?.unknown) {
     return { decision: "DENY", risk_tags: [], reason: "impact_unknown" };
+  }
+  for (const [field, reason] of [
+    ["prohibited", "operation_permanently_prohibited"],
+    ["target_unbounded", "target_set_unbounded"],
+    ["credential_exposure", "credential_exposure_prohibited"],
+    ["governance_bypass", "governance_bypass_prohibited"],
+    ["force_push", "force_push_prohibited"],
+    ["out_of_scope", "operation_out_of_scope"],
+  ] as const) {
+    if (request.effect?.[field]) {
+      return { decision: "DENY", risk_tags: [], reason };
+    }
   }
   const tags = matchedKinds(request.effect ?? {});
   if (tags.length === 0) {

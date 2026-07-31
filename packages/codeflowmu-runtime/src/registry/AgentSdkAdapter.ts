@@ -640,6 +640,7 @@ export class CursorSdkAdapter implements AgentSdkAdapter {
       sessionId: spec.sessionId,
       agentId: spec.agentId,
       projectRoot: effectiveCwd,
+      ...(spec.pinnedTaskId ? { taskId: spec.pinnedTaskId } : {}),
       ...(spec.maxToolRounds != null ? { maxToolRounds: spec.maxToolRounds } : {}),
       tokenEstimate: estimateCursorSendTokens({
         text: spec.text,

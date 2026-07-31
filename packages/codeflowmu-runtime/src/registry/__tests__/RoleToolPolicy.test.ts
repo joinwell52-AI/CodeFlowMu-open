@@ -192,7 +192,7 @@ print(len(p.list_reports()))
   assert.equal(gate.allow, true);
 });
 
-test("PM FCoP nonexistent report/check Python API is not allowlisted", () => {
+test("PM unknown non-writing shell is not killed by a command allowlist", () => {
   const gate = evaluateRoleToolCall({
     agentId: "PM-01",
     toolName: "shell",
@@ -207,7 +207,8 @@ print(p.check(lang='zh'))
     projectRoot: "D:/CodeFlowMu-open/workspace/newproject",
     protectedRoots: ["D:/CodeFlowMu-open"],
   });
-  assert.equal(gate.allow, false);
+  assert.equal(gate.allow, true);
+  assert.equal(gate.severity, "warn");
 });
 
 test("PM FCoP one-shot read-only patrol shell is allowed", () => {

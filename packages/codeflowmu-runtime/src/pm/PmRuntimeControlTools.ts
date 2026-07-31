@@ -8,6 +8,18 @@ export const PM_RUNTIME_CONTROL_TOOL_NAMES = [
   "pm.review_check",
   "pm.write_planning_artifact",
   "pm.record_planning_skill_evidence",
+  "pm.inspect_task_spec",
+  "pm.inspect_capability_matrix",
+  "pm.inspect_project_baseline",
+  "pm.inspect_runtime_topology",
+  "pm.create_child_task",
+  "pm.request_operation_approval",
+  "pm.capture_evidence",
+  "software.inventory",
+  "software.search",
+  "software.request_install",
+  "software.verify_package",
+  "software.install",
 ] as const;
 
 export type PmRuntimeControlToolName =
@@ -137,6 +149,186 @@ export const PM_RUNTIME_CONTROL_TOOL_DEFINITIONS: readonly PmRuntimeControlToolD
       additionalProperties: false,
     },
   },
+  {
+    name: "pm.inspect_task_spec",
+    description: "在正式投递前运行 TaskSpecAdmission 2.0，返回四态决策和逐条修改建议。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: stringProp("可选预览 task_id"),
+        subject: stringProp("任务标题"),
+        body_markdown: stringProp("任务书 Markdown 正文"),
+        priority: stringProp("P0/P1/P2/P3"),
+        parent: stringProp("可选父 task_id"),
+        thread_key: stringProp("可选 thread_key"),
+      },
+      required: ["subject", "body_markdown"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "pm.inspect_capability_matrix",
+    description: "输出任务步骤、执行角色、所需能力、可用工具、当前策略、风险和修正建议。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: stringProp("可选预览 task_id"),
+        subject: stringProp("任务标题"),
+        body_markdown: stringProp("任务书 Markdown 正文"),
+        priority: stringProp("P0/P1/P2/P3"),
+        parent: stringProp("可选父 task_id"),
+        thread_key: stringProp("可选 thread_key"),
+      },
+      required: ["subject", "body_markdown"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "pm.inspect_project_baseline",
+    description: "安全读取项目根、分支、HEAD、工作树分类、版本和依赖状态。",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "pm.inspect_runtime_topology",
+    description: "读取 Panel 端口、进程、活动实例、Gateway、Data Root、Registry 与隔离状态。",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "pm.create_child_task",
+    description: "通过正式 FCoP writer 创建 PM 子任务，支持 parent、thread_key、depends_on、priority 与验收人。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        recipient: { type: "string", enum: ["DEV", "QA", "OPS"] },
+        subject: stringProp("子任务标题"),
+        body_markdown: stringProp("子任务正文"),
+        parent: stringProp("父 task_id"),
+        thread_key: stringProp("主线 thread_key"),
+        priority: stringProp("P0/P1/P2/P3"),
+        depends_on: { type: "array", items: { type: "string" } },
+        acceptor: stringProp("验收角色"),
+      },
+      required: ["recipient", "subject", "body_markdown", "parent", "thread_key", "acceptor"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "pm.request_operation_approval",
+    description: "主动提交后果驱动的操作审批，返回 operation_digest 与审批单。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: stringProp("关联 task_id"),
+        operation_type: stringProp("操作类型"),
+        targets: { type: "array", items: { type: "string" }, minItems: 1 },
+        reason: stringProp("操作原因"),
+        expected_benefit: stringProp("预期收益"),
+        risk: stringProp("风险分类"),
+        preview_manifest: { type: "object" },
+        rollback_plan: stringProp("回滚方案"),
+        expires_at: stringProp("可选失效时间"),
+        operation_digest: stringProp("可选调用方预计算摘要，仅用于对照"),
+      },
+      required: ["task_id", "operation_type", "targets", "reason", "expected_benefit", "risk", "rollback_plan"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "pm.capture_evidence",
+    description: "记录命令摘要、日志、截图、SHA、时间戳和环境身份，不执行被记录的命令。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: stringProp("关联 task_id"),
+        evidence_type: stringProp("command/log/screenshot/sha/environment"),
+        summary: stringProp("证据摘要"),
+        source: stringProp("证据来源路径、命令或 URL"),
+        sha256: stringProp("可选 SHA-256"),
+        captured_at: stringProp("可选 ISO 时间；默认由 Runtime 生成"),
+        environment_id: stringProp("环境身份"),
+        metadata: { type: "object" },
+      },
+      required: ["task_id", "evidence_type", "summary", "source"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "software.inventory",
+    description: "只读列出 Runtime、常用 Windows 应用和软件治理执行器状态。",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "software.search",
+    description: "只读搜索本机清单和受管软件源；不下载、不安装。",
+    inputSchema: {
+      type: "object",
+      properties: { query: stringProp("软件名称或精确包 id") },
+      required: ["query"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "software.verify_package",
+    description: "校验精确本地包的大小和 SHA-256，或核对受管包的来源、版本和签名声明。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        package_id: stringProp("包 id"),
+        package_path: stringProp("可选的精确本地文件路径"),
+        source: stringProp("来源"),
+        version: stringProp("版本"),
+        signature: stringProp("签名或签名状态"),
+        sha256: stringProp("期望 SHA-256"),
+      },
+      required: ["package_id", "source", "version"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "software.request_install",
+    description: "提交软件安装审批；只生成精确预览和审批，不执行安装。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: stringProp("关联 task_id"),
+        package_id: stringProp("受管软件源中的精确包 id"),
+        source: stringProp("当前仅支持 winget"),
+        version: stringProp("精确版本"),
+        signature: stringProp("签名或签名状态"),
+        sha256: stringProp("可选 SHA-256"),
+        install_directory: stringProp("安装目录"),
+        permissions: { type: "array", items: { type: "string" }, minItems: 1 },
+        rollback_plan: stringProp("回滚方法"),
+        expected_benefit: stringProp("预期收益"),
+        risk: stringProp("风险说明"),
+        installer_role: { type: "string", enum: ["OPS"] },
+      },
+      required: [
+        "task_id",
+        "package_id",
+        "source",
+        "version",
+        "install_directory",
+        "permissions",
+        "rollback_plan",
+        "installer_role",
+      ],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "software.install",
+    description: "执行已获批且摘要匹配的软件安装；仅 OPS，可用审批令牌只能使用一次。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        approval_id: stringProp("已批准的软件安装 approval_id"),
+        execution_token: stringProp("一次性 execution_token"),
+      },
+      required: ["approval_id", "execution_token"],
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 export function isPmRuntimeControlTool(
@@ -173,8 +365,18 @@ export async function invokePmRuntimeControlTool(input: {
   panelUrl?: string;
 }): Promise<Record<string, unknown>> {
   const agentId = String(input.agentId ?? "PM-01").trim();
-  if (!/^PM(?:[-.]|$)/i.test(agentId)) {
-    return { ok: false, outcome: "error", error: "PM runtime tools are PM-only" };
+  const softwareInstall = input.toolName === "software.install";
+  if (
+    (!softwareInstall && !/^PM(?:[-.]|$)/i.test(agentId)) ||
+    (softwareInstall && !/^OPS(?:[-.]|$)/i.test(agentId))
+  ) {
+    return {
+      ok: false,
+      outcome: "error",
+      error: softwareInstall
+        ? "software.install is OPS-only"
+        : "PM runtime tools are PM-only",
+    };
   }
   const panelUrl = String(
     input.panelUrl ?? process.env["CODEFLOWMU_PANEL_URL"] ?? "",
@@ -260,6 +462,92 @@ export async function invokePmRuntimeControlTool(input: {
         thread_key: optionalString(input.args, "thread_key") || undefined,
         caller_role: agentId,
         session_id: input.sessionId,
+      };
+      break;
+    case "pm.inspect_task_spec":
+    case "pm.inspect_capability_matrix":
+      method = "POST";
+      path = "/api/v2/pm/tools/inspect-task-spec";
+      body = {
+        ...input.args,
+        view:
+          input.toolName === "pm.inspect_capability_matrix"
+            ? "capability_matrix"
+            : "full",
+        current_task_id: input.currentTaskId,
+        caller_role: agentId,
+        session_id: input.sessionId,
+      };
+      break;
+    case "pm.inspect_project_baseline":
+      path = "/api/v2/pm/tools/project-baseline";
+      break;
+    case "pm.inspect_runtime_topology":
+      path = "/api/v2/pm/tools/runtime-topology";
+      break;
+    case "pm.create_child_task":
+      method = "POST";
+      path = "/api/v2/pm/tools/create-child-task";
+      body = {
+        ...input.args,
+        sender: "PM",
+        current_task_id: input.currentTaskId,
+        caller_role: agentId,
+        session_id: input.sessionId,
+      };
+      break;
+    case "pm.request_operation_approval":
+      method = "POST";
+      path = "/api/v2/pm/tools/request-operation-approval";
+      body = {
+        ...input.args,
+        actor: agentId,
+        session_id: input.sessionId,
+        current_task_id: input.currentTaskId,
+      };
+      break;
+    case "pm.capture_evidence":
+      method = "POST";
+      path = "/api/v2/pm/tools/capture-evidence";
+      body = {
+        ...input.args,
+        actor: agentId,
+        session_id: input.sessionId,
+        current_task_id: input.currentTaskId,
+      };
+      break;
+    case "software.inventory":
+      path = "/api/v2/software/inventory";
+      break;
+    case "software.search":
+      path = withQuery("/api/v2/software/search", {
+        query: requiredString(input.args, "query"),
+      });
+      break;
+    case "software.verify_package":
+      method = "POST";
+      path = "/api/v2/software/verify-package";
+      body = { ...input.args, actor: agentId, session_id: input.sessionId };
+      break;
+    case "software.request_install":
+      method = "POST";
+      path = "/api/v2/software/request-install";
+      body = {
+        ...input.args,
+        actor: agentId,
+        session_id: input.sessionId,
+        current_task_id: input.currentTaskId,
+      };
+      break;
+    case "software.install":
+      method = "POST";
+      path = "/api/v2/software/install";
+      body = {
+        ...input.args,
+        actor: agentId,
+        actor_role: "OPS",
+        session_id: input.sessionId,
+        current_task_id: input.currentTaskId,
       };
       break;
   }
