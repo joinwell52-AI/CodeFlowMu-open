@@ -7,11 +7,11 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
-  <meta name="cfm-pwa-bundle-version" content="V1.0.57" />
+  <meta name="cfm-pwa-bundle-version" content="V1.0.59" />
   <title>码流 CodeFlowMu</title>
-  <link rel="manifest" href="manifest.json?v=1.0.57" />
-  <link rel="stylesheet" href="mobile.css?v=1.0.57" />
-  <link rel="apple-touch-icon" href="logo-64.png?v=1.0.57" />
+  <link rel="manifest" href="manifest.json?v=1.0.59" />
+  <link rel="stylesheet" href="mobile.css?v=1.0.59" />
+  <link rel="apple-touch-icon" href="logo-64.png?v=1.0.59" />
   <script>
     (function () {
       try {
@@ -62,7 +62,7 @@
 <div class="app-shell" id="appShell">
   <header class="app-header">
     <div class="header-row1">
-      <img class="header-logo" src="logo-64.png?v=1.0.57" width="28" height="28" alt="" />
+      <img class="header-logo" src="logo-64.png?v=1.0.59" width="28" height="28" alt="" />
       <div class="header-brand-block">
         <span id="headerBrand" class="header-brand" data-i18n="appTitle">码流 CodeFlowMu</span>
         <span id="heroSub" class="header-sub" data-i18n="homeSloganFull">手机驭 AI，指令达团队</span>
@@ -95,7 +95,7 @@
       <div id="homeMainContent" class="home-main-content">
         <div class="home-pinned">
           <div id="updateBar" class="update-bar" role="button" tabindex="0" onclick="doForceUpdate()">
-            <span data-i18n="updateAvailable">🆕 发现新版本，点击立即更新</span>
+            <span id="updateBarText" data-i18n="updateAvailable">🆕 发现新版本，点击立即更新</span>
             <span class="ub-close" onclick="event.stopPropagation();hideUpdateBarFromDom()" title="关闭" data-i18n-title="close">✕</span>
           </div>
           <div class="stat-grid">
@@ -331,6 +331,11 @@
           <button id="langZhBtn" class="lang-btn active" type="button" data-i18n="langZh">中文</button>
           <button id="langEnBtn" class="lang-btn" type="button" data-i18n="langEn">English</button>
         </div>
+        <div id="releaseNotes" class="release-notes hidden">
+          <div class="detail-label" data-i18n="settingsReleaseNotes">本版更新</div>
+          <div id="releaseNotesName" class="release-notes-name"></div>
+          <ul id="releaseNotesChanges" class="release-notes-list"></ul>
+        </div>
       </div>
 
       <div class="card">
@@ -448,15 +453,15 @@
       <div class="approval-actions">
         <button type="button" id="fpApprovalApprove" class="btn-block-primary" data-i18n="approvalApprove">批准</button>
         <button type="button" id="fpApprovalReject" class="btn-secondary-block" data-i18n="approvalReject">驳回</button>
-        <button type="button" id="fpApprovalChanges" class="btn-secondary-block hidden">要求修改</button>
+        <button type="button" id="fpApprovalChanges" class="btn-secondary-block hidden" data-i18n="approvalChanges">要求修改</button>
       </div>
     </div>
     <div id="fpTaskActionBar" class="fp-task-action-bar"></div>
   </div>
 </div>
 
-  <script src="i18n.js?v=1.0.57"></script>
-  <script src="jsqr.min.js?v=1.0.57"></script>
-  <script src="mobile.js?v=1.0.57"></script>
+  <script src="i18n.js?v=1.0.59"></script>
+  <script src="jsqr.min.js?v=1.0.59"></script>
+  <script src="mobile.js?v=1.0.59"></script>
 </body>
 </html>

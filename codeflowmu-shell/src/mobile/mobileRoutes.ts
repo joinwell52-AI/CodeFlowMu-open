@@ -67,6 +67,7 @@ import {
   findChildTasksForParent,
   isAdminToPmTask,
   normalizedTaskId,
+  proxyPanelGet,
   proxyPanelPost,
   rowLinksTask,
   slimChildTasks,
@@ -971,6 +972,19 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
       res
         .status(500)
         .json({ ok: false, error: String(error), code: "SUBMISSION_LIST_FAILED" });
+    }
+  });
+
+  router.get("/project-graph", async (_req: Request, res: Response) => {
+    try {
+      const panelRes = await proxyPanelGet(ctx.panelPort, "/api/v2/project-graph");
+      res.status(panelRes.status).json(panelRes.body);
+    } catch (error) {
+      res.status(503).json({
+        ok: false,
+        error: String(error),
+        code: "PROJECT_GRAPH_PROXY_FAILED",
+      });
     }
   });
 

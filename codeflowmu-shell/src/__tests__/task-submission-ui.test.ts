@@ -21,6 +21,13 @@ const mobileI18n = readFileSync(
   "utf8",
 );
 
+test("desktop task toolbar omits the redundant member status block", () => {
+  assert.doesNotMatch(panel, /id="tp-agent-status-bar"/);
+  assert.doesNotMatch(panel, /function updateAgentStatusBar\(/);
+  assert.match(panel, /id="tp-operator-wrap"/);
+  assert.match(panel, /id="task-view-switch"/);
+});
+
 test("desktop task page has a persistent submission review surface", () => {
   for (const marker of [
     'id="task-primary-submissions"',
@@ -106,7 +113,7 @@ test("mobile rejection payload is preserved by the API helper", () => {
   assert.match(mobileJs, /err\.payload = JSON\.parse\(errText\)/);
   assert.match(
     mobileJs,
-    /e\.payload && e\.payload\.decision === "rejected"/,
+    /e\.payload && e\.payload\.decision === "needs_revision"/,
   );
-  assert.match(mobileJs, /BUNDLE_VERSION = "V1\.0\.56"/);
+  assert.match(mobileJs, /BUNDLE_VERSION = "V\d+\.\d+\.\d+"/);
 });

@@ -29,7 +29,7 @@ This is a CodeFlowMu development-team workflow above FCoP, not an FCoP core-prot
 
 CodeFlowMu Open Dev Team Edition 是 FCoP 协议治理下、通过 Cursor SDK 接口驱动的多 Agent 开发团队应用，面向本地安装、体验、二次开发和贡献。
 
-当前开源版本：`V1.2.5-open`
+当前开源版本：`V1.2.6-open`
 
 它不是母体私有仓库的完整镜像，也不是用来开发 CodeFlowMu 自身的目录。开发执行团队固定为 PM / DEV / OPS / QA；EVAL 作为独立观察者评估质量、风险与交付信号，不属于开发执行团队。
 
@@ -132,15 +132,15 @@ START-CODEFLOWMU-OPEN.bat
 ### 界面一览
 
 <p align="center">
-  <img src="docs/images/task-010r-a/01-home-workbench.png" width="420" alt="CodeFlowMu Open home workbench">
-  <img src="docs/images/task-010r-a/02-tasks.png" width="420" alt="CodeFlowMu Open tasks">
+  <img src="docs/images/pc/V1.2.5/pc-dashboard-V1.2.5.png" width="420" alt="CodeFlowMu Open home workbench">
+  <img src="docs/images/pc/V1.2.5/pc-tasks-V1.2.5.png" width="420" alt="CodeFlowMu Open tasks">
 </p>
 <p align="center">
-  <img src="docs/images/task-010r-a/03-task-detail.png" width="420" alt="CodeFlowMu Open task detail">
-  <img src="docs/images/task-010r-a/04-chat.png" width="420" alt="CodeFlowMu Open chat">
+  <img src="docs/images/pwa/V1.0.58/pwa-tasks-timeline-V1.0.58.png" width="420" alt="CodeFlowMu Open task timeline">
+  <img src="docs/images/pwa/V1.0.58/pwa-chat-V1.0.58.png" width="420" alt="CodeFlowMu Open chat">
 </p>
 <p align="center">
-  <img src="docs/images/task-010r-a/05-my-settings.png" width="420" alt="CodeFlowMu Open settings">
+  <img src="docs/images/pc/V1.2.5/pc-settings-general-V1.2.5.png" width="420" alt="CodeFlowMu Open settings">
 </p>
 
 ### 初始化源
@@ -183,7 +183,7 @@ GitHub 仓库 About / topics 建议见 [docs/open/github-repo-about.md](docs/ope
 
 CodeFlowMu Open Dev Team Edition is an FCoP-governed multi-agent development team application driven through Cursor SDK interfaces. It is the public open-source edition for local installation, hands-on evaluation, development, and contribution.
 
-Current open edition version: `V1.2.5-open`
+Current open edition version: `V1.2.6-open`
 
 It is not a full mirror of the private mother repository, and it is not meant to develop CodeFlowMu itself. The execution team is fixed to PM / DEV / OPS / QA. EVAL is an independent observer for quality, risk, and delivery signals, not a member of the development execution chain.
 
@@ -265,15 +265,15 @@ START-CODEFLOWMU-OPEN.bat
 ### Screenshots
 
 <p align="center">
-  <img src="docs/images/task-010r-a/01-home-workbench.png" width="420" alt="CodeFlowMu Open home workbench">
-  <img src="docs/images/task-010r-a/02-tasks.png" width="420" alt="CodeFlowMu Open tasks">
+  <img src="docs/images/pc/V1.2.5/pc-dashboard-V1.2.5.png" width="420" alt="CodeFlowMu Open home workbench">
+  <img src="docs/images/pc/V1.2.5/pc-tasks-V1.2.5.png" width="420" alt="CodeFlowMu Open tasks">
 </p>
 <p align="center">
-  <img src="docs/images/task-010r-a/03-task-detail.png" width="420" alt="CodeFlowMu Open task detail">
-  <img src="docs/images/task-010r-a/04-chat.png" width="420" alt="CodeFlowMu Open chat">
+  <img src="docs/images/pwa/V1.0.58/pwa-tasks-timeline-V1.0.58.png" width="420" alt="CodeFlowMu Open task timeline">
+  <img src="docs/images/pwa/V1.0.58/pwa-chat-V1.0.58.png" width="420" alt="CodeFlowMu Open chat">
 </p>
 <p align="center">
-  <img src="docs/images/task-010r-a/05-my-settings.png" width="420" alt="CodeFlowMu Open settings">
+  <img src="docs/images/pc/V1.2.5/pc-settings-general-V1.2.5.png" width="420" alt="CodeFlowMu Open settings">
 </p>
 
 ### Public Initialization Sources
@@ -310,6 +310,7 @@ See also:
 
 - [Install](INSTALL.md)
 - [Getting Started](docs/open/getting-started.md)
+- [PC Help Manual (Chinese, with screenshots)](docs/open/help.md)
 - [Edition Boundary](docs/open/edition-boundary.md)
 - [Gateway Policy](docs/open/gateway-demo.md)
 - [GitHub Repository About](docs/open/github-repo-about.md)

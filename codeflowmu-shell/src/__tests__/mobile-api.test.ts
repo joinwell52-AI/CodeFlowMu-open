@@ -251,6 +251,13 @@ test("mobile API: rejected submission stays out of TASK ledger and can be revise
     assert.equal(bind.status, 200);
     const token = String(bind.body.mobile_session_token);
 
+    const projectGraph = await request(app)
+      .get("/api/v2/mobile/project-graph")
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(projectGraph.status, 200);
+    assert.equal(projectGraph.body.schema_version, "1.0");
+    assert.ok(Array.isArray(projectGraph.body.nodes));
+
     const rejected = await request(app)
       .post("/api/v2/mobile/tasks")
       .set("Authorization", `Bearer ${token}`)
@@ -262,7 +269,7 @@ test("mobile API: rejected submission stays out of TASK ledger and can be revise
         to: "PM",
       });
     assert.equal(rejected.status, 422);
-    assert.equal(rejected.body.decision, "rejected");
+    assert.equal(rejected.body.decision, "needs_revision");
     assert.equal(rejected.body.formal_task_id, null);
     assert.equal(
       readdirSync(inbox).filter((name) => name.startsWith("TASK-")).length,
@@ -274,7 +281,7 @@ test("mobile API: rejected submission stays out of TASK ledger and can be revise
       .set("Authorization", `Bearer ${token}`);
     assert.equal(reviewList.status, 200);
     assert.equal(reviewList.body.submissions.length, 1);
-    assert.equal(reviewList.body.submissions[0].status, "rejected");
+    assert.equal(reviewList.body.submissions[0].status, "needs_revision");
 
     const revised = await request(app)
       .post(

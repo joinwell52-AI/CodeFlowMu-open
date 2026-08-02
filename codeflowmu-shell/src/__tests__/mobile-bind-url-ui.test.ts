@@ -48,7 +48,7 @@ describe("mobile bind URL UI", () => {
     assert.match(mobileJs, /search\.get\("t"\)/);
   });
 
-  it("mobile shell bumps cache version and keeps shell files network-only", async () => {
+  it("mobile shell bumps cache version and recovers shell assets from the current cache", async () => {
     const mobileIndex = await readFile(
       join(repoRoot, "codeflowmu-desktop", "mobile", "index.html"),
       "utf-8",
@@ -74,7 +74,30 @@ describe("mobile bind URL UI", () => {
       new RegExp(`CACHE_NAME = "codeflowmu-pwa-v${escapedResource}"`),
     );
     assert.match(sw, /path\.endsWith\("\/mobile\/"\)/);
-    assert.match(sw, /path\.endsWith\("\/mobile\/mobile\.js"\)/);
+    assert.match(sw, /function isShellAssetRequest\(url\)/);
+    assert.match(sw, /"\/mobile\.js"/);
+    assert.match(sw, /fetch\(event\.request\)[\s\S]*?caches\.match\(event\.request\)/);
     assert.match(sw, /self\.skipWaiting\(\)/);
+  });
+
+  it("keeps the current PWA release notes visible after updating", async () => {
+    const mobileIndex = await readFile(
+      join(repoRoot, "codeflowmu-desktop", "mobile", "index.html"),
+      "utf-8",
+    );
+    const mobileJs = await readFile(
+      join(repoRoot, "codeflowmu-desktop", "mobile", "mobile.js"),
+      "utf-8",
+    );
+
+    assert.match(mobileIndex, /id="releaseNotes"/);
+    assert.match(mobileIndex, /id="releaseNotesName"/);
+    assert.match(mobileIndex, /id="releaseNotesChanges"/);
+    assert.match(mobileJs, /function renderReleaseNotes\(version, releaseName, changes\)/);
+    assert.match(
+      mobileJs,
+      /renderReleaseNotes\(remoteVersion, releaseName, releaseChanges\)/,
+    );
+    assert.match(mobileJs, /li\.textContent = item/);
   });
 });

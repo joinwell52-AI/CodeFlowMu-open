@@ -398,6 +398,25 @@ export async function proxyPanelPost(
   return { ok: res.ok, status: res.status, body: parsed };
 }
 
+export async function proxyPanelGet(
+  panelPort: number | undefined,
+  path: string,
+): Promise<{ ok: boolean; status: number; body: unknown }> {
+  if (!panelPort) {
+    return { ok: false, status: 503, body: { error: "PANEL_PORT_UNAVAILABLE" } };
+  }
+  const url = `http://127.0.0.1:${panelPort}${path}`;
+  const res = await fetch(url, { method: "GET" });
+  const text = await res.text();
+  let parsed: unknown = text;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    /* keep text */
+  }
+  return { ok: res.ok, status: res.status, body: parsed };
+}
+
 export function slimChildTasks(rows: Record<string, unknown>[]) {
   return rows.map(slimFlowTask);
 }

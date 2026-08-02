@@ -1,7 +1,7 @@
 # Mobile PWA Action Matrix
 
-> 生成日期：2026-06-18  
-> Gateway allowlist：`GATEWAY_ALLOWLIST_VERSION = 2026-06-18-v4`（`codeflowmu-gateway/server.py`）  
+> 更新日期：2026-08-02
+> Gateway allowlist：`GATEWAY_ALLOWLIST_VERSION = 2026-08-02-v5`（`codeflowmu-gateway/server.py`）
 > 错误格式：前端 `api()` 统一为 `METHOD path: status`（403 另附 `gateway_allowlist_version` 若 bootstrap 提供）
 
 ## 图例
@@ -13,15 +13,19 @@
 | **LOCAL** | 仅本地存储，无服务端 API |
 | **N/A** | 纯 UI 导航，无 HTTP |
 
-## Gateway Allowlist（v4）与 Shell 对照
+## Gateway Allowlist（v5）与 Shell 对照
 
-| Method | API Path（模式） | Gateway v4 | Shell (`mobileRoutes.ts`) |
+| Method | API Path（模式） | Gateway v5 | Shell (`mobileRoutes.ts`) |
 |--------|------------------|------------|---------------------------|
 | GET | `/api/v2/mobile/bootstrap` | ✓ | ✓ |
 | GET | `/api/v2/mobile/tasks` | ✓ | ✓ |
 | POST | `/api/v2/mobile/tasks` | ✓ | ✓ |
 | GET | `/api/v2/mobile/tasks/:filename` | ✓ | ✓ |
 | POST | `/api/v2/mobile/tasks/:filename/actions` | ✓ | ✓ |
+| GET | `/api/v2/mobile/project-graph` | ✓ | ✓（代理 Panel 统一投影） |
+| GET | `/api/v2/mobile/task-submissions` | ✓ | ✓ |
+| GET | `/api/v2/mobile/task-submissions/:submissionId` | ✓ | ✓ |
+| POST | `/api/v2/mobile/task-submissions/:submissionId/{check,revise,abandon}` | ✓ | ✓ |
 | GET | `/api/v2/mobile/reports` | ✓ | ✓ |
 | GET | `/api/v2/mobile/reports/:filename` | ✓ | ✓ |
 | GET | `/api/v2/mobile/issues` | ✓ | ✓ |
@@ -184,7 +188,7 @@
 | 4 | 任务/审批 → 查看关联报告 | `GET …/reports/{fn}` | ☐ | |
 | 5 | 聊天 → 上传图片并发送 | upload + `chat/send` | ☐ | |
 | 6 | 任务页 → 关联子任务/继续任务 | `POST …/tasks` + relation 字段 | ☐ | |
-| 7 | Gateway 403 时 Toast | 含 `POST /api/...` 与状态码 | ☐ | 需远端部署 v4 allowlist |
+| 7 | Gateway 403 时 Toast | 含 `POST /api/...` 与状态码 | ☐ | 需远端部署 v5 allowlist |
 | 8 | panel 未就绪时催办/解卡 | 按钮灰色不可点 | ☐ | |
 
 ---
@@ -200,7 +204,7 @@
 
 ## 14. 部署备注
 
-远程 Gateway 需运行 **allowlist v4** 后，`POST /api/v2/mobile/tasks/*/actions` 才不会 403：
+远程 Gateway 需运行 **allowlist v5** 后，项目图谱、任务书投递审查和既有任务动作才不会被 403 拒绝：
 
 ```bash
 python codeflowmu-gateway/scripts/deploy_gateway_allowlist.py  # 按项目脚本说明部署到 ai.chedian.cc

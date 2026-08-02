@@ -19,6 +19,7 @@
   <a href="README.md">中英双语首页</a> ·
   <a href="INSTALL.md">安装说明</a> ·
   <a href="docs/open/getting-started.md">快速开始</a> ·
+  <a href="docs/open/help.md">PC 帮助手册</a> ·
   <a href="docs/open/edition-boundary.md">版本边界</a>
 </p>
 
@@ -28,7 +29,7 @@
 
 CodeFlowMu Open Dev Team Edition 是 FCoP 协议治理下、通过 Cursor SDK 接口驱动的多 Agent 开发团队应用，也是 CodeFlowMu 的公开开源版本。
 
-当前开源版本：`V1.2.5-open`
+当前开源版本：`V1.2.6-open`
 
 它面向四件事：
 
@@ -191,15 +192,15 @@ START-CODEFLOWMU-OPEN.bat
 ## 界面一览
 
 <p align="center">
-  <img src="docs/images/task-010r-a/01-home-workbench.png" width="420" alt="CodeFlowMu Open 首页工作台">
-  <img src="docs/images/task-010r-a/02-tasks.png" width="420" alt="CodeFlowMu Open 任务列表">
+  <img src="docs/images/pc/V1.2.5/pc-dashboard-V1.2.5.png" width="420" alt="CodeFlowMu Open 首页工作台">
+  <img src="docs/images/pc/V1.2.5/pc-tasks-V1.2.5.png" width="420" alt="CodeFlowMu Open 任务列表">
 </p>
 <p align="center">
-  <img src="docs/images/task-010r-a/03-task-detail.png" width="420" alt="CodeFlowMu Open 任务详情">
-  <img src="docs/images/task-010r-a/04-chat.png" width="420" alt="CodeFlowMu Open 聊天">
+  <img src="docs/images/pwa/V1.0.58/pwa-tasks-timeline-V1.0.58.png" width="420" alt="CodeFlowMu Open 任务线">
+  <img src="docs/images/pwa/V1.0.58/pwa-chat-V1.0.58.png" width="420" alt="CodeFlowMu Open 聊天">
 </p>
 <p align="center">
-  <img src="docs/images/task-010r-a/05-my-settings.png" width="420" alt="CodeFlowMu Open 设置">
+  <img src="docs/images/pc/V1.2.5/pc-settings-general-V1.2.5.png" width="420" alt="CodeFlowMu Open 设置">
 </p>
 
 ## 开源版没有什么

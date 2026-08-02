@@ -1,6 +1,8 @@
 /* Minimal PWA service worker — cache shell assets */
-const CACHE_NAME = "codeflowmu-pwa-v1.0.57";
+const CACHE_NAME = "codeflowmu-pwa-v1.0.59";
 const LEGACY_CACHE_NAMES = [
+    "codeflowmu-pwa-v1.0.58",
+    "codeflowmu-pwa-v1.0.57",
     "codeflowmu-pwa-v1.0.56",
     "codeflowmu-pwa-v1.0.55",
     "codeflowmu-pwa-v1.0.54",
@@ -36,12 +38,13 @@ const LEGACY_CACHE_NAMES = [
 const ASSETS = [
   "./",
   "./index.html",
-  "./mobile.js?v=1.0.57",
-  "./mobile.css?v=1.0.57",
-  "./i18n.js?v=1.0.57",
-  "./jsqr.min.js?v=1.0.57",
-  "./manifest.json?v=1.0.57",
-  "./logo-64.png?v=1.0.57",
+  "./mobile.js?v=1.0.59",
+  "./mobile.css?v=1.0.59",
+  "./i18n.js?v=1.0.59",
+  "./jsqr.min.js?v=1.0.59",
+  "./manifest.json?v=1.0.59",
+  "./logo-64.png?v=1.0.59",
+  "./RELEASES.json?v=1.0.59",
 ];
 
 self.addEventListener("install", (event) => {
@@ -82,19 +85,29 @@ function isNetworkOnlyRequest(url, request) {
   if (request.method !== "GET") return true;
   const path = url.pathname || "";
   if (path.includes("/api/")) return true;
+  if (request.mode === "navigate") return true;
   if (
     path.endsWith("/mobile") ||
     path.endsWith("/mobile/") ||
     path.endsWith("/mobile/index.html") ||
-    path.endsWith("/mobile/mobile.js") ||
-    path.endsWith("/mobile/mobile.css") ||
-    path.endsWith("/mobile/i18n.js") ||
     path.endsWith("/mobile/sw.js")
   ) {
     return true;
   }
   if (path.endsWith("/version.json") || path.endsWith("version.json")) return true;
   return false;
+}
+
+function isShellAssetRequest(url) {
+  const path = url.pathname || "";
+  return [
+    "/mobile.js",
+    "/mobile.css",
+    "/i18n.js",
+    "/jsqr.min.js",
+    "/manifest.json",
+    "/logo-64.png",
+  ].some((suffix) => path.endsWith(suffix));
 }
 
 self.addEventListener("fetch", (event) => {
@@ -104,6 +117,24 @@ self.addEventListener("fetch", (event) => {
 
   if (isNetworkOnlyRequest(url, event.request)) {
     event.respondWith(fetch(event.request));
+    return;
+  }
+
+  if (isShellAssetRequest(url)) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response && response.ok) {
+            const clone = response.clone();
+            return caches
+              .open(CACHE_NAME)
+              .then((cache) => cache.put(event.request, clone))
+              .then(() => response);
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request).then((cached) => cached || Response.error())),
+    );
     return;
   }
 

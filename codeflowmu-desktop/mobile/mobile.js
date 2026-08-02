@@ -6,10 +6,12 @@
   "use strict";
 
   /** 本机当前运行的 PWA 包版本（发版时与 version.json / index.html ?v= 对齐） */
-  var BUNDLE_VERSION = "V1.0.57";
-  var PWA_CACHE_BUST = "1.0.57";
+  var BUNDLE_VERSION = "V1.0.59";
+  var PWA_CACHE_BUST = "1.0.59";
   var PWA_VERSION_STORAGE_KEY = "cfm_pwa_installed_version";
   var PWA_LEGACY_CACHE_NAMES = [
+    "codeflowmu-pwa-v1.0.58",
+    "codeflowmu-pwa-v1.0.57",
     "codeflowmu-pwa-v1.0.56",
     "codeflowmu-pwa-v1.0.55",
     "codeflowmu-pwa-v1.0.54",
@@ -335,7 +337,7 @@
     syncRefreshBtnUpdateHint();
   }
 
-  function showUpdateBarIfNeeded(remoteVersion) {
+  function showUpdateBarIfNeeded(remoteVersion, releaseName, changes) {
     if (!remoteVersion) return;
     var installed = getEffectiveInstalledVersion();
     var needsUpdate =
@@ -344,6 +346,17 @@
       hideUpdateBar();
       return;
     }
+    var text = $("updateBarText");
+    if (text && releaseName) {
+      var lang = window.CFM_I18N && window.CFM_I18N.getLang ? window.CFM_I18N.getLang() : "zh";
+      var separator = lang === "en" ? "; " : "；";
+      var summary = Array.isArray(changes) && changes.length ? ": " + changes.slice(0, 2).join(separator) : "";
+      text.textContent = t("updateAvailableDetail", {
+        version: remoteVersion,
+        name: releaseName,
+        summary: summary,
+      });
+    }
     showUpdateBar();
   }
   function updateVersionDisplay() {
@@ -351,8 +364,32 @@
     if (!el) return;
     el.textContent = BUNDLE_VERSION;
   }
+  function renderReleaseNotes(version, releaseName, changes) {
+    var wrap = $("releaseNotes");
+    var nameEl = $("releaseNotesName");
+    var listEl = $("releaseNotesChanges");
+    if (!wrap || !nameEl || !listEl) return;
+    var items = Array.isArray(changes)
+      ? changes.map(function (item) { return String(item || "").trim(); }).filter(Boolean)
+      : [];
+    var name = String(releaseName || "").trim();
+    if (!name && !items.length) {
+      wrap.classList.add("hidden");
+      return;
+    }
+    nameEl.textContent = [String(version || "").trim(), name].filter(Boolean).join(" · ");
+    listEl.textContent = "";
+    items.forEach(function (item) {
+      var li = document.createElement("li");
+      li.textContent = item;
+      listEl.appendChild(li);
+    });
+    wrap.classList.remove("hidden");
+  }
   async function loadMobileVersionManifest() {
     var remoteVersion = BUNDLE_VERSION;
+    var releaseName = "";
+    var releaseChanges = [];
     try {
       var res = await fetch("./version.json?_=" + Date.now(), { cache: "no-store" });
       if (!res.ok) return;
@@ -361,6 +398,8 @@
         remoteVersion = data.app_version.trim();
         appVersion = remoteVersion;
       }
+      if (data && typeof data.release_name === "string") releaseName = data.release_name.trim();
+      if (data && Array.isArray(data.changes)) releaseChanges = data.changes;
       if (data && typeof data.resource_version === "string" && data.resource_version.trim()) {
         PWA_CACHE_BUST = data.resource_version.trim();
       } else if (data && typeof data.cache_bust === "string" && data.cache_bust.trim()) {
@@ -375,7 +414,8 @@
       }
     } catch (e) {}
     updateVersionDisplay();
-    showUpdateBarIfNeeded(remoteVersion);
+    renderReleaseNotes(remoteVersion, releaseName, releaseChanges);
+    showUpdateBarIfNeeded(remoteVersion, releaseName, releaseChanges);
   }
   function esc(s) {
     if (s == null) return "";
@@ -3651,11 +3691,11 @@
   async function requestCurrentApprovalChanges() {
     var item = state.currentDetail;
     if (!item || state.detailKind !== "approval" || !item.governance) return;
-    var reason = window.prompt("请说明需要 PM 修改的内容");
+    var reason = window.prompt(t("approvalChangesReason"));
     if (reason == null) return;
     reason = String(reason).trim();
     if (!reason) {
-      showToast("修改要求不能为空");
+      showToast(t("approvalChangesRequired"));
       return;
     }
     try {
@@ -3664,7 +3704,7 @@
         headers: { "Content-Type": "application/json" },
         body: { reason: reason },
       });
-      showToast("已要求 PM 修改");
+      showToast(t("approvalChangesToast"));
       closeTaskDetail();
       await loadApprovals();
       renderApprovalsList();
@@ -3784,7 +3824,7 @@
       return null;
     }
     try {
-      var data = await api("/api/v2/project-graph");
+      var data = await api("/api/v2/mobile/project-graph");
       state.projectGraph =
         data && data.schema_version && Array.isArray(data.nodes) ? data : null;
       clearApiError("projectGraph");
@@ -4576,7 +4616,7 @@
       if ($("homeQuickBody")) $("homeQuickBody").value = "";
       await refreshAll();
     } catch (e) {
-      if (e.payload && e.payload.decision === "rejected") {
+      if (e.payload && e.payload.decision === "needs_revision") {
         handleMobileSubmissionRejection(e.payload);
       } else {
         showErrorToast(t("homeSendFail") + "：" + userFacingError(e));
@@ -4667,7 +4707,7 @@
       await refreshAll();
       syncTaskSendRelationMode();
     } catch (e) {
-      if (e.payload && e.payload.decision === "rejected") {
+      if (e.payload && e.payload.decision === "needs_revision") {
         handleMobileSubmissionRejection(e.payload);
       } else {
         showErrorToast(t("homeSendFail") + "：" + userFacingError(e));
@@ -5046,6 +5086,7 @@
 
   window.doForceUpdate = function () {
     hideUpdateBar();
+    showToast(t("pwaUpdating"), 3000);
     var reloadWithBust = function () {
       // 不在重载前写入「已安装」版本——避免缓存未刷新时误判为已更新、更新条永久消失
       try {
@@ -5056,37 +5097,81 @@
         window.location.reload();
       }
     };
+    var targetCacheName = "codeflowmu-pwa-v" + PWA_CACHE_BUST;
+    var waitForWorkerActivation = function (reg) {
+      if (!reg) return Promise.resolve();
+      return new Promise(function (resolve) {
+        var settled = false;
+        var finish = function () {
+          if (settled) return;
+          settled = true;
+          resolve();
+        };
+        var activateWaiting = function () {
+          if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
+        };
+        navigator.serviceWorker.addEventListener("controllerchange", finish, { once: true });
+        activateWaiting();
+        var worker = reg.installing;
+        if (worker) {
+          worker.addEventListener("statechange", function () {
+            if (worker.state === "installed") activateWaiting();
+            if (worker.state === "activated" || worker.state === "redundant") finish();
+          });
+        } else if (!reg.waiting) {
+          finish();
+        }
+        window.setTimeout(finish, 8000);
+      });
+    };
+    var warmCriticalAssets = function () {
+      if (!("caches" in window)) return Promise.resolve();
+      var assets = [
+        "./index.html",
+        "./mobile.css?v=" + PWA_CACHE_BUST,
+        "./mobile.js?v=" + PWA_CACHE_BUST,
+        "./i18n.js?v=" + PWA_CACHE_BUST,
+      ];
+      return caches.open(targetCacheName).then(function (cache) {
+        return Promise.all(
+          assets.map(function (asset) {
+            return fetch(asset, { cache: "reload" })
+              .then(function (response) {
+                if (!response || !response.ok) throw new Error("PWA_ASSET_WARM_FAILED: " + asset);
+                return cache.put(asset, response.clone());
+              });
+          }),
+        );
+      });
+    };
     var chain = Promise.resolve();
     if ("serviceWorker" in navigator) {
       chain = chain
         .then(function () {
           return navigator.serviceWorker.getRegistration().then(function (reg) {
             if (!reg) return;
-            if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
-            if (reg.installing) {
-              reg.installing.addEventListener("statechange", function () {
-                if (reg.installing && reg.installing.state === "installed" && reg.waiting) {
-                  reg.waiting.postMessage({ type: "SKIP_WAITING" });
-                }
-              });
-            }
-          });
-        })
-        .then(function () {
-          return navigator.serviceWorker.getRegistration().then(function (reg) {
             if (reg && typeof reg.update === "function") {
-              return reg.update().catch(function () {});
+              return reg
+                .update()
+                .catch(function () {})
+                .then(function () {
+                  return waitForWorkerActivation(reg);
+                });
             }
+            return waitForWorkerActivation(reg);
           });
         });
     }
     chain
+      .then(warmCriticalAssets)
       .then(function () {
         if (!("caches" in window)) return;
         return caches.keys().then(function (keys) {
-          var names = keys.slice();
-          PWA_LEGACY_CACHE_NAMES.forEach(function (legacy) {
-            if (names.indexOf(legacy) === -1) names.push(legacy);
+          var names = keys.filter(function (name) {
+            return (
+              name !== targetCacheName &&
+              (name.indexOf("codeflowmu-pwa-v") === 0 || PWA_LEGACY_CACHE_NAMES.indexOf(name) >= 0)
+            );
           });
           return Promise.all(
             names.map(function (k) {
@@ -5095,7 +5180,11 @@
           );
         });
       })
-      .finally(reloadWithBust);
+      .then(reloadWithBust)
+      .catch(function (error) {
+        showErrorToast(String((error && error.message) || error || "PWA_UPDATE_FAILED"));
+        window.setTimeout(reloadWithBust, 1200);
+      });
   };
 
   function registerSw() {

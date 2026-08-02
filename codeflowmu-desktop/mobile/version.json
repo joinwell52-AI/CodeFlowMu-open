@@ -1,6 +1,11 @@
 {
-  "app_version": "V1.0.57",
-  "resource_version": "1.0.57",
-  "cache_name": "codeflowmu-pwa-v1.0.57",
-  "updated_at": "2026-07-31T06:40:43Z"
+  "app_version": "V1.0.59",
+  "resource_version": "1.0.59",
+  "cache_name": "codeflowmu-pwa-v1.0.59",
+  "updated_at": "2026-08-02T12:58:09Z",
+  "release_name": "更新说明常驻展示",
+  "changes": [
+    "在我的页面常驻显示当前PWA版本名称和具体更新内容，更新完成后仍可查看",
+    "继续读取版本清单与发布历史并保留升级提示摘要"
+  ]
 }

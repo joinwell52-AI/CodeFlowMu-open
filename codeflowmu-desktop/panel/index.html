@@ -1363,41 +1363,6 @@ select.ci option{background:#1e3250}
   font-size: 14px;
 }
 
-/* Agent LED Lights */
-.dot-led {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  margin-right: 4px;
-  vertical-align: middle;
-  transition: all 0.3s ease;
-}
-.dot-led.offline { background: #94a3b8; box-shadow: 0 0 2px #94a3b8; }
-.dot-led.idle { background: #22c55e; box-shadow: 0 0 6px #22c55e; animation: led-breath-green 2s infinite ease-in-out; }
-.dot-led.running { background: #3b82f6; box-shadow: 0 0 8px #3b82f6; animation: led-blink-blue 1s infinite alternate; }
-.dot-led.error { background: #ef4444; box-shadow: 0 0 8px #ef4444; animation: led-blink-red 0.5s infinite alternate; }
-
-@keyframes led-breath-green {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 1; }
-}
-@keyframes led-blink-blue {
-  0% { opacity: 0.4; }
-  100% { opacity: 1; }
-}
-@keyframes led-blink-red {
-  0% { opacity: 0.3; }
-  100% { opacity: 1; }
-}
-.tp-agent-dot {
-  display: flex;
-  align-items: center;
-  color: var(--text2);
-  font-weight: 500;
-  transition: color 0.2s ease;
-}
-
 /* Detail panel */
 .task-detail-panel{position:fixed;top:var(--tp-detail-top,0);right:0;bottom:var(--think-console-h,28px);width:var(--tp-detail-width,760px);background:var(--bg2);border-left:1px solid var(--bd);z-index:500;display:flex;flex-direction:column;overflow:hidden;padding:0;box-shadow:-10px 0 32px rgba(0,0,0,.28)}
 .tdp-resize-handle{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:ew-resize;z-index:510;touch-action:none}
@@ -3195,16 +3160,6 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
     <div id="task-archive-tabs" class="tp-archive-tabs" data-i18n-title="tp.archiveTabsTitle">
       <button type="button" class="rp-tab on" data-arc="active" onclick="setTaskArchiveTab('active')" data-i18n="tp.active">进行中</button>
       <button type="button" class="rp-tab" data-arc="archive" onclick="setTaskArchiveTab('archive')" data-i18n="tp.archived">已归档</button>
-    </div>
-
-    <!-- Agent 实时状态指示灯栏 -->
-    <div id="tp-agent-status-bar" class="tp-agent-status-bar" style="display:flex;gap:10px;margin-left:16px;background:rgba(255,255,255,.015);padding:3px 10px;border-radius:12px;border:1px solid rgba(255,255,255,.04);font-size:15px;align-items:center">
-      <span style="color:var(--text3);font-size:14px" data-i18n="tp.members">成员:</span>
-      <span class="tp-agent-dot" id="dot-PM"><span class="dot-led offline" id="led-PM"></span> PM</span>
-      <span class="tp-agent-dot" id="dot-DEV"><span class="dot-led offline" id="led-DEV"></span> DEV</span>
-      <span class="tp-agent-dot" id="dot-QA"><span class="dot-led offline" id="led-QA"></span> QA</span>
-      <span class="tp-agent-dot" id="dot-OPS"><span class="dot-led offline" id="led-OPS"></span> OPS</span>
-      <span class="tp-agent-dot" id="dot-EVAL"><span class="dot-led offline" id="led-EVAL"></span> EVAL</span>
     </div>
 
     <div style="flex:1"></div>
@@ -5157,7 +5112,7 @@ const LANGS={
     'task.sec.smokeSub':'测试 artifact · 不计入主 KPI',
     'task.importMd':'📄 导入 MD','task.importMdOk':'已导入 Markdown：{name}','task.importMdFail':'导入失败：{msg}','task.attachAdded':'已添加附件：{name}',
     'cfp.activeAgents':'🟢 活跃 Agent','cfp.noActive':'暂无活跃 Agent','cfp.landedFiles':'📄 已落文件','cfp.noFiles':'暂无落文件记录','cfp.clear':'🗑 清空','cfp.footnote':'通过观察文件流动而非直接内存共享来感知',
-    'tp.title':'任务单','tp.allTasks':'全部任务','tp.searchPh':'搜索主任务文件名…','tp.searchTitle':'按主线 filename / task_id / subject 模糊筛选','tp.countFiltered':'{matched}/{total} 条主线匹配','tp.active':'进行中','tp.archived':'已归档','tp.members':'成员:','tp.operator':'操作者','tp.viewList':'📋 列表','tp.viewKanban':'📊 看板','tp.viewTimeline':'🧭 任务线','tp.timelineEmpty':'暂无可生成的任务线','tp.timelineParent':'父任务','tp.timelineRoot':'根任务','tp.msSelected':'已选 {n} 项',
+    'tp.title':'任务单','tp.allTasks':'全部任务','tp.searchPh':'搜索主任务文件名…','tp.searchTitle':'按主线 filename / task_id / subject 模糊筛选','tp.countFiltered':'{matched}/{total} 条主线匹配','tp.active':'进行中','tp.archived':'已归档','tp.operator':'操作者','tp.viewList':'📋 列表','tp.viewKanban':'📊 看板','tp.viewTimeline':'🧭 任务线','tp.timelineEmpty':'暂无可生成的任务线','tp.timelineParent':'父任务','tp.timelineRoot':'根任务','tp.msSelected':'已选 {n} 项',
     'eval.title':'🔍 EVAL 涌现评估','eval.subtitle':'独立监督层 · 不参与 PM 团队工作流','eval.idle':'空闲','eval.export':'⬇ 导出','eval.trigger':'生成观察报告','eval.settingsTitle':'观察触发设置（启用配置 + 时间）','eval.cfgWatcher':'面板启动时开启文件监听（常驻，易刷屏）','eval.cfgTaskCreate':'创建任务时自动评估','eval.cfgSchedule':'启用配置（定时评估）','eval.cfgTime':'时间','eval.saveSettings':'保存设置','eval.stopWatcher':'停止常驻监听','eval.reportsList':'📋 观察报告列表（按生成时间倒序）','eval.violations':'⚠ 违规诊断快照','eval.emergence':'✨ 涌现日志快照',
     'toast.pathCopied':'路径已复制','toast.pathCopied2':'已复制路径','toast.readFail':'读取失败: {err}','toast.fileReadFail':'文件读取失败','toast.fillTask':'请填写任务标题和详情','toast.dispatchFail':'派发失败: {err}','toast.doorbellCleared':'已清空门铃记录','toast.nudgeFail':'催办发送失败','toast.opFailHttp':'操作失败 (HTTP {code}): {err}','toast.opFailNet':'操作失败，网络错误','toast.approved':'已通过 ✓','toast.opFail':'操作失败：{err}','toast.rejected':'已拒绝','toast.tabFail':'切换标签失败：{err}','toast.reportNotFound':'未找到对应报告，或任务执行中','toast.swapAiFail':'换 AI 失败: {err}','toast.swapAiReqFail':'换 AI 请求失败: {err}','toast.archiveHistFail':'转入历史档案失败: {err}','toast.taskFileUnknown':'无法识别任务文件','toast.noReportSubmit':'未找到关联 REPORT，无法提交验收','toast.rejectReason':'请填写打回原因','toast.reopenReason':'请填写重开原因','toast.copied':'已复制','toast.noLinkedTask':'未找到关联任务（可能已归档）',
     'btn.waking':'唤醒中…','btn.processing':'处理中…','btn.archiving':'转入中…','env.restarting':'重启 ({n}s)…','env.restartSvcBtn':'重启服务','hdr.restarting':'↻ 重启中...',
@@ -6144,12 +6099,6 @@ const LANGS={
     'task.lockDispatchTitle':'派发此任务（先调用 CAS 锁）',
     'rp.copyPathBtnTitle':'复制路径',
     'rp.threadSubHintTitle':'同一线程子任务',
-    'ag.statusIdleOnline':'空闲在线',
-    'ag.statusWorking':'工作中',
-    'ag.statusAnomaly':'出现异常',
-    'tp.agentOffline':'{id} - 离线',
-    'tp.agentStatus':'{id} ({role}) - {status}{task}',
-    'tp.executingTask':' (执行 {taskId})',
 
 
     'think.exportTxt':'导出为 .txt',
@@ -6313,7 +6262,7 @@ const LANGS={
     'task.sec.smokeSub':'Test artifact · excluded from primary KPIs',
     'task.importMd':'📄 Import MD','task.importMdOk':'Markdown imported: {name}','task.importMdFail':'Import failed: {msg}','task.attachAdded':'Attachment added: {name}',
     'cfp.activeAgents':'🟢 Active agents','cfp.noActive':'No active agents','cfp.landedFiles':'📄 Landed files','cfp.noFiles':'No landed files yet','cfp.clear':'🗑 Clear','cfp.footnote':'Observe coordination via files, not shared memory',
-    'tp.title':'Tasks','tp.allTasks':'All tasks','tp.searchPh':'Search main task filename…','tp.searchTitle':'Fuzzy filter by filename / task_id / subject','tp.countFiltered':'{matched}/{total} mainlines matched','tp.active':'Active','tp.archived':'Archived','tp.members':'Members:','tp.operator':'Operator','tp.viewList':'📋 List','tp.viewKanban':'📊 Board','tp.viewTimeline':'🧭 Timeline','tp.timelineEmpty':'No task timeline available','tp.timelineParent':'Parent','tp.timelineRoot':'Root task','tp.msSelected':'{n} selected',
+    'tp.title':'Tasks','tp.allTasks':'All tasks','tp.searchPh':'Search main task filename…','tp.searchTitle':'Fuzzy filter by filename / task_id / subject','tp.countFiltered':'{matched}/{total} mainlines matched','tp.active':'Active','tp.archived':'Archived','tp.operator':'Operator','tp.viewList':'📋 List','tp.viewKanban':'📊 Board','tp.viewTimeline':'🧭 Timeline','tp.timelineEmpty':'No task timeline available','tp.timelineParent':'Parent','tp.timelineRoot':'Root task','tp.msSelected':'{n} selected',
     'eval.title':'🔍 EVAL emergence','eval.subtitle':'Independent oversight · not in PM workflow','eval.idle':'Idle','eval.export':'⬇ Export','eval.trigger':'Generate observation','eval.settingsTitle':'Trigger settings (schedule)','eval.cfgWatcher':'File watcher on panel start (noisy)','eval.cfgTaskCreate':'Auto-eval on task create','eval.cfgSchedule':'Enable scheduled eval','eval.cfgTime':'Time','eval.saveSettings':'Save settings','eval.stopWatcher':'Stop watcher','eval.reportsList':'📋 Observation reports (newest first)','eval.violations':'⚠ Violation snapshot','eval.emergence':'✨ Emergence log snapshot',
     'toast.pathCopied':'Path copied','toast.pathCopied2':'Path copied','toast.readFail':'Read failed: {err}','toast.fileReadFail':'File read failed','toast.fillTask':'Please fill title and description','toast.dispatchFail':'Dispatch failed: {err}','toast.doorbellCleared':'Doorbell log cleared','toast.nudgeFail':'Nudge failed','toast.opFailHttp':'Operation failed (HTTP {code}): {err}','toast.opFailNet':'Operation failed (network)','toast.approved':'Approved ✓','toast.opFail':'Operation failed: {err}','toast.rejected':'Rejected','toast.tabFail':'Tab switch failed: {err}','toast.reportNotFound':'Report not found or task still running','toast.swapAiFail':'Swap AI failed: {err}','toast.swapAiReqFail':'Swap AI request failed: {err}','toast.archiveHistFail':'Archive to history failed: {err}','toast.taskFileUnknown':'Cannot identify task file','toast.noReportSubmit':'No REPORT linked — cannot submit','toast.rejectReason':'Enter reject reason','toast.reopenReason':'Enter reopen reason','toast.copied':'Copied','toast.noLinkedTask':'Linked task not found (maybe archived)',
     'btn.waking':'Waking…','btn.processing':'Processing…','btn.archiving':'Archiving…','env.restarting':'Restart ({n}s)…','env.restartSvcBtn':'Restart service','hdr.restarting':'↻ Restarting…',
@@ -7300,12 +7249,6 @@ const LANGS={
     'task.lockDispatchTitle':'Dispatch this task (CAS lock first)',
     'rp.copyPathBtnTitle':'Copy path',
     'rp.threadSubHintTitle':'Sub-tasks in same thread',
-    'ag.statusIdleOnline':'Idle online',
-    'ag.statusWorking':'Working',
-    'ag.statusAnomaly':'Error',
-    'tp.agentOffline':'{id} - Offline',
-    'tp.agentStatus':'{id} ({role}) - {status}{task}',
-    'tp.executingTask':' (running {taskId})',
 
 
     'think.exportTxt':'Export as .txt',
@@ -8441,46 +8384,6 @@ function switchTaskView(mode) {
   renderTaskPage();
 }
 
-function updateAgentStatusBar() {
-  const roles = ['PM', 'DEV', 'QA', 'OPS', 'EVAL'];
-  roles.forEach(role => {
-    const led = document.getElementById(`led-${role}`);
-    const dot = document.getElementById(`dot-${role}`);
-    if (!led) return;
-
-    const matchedAgent = (agents || []).find(a => 
-      (a.role && a.role.toUpperCase() === role) || 
-      (a.agent_id && a.agent_id.toUpperCase().startsWith(role))
-    );
-
-    if (!matchedAgent) {
-      led.className = 'dot-led offline';
-      if (dot) {
-        dot.title = t('tp.agentOffline',{id:role+'-01'});
-        dot.style.opacity = '0.4';
-      }
-      return;
-    }
-
-    let st = (matchedAgent.status || 'idle').toLowerCase();
-    const runInfo = runMap.get(matchedAgent.agent_id);
-    if (runInfo && runInfo.taskId) {
-      st = 'running';
-    }
-
-    const stCls = { idle: 'idle', running: 'running', error: 'error' }[st] || 'idle';
-    led.className = `dot-led ${stCls}`;
-    
-    if (dot) {
-      dot.style.opacity = '1';
-      const stTxt = { idle: t('ag.statusIdleOnline'), running: t('ag.statusWorking'), error: t('ag.statusAnomaly') }[st] || t('ag.idle');
-      const taskTip = (runInfo && runInfo.taskId) ? t('tp.executingTask',{taskId:runInfo.taskId}) : '';
-      const roleLbl = roleDisplayName(role);
-      dot.title = t('tp.agentStatus',{id:matchedAgent.agent_id,role:roleLbl,status:stTxt,task:taskTip});
-    }
-  });
-}
-
 const _TASK_ID_LONG_RE = /TASK-\d{8}-\d{3,}-[A-Za-z0-9_-]+-to-[A-Za-z0-9_.-]+/gi;
 const _TASK_ID_SHORT_RE = /TASK-\d{8}-\d{3,}/g;
 
@@ -9088,7 +8991,6 @@ function updateAgentSt(id,st,taskId){
   }
   // Keep dash-agent-status panel in sync
   if(typeof renderAgentStatus==='function') renderAgentStatus();
-  updateAgentStatusBar();
 }
 // ── Think Console helpers ──────────────────────────
 let consoleCollapsed=true;
@@ -11077,7 +10979,6 @@ async function loadAll(){
     agents=ar.value;
     if(curPage==='dashboard')renderDashboard();
     else renderAgents();
-    updateAgentStatusBar();
   }
   if(sr.status==='fulfilled'&&Array.isArray(sr.value?.seqs))_doneSeqs=new Set(sr.value.seqs);
   updateStats();
@@ -18926,7 +18827,7 @@ function syncTaskPrimaryTabChrome(){
     badge.textContent=String(blocked);
     badge.style.display=blocked?'inline-flex':'none';
   }
-  for(const id of ['tp-thread-select','tp-search','task-archive-tabs','tp-agent-status-bar','tp-operator-wrap','task-view-switch']){
+  for(const id of ['tp-thread-select','tp-search','task-archive-tabs','tp-operator-wrap','task-view-switch']){
     const el=document.getElementById(id);
     if(el)el.style.display=review?'none':'';
   }

@@ -4,6 +4,10 @@
 
 本目录由母体仓库维护，并在执行 `npm run build:open-dev-team` 时生成到公开仓库的 `docs/open/`。
 
+- [PC 帮助手册（含版本化截图）](help.md)
+- [快速开始](getting-started.md)
+- [版本边界](edition-boundary.md)
+
 公开版定位：
 
 - 固定开发团队：PM / DEV / OPS / QA；EVAL 独立观察
