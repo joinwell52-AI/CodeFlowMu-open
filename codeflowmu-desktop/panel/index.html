@@ -256,6 +256,11 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
 .chat-bubble{max-width:88%;word-break:break-word;font-size:17px;line-height:1.6}
 .chat-bubble.me{align-self:flex-end;background:rgba(59,130,246,.25);border:1px solid rgba(96,165,250,.3);border-radius:12px 12px 2px 12px;padding:8px 12px}
 .chat-bubble.pm{align-self:flex-start;background:rgba(30,58,138,.35);border:1px solid rgba(96,165,250,.15);border-radius:12px 12px 12px 2px;padding:8px 12px}
+.governance-inline-card{min-width:min(620px,72vw);border:1px solid rgba(96,165,250,.38);border-radius:10px;background:rgba(15,31,58,.92);padding:12px;color:var(--text)}
+.governance-inline-card .gov-title{font-size:16px;font-weight:750;margin-bottom:7px}
+.governance-inline-card .gov-meta{font-size:12px;color:var(--text3);line-height:1.55;word-break:break-all}
+.governance-inline-card .gov-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.governance-inline-card .gov-result{font-size:13px;font-weight:700;margin-top:8px}
 .chat-meta{font-size:18px;color:var(--text3);margin-bottom:3px}
 .chat-text{color:var(--text2)}
 .chat-text h1,.chat-text h2,.chat-text h3{font-size:15px;font-weight:700;margin:4px 0 2px}
@@ -3121,11 +3126,11 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
 <!-- Sprint-M3: ADMIN→PM 任务写入 modal（视觉与「发布任务」统一） -->
 <div id="dd-modal-bg" class="dd-modal-bg" style="display:none" onclick="if(event.target===this)closeDirectDispatchModal()">
   <div class="dd-modal quick-task-compose">
-    <div class="dash-section-title" style="margin-bottom:0" data-i18n="task.publishTitle">📝 发布任务</div>
-    <div class="qt-hint" data-i18n="task.publishHint">
+    <div id="dd-modal-title" class="dash-section-title" style="margin-bottom:0" data-i18n="task.publishTitle">📝 发布任务</div>
+    <div id="dd-modal-hint" class="qt-hint" data-i18n="task.publishHint">
       落盘为 <code style="font-size:14px">TASK-*-ADMIN-to-PM.md</code>（FCoP：人类仅对接 PM，由 PM 拆给 DEV/QA/OPS）
     </div>
-    <div class="comp-field" style="margin-bottom:6px">
+    <div id="dd-relation-field" class="comp-field" style="margin-bottom:6px">
       <label style="font-size:13px;color:var(--text3);margin-bottom:4px;display:block" data-i18n="task.relation">任务关系</label>
       <select class="ci" id="dd-task-relation" style="font-size:14px" onchange="syncDirectDispatchRelation()">
         <option value="new" data-i18n="task.relationNew">新建任务线</option>
@@ -3148,7 +3153,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
       <input type="file" id="ddAttachFile" accept="image/*" multiple style="display:none"/>
       <input type="file" id="ddMdImportFile" accept=".md,text/markdown" style="display:none"/>
       <button type="button" class="chat-v2-attach-btn" onclick="ddPickAttachments()" data-i18n="chat.attach">📎 附件</button>
-      <button type="button" class="chat-v2-attach-btn" onclick="ddPickMdImport()" data-i18n="task.importMd">📄 导入 MD</button>
+      <button id="dd-import-md-btn" type="button" class="chat-v2-attach-btn" onclick="ddPickMdImport()" data-i18n="task.importMd">📄 导入 MD</button>
       <div class="chat-v2-preview-wrap" id="ddAttachPreview"></div>
     </div>
     <div class="qt-actions">
@@ -3425,6 +3430,10 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
       <div class="tdp-flow" id="tdp-flow"></div>
       <div id="tdp-admin-closeout" class="tdp-admin-closeout"></div>
       <div id="tdp-evidence" class="tdp-evidence"></div>
+      <div id="tdp-governance-section" style="display:none">
+        <div class="tdp-section-label" style="margin-bottom:6px">指令与决策</div>
+        <div id="tdp-governance-records" class="tdp-frontmatter"></div>
+      </div>
       <!-- YAML frontmatter (打回原因、transitions 等不在正文里) -->
       <div class="tdp-fm-head">
         <div class="tdp-section-label" style="margin:0" data-i18n="ts.section.fmYaml">📋 任务元数据（YAML 头）</div>
@@ -3615,7 +3624,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
       <div style="margin-left:auto;color:var(--text3);font-size:13px">高风险操作必须逐项核对摘要，不提供批量批准</div>
     </div>
     <div id="ap-list" class="ap-list"></div>
-    <div class="ap-footer-note" data-i18n="ap.footerHint">ℹ 审批后操作将自动执行并由 OPS-01 记录验证结果到报告文件</div>
+    <div class="ap-footer-note" data-i18n="ap.footerHint">ℹ 治理记录审批只形成授权依据；运行操作审批通过后才执行，并记录验证结果</div>
   </div>
 
   <!-- ── 历史记录 Pane ────────────────────────── -->
@@ -5721,7 +5730,7 @@ const LANGS={
     'ap.batchApprove':'✓ 批量批准',
     'ap.batchReject':'✗ 批量拒绝',
     'ap.batchCancel':'✕ 取消',
-    'ap.footerHint':'ℹ 审批后操作将自动执行并由 OPS-01 记录验证结果到报告文件',
+    'ap.footerHint':'ℹ 治理记录审批只形成授权依据；运行操作审批通过后才执行，并记录验证结果',
     'ap.hist.searchPh':'🔍 搜索文件名…',
     'ap.hist.filterAll':'全部',
     'ap.hist.filterApprove':'✅ 批准',
@@ -6877,7 +6886,7 @@ const LANGS={
     'ap.batchApprove':'✓ Batch approve',
     'ap.batchReject':'✗ Batch reject',
     'ap.batchCancel':'✕ Cancel',
-    'ap.footerHint':'ℹ Actions run automatically after approval; OPS-01 records verification in the report file',
+    'ap.footerHint':'ℹ Governance approval only establishes authorization; approved runtime operations may then execute with verification recorded',
     'ap.hist.searchPh':'🔍 Search filename…',
     'ap.hist.filterAll':'All',
     'ap.hist.filterApprove':'✅ Approved',
@@ -7749,6 +7758,12 @@ const _dbSysBuffer=[];   // max 200, lifecycle/system events
 /** Dedupe key: session_id + failure_type (or event_type). */
 function _faultDedupeKey(ev){
   const pl=ev.payload??ev;
+  const op=String(pl.operation_fingerprint??ev.operation_fingerprint??'').trim();
+  const task=String(pl.task_id??ev.task_id??'').trim();
+  const code=String(pl.failure_code??ev.failure_code??pl.failure_category??'').trim();
+  if(op)return 'operation|'+task+'|'+op+'|'+code;
+  const root=String(pl.root_fault_id??ev.root_fault_id??'').trim();
+  if(root)return 'root|'+root;
   const sid=String(ev.session_id??pl.session_id??pl.sessionId??'').trim();
   const ft=String(pl.failure_type??ev.failure_type??ev.event_type??ev.tool??'fault').trim();
   if(sid)return sid+'|'+ft;
@@ -7764,6 +7779,12 @@ function _failureCategoryLabel(cat){
     google_tool_error:'Gemini 工具失败',
     google_session_settled_failed:'Gemini 会话异常结束',
     google_settled_no_detail:'Gemini 无详细错误',
+    policy_blocked:'策略边界拦截',
+    policy_denied:'策略拒绝',
+    approval_required:'等待操作审批',
+    precondition_changed:'操作前置条件已变化',
+    already_absent:'目标已不存在（幂等完成）',
+    tool_runtime_error:'工具运行错误',
     transient_network:'网络瞬断',
     rate_limited:'限流 / 配额',
     unknown_sdk_error:'未知 SDK 错误',
@@ -7784,6 +7805,11 @@ function _faultMsgFromEv(ev){
   if(cat)parts.push('['+_failureCategoryLabel(cat)+']');
   if(tc!=null)parts.push('tools='+tc);
   if(dur!=null)parts.push(Math.round(Number(dur))+'ms');
+  if(pl.retry_policy)parts.push('retry='+String(pl.retry_policy));
+  if(pl.retry_count!=null||pl.failureCount!=null)parts.push('count='+String(pl.retry_count??pl.failureCount));
+  if(pl.next_retry_at!=null)parts.push('next='+formatDispatchRetryTime(pl.next_retry_at));
+  if(pl.operation_fingerprint)parts.push('op='+String(pl.operation_fingerprint).slice(0,12));
+  if(pl.next_safe_action)parts.push('next_action='+String(pl.next_safe_action));
   if(sdkMsg)parts.push(sdkMsg);
   else if(noDetail)parts.push('SDK 未暴露详细错误');
   else{
@@ -8195,6 +8221,12 @@ function onSSE({type,payload}){
         }
         case 'codeflow.chat_message':{
           // Admin message already shown inline
+          break;
+        }
+        case 'codeflowmu.governance_approval_pending':
+        case 'codeflowmu.governance_approval_decided':{
+          loadApprovals();
+          if(curPage==='chat'&&_chatMode==='direct')loadDirectChat();
           break;
         }
     case 'codeflow.zombie_cleanup':
@@ -11364,9 +11396,47 @@ function taskOnMdImport(fileList){
   void importMdIntoTaskBody('taskBody',fileList);
   const inp=document.getElementById('taskMdImportFile');if(inp)inp.value='';
 }
-function ddOnMdImport(fileList){
-  void importMdIntoTaskBody('dd-body',fileList);
-  const inp=document.getElementById('ddMdImportFile');if(inp)inp.value='';
+function parseTaskSubmissionRevisionMarkdown(raw,fileName){
+  const text=String(raw||'').replace(/^\uFEFF/,'');
+  const fmMatch=text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  const yaml=fmMatch?fmMatch[1]:'';
+  let body=(fmMatch?text.slice(fmMatch[0].length):text).trim();
+  const scalar=(key)=>{
+    const match=yaml.match(new RegExp('^'+key+':\\s*(.+)$','im'));
+    return match?String(match[1]||'').trim().replace(/^(["'])([\s\S]*)\1$/,'$2'):'';
+  };
+  const heading=body.match(/^#\s+([^\r\n]+)\r?\n+/);
+  const current=taskSubmissions.find(row=>row.submission_id===_ddRevisionSubmissionId);
+  const fallback=String(fileName||'').replace(/\.md$/i,'').trim();
+  const subject=scalar('subject')||scalar('title')||(heading?heading[1].trim():'')||String(current?.subject||fallback);
+  if(heading)body=body.slice(heading[0].length).trim();
+  return {subject,body,priority:scalar('priority').toUpperCase()};
+}
+async function ddOnMdImport(fileList){
+  const files=Array.from(fileList||[]);
+  const markdownFile=files.find(f=>/\.md$/i.test(String(f.name||''))||/^text\/markdown/i.test(String(f.type||'')));
+  const file=markdownFile||files[0];
+  const inp=document.getElementById('ddMdImportFile');
+  try{
+    if(!file)return;
+    if(_ddRevisionSubmissionId){
+      if(!markdownFile)throw new Error('只能重新上传 Markdown（.md）任务书');
+      const parsed=parseTaskSubmissionRevisionMarkdown(await file.text(),file.name);
+      if(!parsed.subject||!parsed.body)throw new Error('任务书必须包含标题和正文');
+      document.getElementById('dd-subject').value=parsed.subject;
+      document.getElementById('dd-body').value=parsed.body;
+      if(['P0','P1','P2','P3'].includes(parsed.priority))document.getElementById('dd-prio').value=parsed.priority;
+      _ddRevisionUploadName=String(file.name||'revised-task.md');
+      showToast('已重新上传修改后的任务书：'+_ddRevisionUploadName,'#4ade80',4000);
+    }else{
+      await importMdIntoTaskBody('dd-body',[file]);
+    }
+  }catch(e){
+    _ddRevisionUploadName='';
+    showToast('导入失败：'+String(e?.message||e),'#fca5a5');
+  }finally{
+    if(inp)inp.value='';
+  }
 }
 function taskOnPickFiles(fileList){
   Array.from(fileList||[]).forEach((file,idx)=>{
@@ -11937,6 +12007,14 @@ function renderDirectChatFeed(msgs,agentId){
   if(empty)empty.style.display='none';
   const atBottom=feed.scrollHeight-feed.scrollTop-feed.clientHeight<80;
   msgs.forEach(m=>{
+    if(m.kind==='governance_approval'&&m.approval_card){
+      const b=document.createElement('div');
+      b.className='chat-v2-bubble them';
+      const ts=m.ts?new Date(m.ts).toLocaleTimeString(_localeTag(),{hour12:false,hour:'2-digit',minute:'2-digit'}):'';
+      b.innerHTML=`<div class="chat-v2-meta">正式治理审批 · ${ts}</div>${renderGovernanceInlineCard(m.approval_card)}`;
+      feed.appendChild(b);
+      return;
+    }
     const isMe=m.role==='admin';
     const b=document.createElement('div');
     b.className='chat-v2-bubble '+(isMe?'me':'them');
@@ -11948,6 +12026,56 @@ function renderDirectChatFeed(msgs,agentId){
     feed.appendChild(b);
   });
   if(atBottom)feed.scrollTop=feed.scrollHeight;
+}
+function renderGovernanceInlineCard(card){
+  const status=String(card.status||'pending_approval');
+  const canDecide=status==='pending_approval'&&card.can_approve!==false;
+  const statusLabel={
+    pending_approval:'等待 ADMIN 审批',
+    effective:'已批准并生效',
+    rejected:'已驳回',
+    changes_requested:'已要求修改',
+    revoked:'已撤销',
+    expired:'已过期',
+    consumed:'已使用',
+  }[status]||status;
+  const actions=canDecide?`<div class="gov-actions">
+    <button class="hbtn blue" onclick="governanceInlineDecision('${esc(card.governance_id)}',${Number(card.revision)},'${esc(card.approval_id)}','approved')">批准并生效</button>
+    <button class="hbtn" style="color:#fca5a5;border-color:rgba(239,68,68,.4)" onclick="governanceInlineDecision('${esc(card.governance_id)}',${Number(card.revision)},'${esc(card.approval_id)}','rejected')">驳回</button>
+    <button class="hbtn" style="color:#fbbf24;border-color:rgba(251,191,36,.4)" onclick="governanceInlineDecision('${esc(card.governance_id)}',${Number(card.revision)},'${esc(card.approval_id)}','changes_requested')">要求修改</button>
+  </div>`:'';
+  return`<div class="governance-inline-card">
+    <div class="gov-title">${esc(card.summary||card.intent_summary||card.title||'治理审批')}</div>
+    <div class="gov-meta">目标任务：${esc(card.target_task||card.target_task_id||'—')}<br>类型：${esc(card.requested_action||card.type||'—')}<br>来源消息：${esc(card.source_message_id||'—')}<br>内容哈希：${esc(card.content_hash||'—')}<br>范围摘要：${esc(card.scope_digest||'—')}</div>
+    <div class="gov-result">${esc(statusLabel)}</div>
+    ${actions}
+  </div>`;
+}
+async function governanceInlineDecision(governanceId,revision,approvalId,decision){
+  const promptText=decision==='approved'?'请填写批准理由':decision==='rejected'?'请填写驳回理由':'请说明需要 PM 修改的内容';
+  const reason=prompt(promptText)??'';
+  if(!reason.trim()){showToast('决定理由不能为空','#fca5a5');return;}
+  const actionId='chat-'+decision+'-'+Date.now()+'-'+Math.random().toString(16).slice(2);
+  try{
+    const r=await fetch(`/api/v2/admin/governance/approvals/${encodeURIComponent(governanceId)}/${encodeURIComponent(revision)}/decide`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Idempotency-Key':actionId},
+      body:JSON.stringify({
+        actor:'ADMIN',
+        approval_id:approvalId,
+        decision,
+        reason,
+        source_ui_action_id:actionId,
+        idempotency_key:actionId,
+      })
+    });
+    const result=await r.json().catch(()=>({}));
+    if(!r.ok||!result.ok)throw new Error(result.error||('HTTP '+r.status));
+    showToast(decision==='approved'?'治理记录已批准并生效':decision==='rejected'?'治理记录已驳回':'已要求 PM 修改',decision==='approved'?'#4ade80':decision==='rejected'?'#fca5a5':'#fbbf24');
+    await Promise.all([loadDirectChat(),loadApprovals()]);
+  }catch(e){
+    showToast(t('toast.opFail',{err:e.message}),'#fca5a5');
+  }
 }
 function sanitizeAttachmentName(name){
   const raw=String(name||'').trim();
@@ -12155,6 +12283,8 @@ async function sendChatAsTask(){
 
 let _ddCurrentTask=null;
 let _ddPreselectTaskId='';
+let _ddRevisionSubmissionId='';
+let _ddRevisionUploadName='';
 function isDirectDispatchTaskOpen(task){
   const scope=taskEffectiveScopeKey(task);
   if(['done','archive'].includes(scope))return false;
@@ -12171,6 +12301,8 @@ function getOpenTasksForDirectDispatch(){
 }
 function showDirectDispatchModal(taskContext){
   ensureTaskAttachmentUX();
+  _ddRevisionSubmissionId='';
+  _ddRevisionUploadName='';
   let ctx=null;
   if(taskContext&&typeof taskContext==='object')ctx=taskContext;
   else if(typeof taskContext==='string'&&taskContext){
@@ -12188,8 +12320,51 @@ function showDirectDispatchModal(taskContext){
   if(relation)relation.value=ctx?'child':'new';
   renderDirectDispatchReferences();
   syncDirectDispatchRelation();
+  const title=document.getElementById('dd-modal-title');
+  const hint=document.getElementById('dd-modal-hint');
+  const relationField=document.getElementById('dd-relation-field');
+  const relationHelp=document.getElementById('dd-relation-help');
+  const importBtn=document.getElementById('dd-import-md-btn');
+  const submitBtn=document.getElementById('dd-submit-btn');
+  if(title){title.dataset.i18n='task.publishTitle';title.textContent=t('task.publishTitle')||'📝 发布任务';}
+  if(hint){hint.dataset.i18n='task.publishHint';hint.innerHTML=t('task.publishHint')||'';}
+  if(relationField)relationField.style.display='';
+  if(relationHelp)relationHelp.style.display='';
+  if(importBtn){importBtn.dataset.i18n='task.importMd';importBtn.textContent=t('task.importMd')||'📄 导入 MD';}
+  if(submitBtn){submitBtn.dataset.i18n='task.publishBtn';submitBtn.textContent=t('task.publishBtn')||'发布 →';}
   setTimeout(()=>document.getElementById('dd-subject')?.focus(),60);
   if(typeof applyLang==='function')applyLang();
+}
+
+function showTaskSubmissionRevisionComposer(submissionId){
+  const row=taskSubmissions.find(item=>item.submission_id===submissionId);
+  if(!row){showToast('未找到待修订的投递记录','#fca5a5');return;}
+  showDirectDispatchModal();
+  _ddRevisionSubmissionId=submissionId;
+  _ddRevisionUploadName='';
+  const title=document.getElementById('dd-modal-title');
+  const hint=document.getElementById('dd-modal-hint');
+  const relationField=document.getElementById('dd-relation-field');
+  const relationHelp=document.getElementById('dd-relation-help');
+  const references=document.getElementById('dd-reference-wrap');
+  const importBtn=document.getElementById('dd-import-md-btn');
+  const submitBtn=document.getElementById('dd-submit-btn');
+  const subject=document.getElementById('dd-subject');
+  const body=document.getElementById('dd-body');
+  const priority=document.getElementById('dd-prio');
+  if(title){title.removeAttribute('data-i18n');title.textContent='📝 修订任务书';}
+  if(hint){hint.removeAttribute('data-i18n');hint.textContent='请先在线下修改任务书，再在这里重新上传 Markdown；提交后覆盖原投递并继续检查。';}
+  if(relationField)relationField.style.display='none';
+  if(relationHelp)relationHelp.style.display='none';
+  if(references)references.style.display='none';
+  if(importBtn){importBtn.removeAttribute('data-i18n');importBtn.textContent='📄 重新上传修改后的任务书';}
+  if(submitBtn){submitBtn.removeAttribute('data-i18n');submitBtn.textContent='上传并继续检查';}
+  if(subject)subject.value='';
+  if(body)body.value='';
+  if(priority)priority.value=row.requested_priority||'P2';
+  const smsg=document.getElementById('dd-smsg');
+  if(smsg){smsg.textContent='等待重新上传修改后的 .md 任务书';smsg.style.cssText='display:block;color:var(--text3)';}
+  setTimeout(()=>ddPickMdImport(),80);
 }
 
 function closeDirectDispatchModal(){
@@ -12205,6 +12380,8 @@ function closeDirectDispatchModal(){
   if(relation)relation.value='new';
   _ddCurrentTask=null;
   _ddPreselectTaskId='';
+  _ddRevisionSubmissionId='';
+  _ddRevisionUploadName='';
   if(prio)prio.value='P2';
   if(smsg)smsg.style.display='none';
   ddClearPendingAttachments();
@@ -12275,23 +12452,28 @@ function syncDirectDispatchRelation(){
 
 async function submitDirectDispatch(){
   if(_taskCreateInFlight)return;
+  const revisingSubmissionId=_ddRevisionSubmissionId;
   const relationMode=(document.getElementById('dd-task-relation')?.value||'new').trim();
   const subject=(document.getElementById('dd-subject')?.value||'').trim();
   const bodyRaw=(document.getElementById('dd-body')?.value||'').trim();
   const prio=document.getElementById('dd-prio')?.value||'P2';
   const smsg=document.getElementById('dd-smsg');
+  if(revisingSubmissionId&&!_ddRevisionUploadName){
+    if(smsg){smsg.textContent='请先重新上传线下修改后的 .md 任务书';smsg.style.cssText='display:block;color:var(--red)';}
+    return;
+  }
   if(!subject||!bodyRaw){
     if(smsg){smsg.textContent=t('msg.fillRequired')||'请填写任务标题和详情';smsg.style.cssText='display:block;color:var(--amber)';}
     else showToast(t('toast.fillTask'),'#fbbf24');
     return;
   }
-  const references=[...document.querySelectorAll('#dd-reference-list input.dd-reference-check[type="checkbox"]:checked')].map(el=>el.value);
-  if(relationMode==='continue'&&!references.length){
+  const references=revisingSubmissionId?[]:[...document.querySelectorAll('#dd-reference-list input.dd-reference-check[type="checkbox"]:checked')].map(el=>el.value);
+  if(!revisingSubmissionId&&relationMode==='continue'&&!references.length){
     if(smsg){smsg.textContent='✗ '+t('task.selectReferences');smsg.style.cssText='display:block;color:var(--red)';}
     return;
   }
-  const childTaskId=relationMode==='child'?getDirectDispatchChildTaskId():'';
-  if(relationMode==='child'&&!childTaskId){
+  const childTaskId=!revisingSubmissionId&&relationMode==='child'?getDirectDispatchChildTaskId():'';
+  if(!revisingSubmissionId&&relationMode==='child'&&!childTaskId){
     if(smsg){smsg.textContent='✗ '+(t('task.selectParent')||'请选择父任务');smsg.style.cssText='display:block;color:var(--red)';}
     return;
   }
@@ -12300,19 +12482,37 @@ async function submitDirectDispatch(){
   _taskCreateInFlight=true;
   if(btn){btn.disabled=true;btn.textContent='正在审查任务书…';}
   try{
-    const attachments=await resolvePendingAttachments(_ddPendingAttachments);
-    const r=await fetch('/api/v2/tasks',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Idempotency-Key':'panel-dd-'+Date.now()+'-'+Math.random().toString(36).slice(2)},
-      body:JSON.stringify({
-        subject,body:bodyRaw,priority:prio,attachments,
-        relation_mode:relationMode,
-        references,
-        parent_task_id:parentTaskId,
-        current_task_id:childTaskId,
-      })
+    const attachments=revisingSubmissionId?[]:await resolvePendingAttachments(_ddPendingAttachments);
+    const r=revisingSubmissionId
+      ?await fetch('/api/v2/task-submissions/'+encodeURIComponent(revisingSubmissionId)+'/revise',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({subject,body:bodyRaw,priority:prio,source_filename:_ddRevisionUploadName,check:true})
+        })
+      :await fetch('/api/v2/tasks',{
+          method:'POST',
+          headers:{'Content-Type':'application/json','Idempotency-Key':'panel-dd-'+Date.now()+'-'+Math.random().toString(36).slice(2)},
+          body:JSON.stringify({
+            subject,body:bodyRaw,priority:prio,attachments,
+            relation_mode:relationMode,
+            references,
+            parent_task_id:parentTaskId,
+            current_task_id:childTaskId,
+          })
     });
     const d=await r.json().catch(()=>({}));
+    if(revisingSubmissionId){
+      if(d.created){
+        closeDirectDispatchModal();
+        showToast('修订任务书检查通过，已生成正式任务','#4ade80',5000);
+        setTimeout(loadAll,800);
+      }else if(d.submission){
+        closeDirectDispatchModal();
+        showRejectedTaskSubmission(d,smsg);
+      }else{
+        throw new Error(d.error||d.message||('HTTP '+r.status));
+      }
+      return;
+    }
     if(d.decision==='rejected'||d.code==='TASK_SPEC_INVALID'){
       closeDirectDispatchModal();
       showRejectedTaskSubmission(d,smsg);
@@ -12330,7 +12530,7 @@ async function submitDirectDispatch(){
     else showToast(t('toast.dispatchFail',{err:e.message}),'#fca5a5');
   }finally{
     _taskCreateInFlight=false;
-    if(btn){btn.disabled=false;btn.textContent=t('btn.submit')||'发布 →';}
+    if(btn){btn.disabled=false;btn.textContent=revisingSubmissionId?'上传并继续检查':(t('btn.submit')||'发布 →');}
   }
 }
 
@@ -13559,7 +13759,10 @@ function renderApprovals(el){
     const diffId='ap-diff-'+idx;
     const timeStr=a.created_at||a.timestamp||'';
     const operationTarget=(a.request&&a.request.resource&&Array.isArray(a.request.resource.targets))?a.request.resource.targets.join(', '):(a.target_task||'该操作');
-    const approveLabel=a.primary_kind==='external_write'&&a.requested_action==='push_branch'
+    const isGovernance=a.kind==='governance';
+    const approveLabel=isGovernance
+      ?'批准并生效'
+      :a.primary_kind==='external_write'&&a.requested_action==='push_branch'
       ?`批准并推送 ${operationTarget}`
       :`批准执行 ${operationTarget}`;
 
@@ -13611,6 +13814,8 @@ function renderApprovals(el){
         ${a.target_task ? `<div><span style="color:var(--text3)">目标任务：</span>${esc(a.target_task)}</div>` : ''}
         ${a.requested_action ? `<div><span style="color:var(--text3)">审批动作：</span><code style="font-size:12px;background:rgba(255,255,255,.06);padding:1px 6px;border-radius:4px">${esc(a.requested_action)}</code></div>` : ''}
         ${a.summary ? `<div style="margin-top:4px"><span style="color:var(--text3)">摘要：</span>${esc(String(a.summary).slice(0,320))}${String(a.summary).length > 320 ? '…' : ''}</div>` : ''}
+        ${isGovernance&&a.source_message ? `<div style="margin-top:4px"><span style="color:var(--text3)">ADMIN 原始消息：</span>${esc(a.source_message)}</div>` : ''}
+        ${isGovernance ? `<div class="mono" style="margin-top:4px;word-break:break-all"><span style="color:var(--text3)">内容哈希：</span>${esc(a.content_hash||'')}<br><span style="color:var(--text3)">范围摘要：</span>${esc(a.scope_digest||'')}</div>` : ''}
       </div>`
       : '';
     const approvalSnapshot=a.request&&a.request.snapshot?a.request.snapshot:{};
@@ -13662,6 +13867,9 @@ function renderApprovals(el){
         <button class="hbtn" style="font-size:15px;padding:6px 16px;min-height:36px;border-color:rgba(239,68,68,.4);color:#fca5a5"
           data-ap-reject="${esc(fn)}"
           onclick="apReject('${esc(fn)}')" ${blocked ? 'disabled' : ''}>${t('appr.reject')}</button>
+        ${isGovernance ? `<button class="hbtn" style="font-size:15px;padding:6px 16px;min-height:36px;border-color:rgba(251,191,36,.4);color:#fbbf24"
+          data-ap-changes="${esc(fn)}"
+          onclick="apRequestChanges('${esc(fn)}')" ${blocked ? 'disabled' : ''}>要求修改</button>` : ''}
         <button class="hbtn" style="font-size:14px;padding:4px 10px;color:var(--blue2);border-color:rgba(96,165,250,.3)"
           onclick="toggleApDiff('${diffId}',this)">${hasDiff ? '查看审批依据' : t('appr.viewDiff')}</button>
       </div>
@@ -13901,6 +14109,28 @@ async function apApprove(id){
   try{
     const reason=prompt('请填写批准理由（必填）')??'';
     if(!reason.trim())throw new Error('批准理由不能为空');
+    const item=approvals.find(a=>(a.id||a.filename||'')===id);
+    if(item&&item.kind==='governance'){
+      const actionId='desktop-approve-'+Date.now()+'-'+Math.random().toString(16).slice(2);
+      const r=await fetch(`/api/v2/admin/governance/approvals/${encodeURIComponent(item.governance_id)}/${encodeURIComponent(item.revision)}/decide`,{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Idempotency-Key':actionId},
+        body:JSON.stringify({
+          actor:'ADMIN',
+          approval_id:item.approval_id,
+          decision:'approved',
+          reason,
+          source_ui_action_id:actionId,
+          idempotency_key:actionId,
+        })
+      });
+      const result=await r.json().catch(()=>({}));
+      if(!r.ok||!result.ok)throw new Error(result.error||('HTTP '+r.status));
+      showToast('治理记录已批准并生效','#4ade80');
+      await loadApprovals();
+      await loadApprovalHistory();
+      return;
+    }
     const r=await fetch(`/api/v2/operation-approvals/${encodeURIComponent(id)}/approve`,{
       method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason})
     });
@@ -13930,6 +14160,29 @@ async function apReject(id){
   const origText=btn?.textContent||t('appr.reject');
   if(btn){btn.disabled=true;btn.textContent=t('btn.processing');}
   try{
+    const item=approvals.find(a=>(a.id||a.filename||'')===id);
+    if(item&&item.kind==='governance'){
+      if(!reason.trim())throw new Error('拒绝理由不能为空');
+      const actionId='desktop-reject-'+Date.now()+'-'+Math.random().toString(16).slice(2);
+      const r=await fetch(`/api/v2/admin/governance/approvals/${encodeURIComponent(item.governance_id)}/${encodeURIComponent(item.revision)}/decide`,{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Idempotency-Key':actionId},
+        body:JSON.stringify({
+          actor:'ADMIN',
+          approval_id:item.approval_id,
+          decision:'rejected',
+          reason,
+          source_ui_action_id:actionId,
+          idempotency_key:actionId,
+        })
+      });
+      const result=await r.json().catch(()=>({}));
+      if(!r.ok||!result.ok)throw new Error(result.error||('HTTP '+r.status));
+      showToast('治理记录已驳回','#fca5a5');
+      await loadApprovals();
+      await loadApprovalHistory();
+      return;
+    }
     const r=await fetch(`/api/v2/operation-approvals/${encodeURIComponent(id)}/reject`,{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({reason})
@@ -16840,6 +17093,11 @@ function renderTdpDispatchRetry(rec){
   if(rec.provider)lines.push('provider: '+rec.provider);
   if(rec.adapter)lines.push('adapter: '+rec.adapter);
   if(rec.category||rec.lastCategory)lines.push('category: '+(rec.category||rec.lastCategory));
+  if(rec.recoveryState)lines.push('state: '+rec.recoveryState);
+  if(rec.retryPolicy)lines.push('retryPolicy: '+rec.retryPolicy);
+  if(rec.operationFingerprint)lines.push('operationFingerprint: '+rec.operationFingerprint);
+  if(rec.nextSafeAction)lines.push('nextSafeAction: '+rec.nextSafeAction);
+  if(rec.reportRequired!=null)lines.push('reportRequired: '+String(!!rec.reportRequired));
   lines.push('failureCount: '+String(rec.failureCount??0));
   if(rec.retryRound!=null)lines.push('retryRound: '+String(rec.retryRound));
   if(rec.lastError)lines.push('lastError: '+rec.lastError);
@@ -16854,9 +17112,15 @@ function renderTdpDispatchRetry(rec){
   }
   if(rec.decisionRequired){
     box.className='tdp-dispatch-retry tdp-dispatch-retry--waiting';
-    titleEl.textContent='等待 ADMIN 决策';
+    titleEl.textContent=rec.recoveryState==='waiting_approval'
+      ?'等待操作审批'
+      :rec.recoveryState==='needs_replan'
+        ?'策略拒绝：等待重新规划或 REPORT'
+        :'等待 ADMIN 决策';
     metaEl.textContent=lines.join('\n');
-    actionsEl.style.display='flex';
+    actionsEl.style.display=(rec.recoveryState==='waiting_approval'||rec.retryPolicy==='none')
+      ?'none'
+      :'flex';
     tdpRefreshAlertsFold();
     return;
   }
@@ -18681,6 +18945,38 @@ function syncTaskPrimaryTabChrome(){
   }
 }
 
+async function apRequestChanges(id){
+  const item=approvals.find(a=>(a.id||a.filename||'')===id);
+  if(!item||item.kind!=='governance')return;
+  const reason=prompt('请说明需要 PM 修改的内容')??'';
+  if(!reason.trim()){showToast('修改要求不能为空','#fca5a5');return;}
+  const btn=document.querySelector(`[data-ap-changes="${CSS.escape?CSS.escape(id):id}"]`);
+  if(btn){btn.disabled=true;btn.textContent=t('btn.processing');}
+  try{
+    const actionId='desktop-changes-'+Date.now()+'-'+Math.random().toString(16).slice(2);
+    const r=await fetch(`/api/v2/admin/governance/approvals/${encodeURIComponent(item.governance_id)}/${encodeURIComponent(item.revision)}/decide`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Idempotency-Key':actionId},
+      body:JSON.stringify({
+        actor:'ADMIN',
+        approval_id:item.approval_id,
+        decision:'changes_requested',
+        reason,
+        source_ui_action_id:actionId,
+        idempotency_key:actionId,
+      })
+    });
+    const result=await r.json().catch(()=>({}));
+    if(!r.ok||!result.ok)throw new Error(result.error||('HTTP '+r.status));
+    showToast('已要求 PM 修改','#fbbf24');
+    await loadApprovals();
+    await loadApprovalHistory();
+  }catch(e){
+    showToast(t('toast.opFail',{err:e.message}),'#fca5a5');
+    if(btn){btn.disabled=false;btn.textContent='要求修改';}
+  }
+}
+
 function submissionStatusLabel(status){
   return ({
     draft:'草稿',checking:'审查中',accepted:'已通过',
@@ -18747,7 +19043,8 @@ function renderTaskSubmissionBoard(){
     <details style="margin-top:14px"><summary style="cursor:pointer;color:#93c5fd">能力矩阵 (${(selected?.capability_matrix||[]).length})</summary>
       <div style="overflow:auto;margin-top:8px"><table class="tbl"><thead><tr><th>任务步骤</th><th>角色</th><th>所需能力</th><th>策略</th><th>风险</th><th>结论</th><th>建议</th></tr></thead><tbody>${matrixRows}</tbody></table></div>
     </details>`:'';
-  const editable=selected&&!selected.legacy_anomaly&&['needs_revision','needs_approval','rejected','failed','formalization_failed'].includes(selected.status);
+  const revisable=selected&&!selected.legacy_anomaly&&['draft','checking','needs_revision','needs_approval','rejected','failed','formalization_failed'].includes(selected.status);
+  const recheckable=selected&&!selected.legacy_anomaly&&['draft','checking','failed','formalization_failed'].includes(selected.status);
   const legacyOptionLabels={
     convert_to_submission:'转为新的投递记录后修订',
     mark_legacy_invalid:'标记为旧版无效任务并保留审计',
@@ -18781,14 +19078,15 @@ function renderTaskSubmissionBoard(){
       ${legacyOptions}
       ${findings||'<div style="margin-top:14px;color:#4ade80">当前没有阻塞项。</div>'}
       ${capabilityMatrix}
-      <div style="margin-top:16px"><label style="display:block;margin-bottom:5px;color:var(--text3)">任务标题</label>
-        <input id="submission-revise-subject" class="ci" value="${esc(selected?.subject||'')}" ${editable?'':'disabled'} style="width:100%">
+      <div style="margin-top:16px"><label style="display:block;margin-bottom:5px;color:var(--text3)">当前任务标题</label>
+        <input id="submission-revise-subject" class="ci" value="${esc(selected?.subject||'')}" disabled style="width:100%">
       </div>
-      <div style="margin-top:10px"><label style="display:block;margin-bottom:5px;color:var(--text3)">任务正文</label>
-        <textarea id="submission-revise-body" class="ci" rows="12" ${editable?'':'disabled'} style="width:100%;min-height:220px">${esc(selected?.draft_body||'')}</textarea>
+      <div style="margin-top:10px"><label style="display:block;margin-bottom:5px;color:var(--text3)">当前任务正文（线下修改后重新上传）</label>
+        <textarea id="submission-revise-body" class="ci" rows="12" disabled style="width:100%;min-height:220px">${esc(selected?.draft_body||'')}</textarea>
       </div>
-      ${editable?`<div style="display:flex;gap:8px;margin-top:12px">
-        <button class="hbtn blue" onclick="reviseTaskSubmissionFromPanel('${esc(selected.submission_id)}')">修订并重新审查</button>
+      ${revisable?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+        <button class="hbtn blue" onclick="showTaskSubmissionRevisionComposer('${esc(selected.submission_id)}')">继续编辑（重新上传任务书）</button>
+        ${recheckable?`<button class="hbtn" onclick="recheckTaskSubmissionFromPanel('${esc(selected.submission_id)}')">重新检查当前草稿</button>`:''}
         <button class="hbtn" onclick="abandonTaskSubmissionFromPanel('${esc(selected.submission_id)}')" style="color:#fca5a5">放弃投递</button>
       </div>`:''}
       <details style="margin-top:18px"><summary style="cursor:pointer;color:var(--text3)">审查历史 (${(selected?.history||[]).length})</summary>${history}</details>
@@ -18796,16 +19094,14 @@ function renderTaskSubmissionBoard(){
   </div>`;
 }
 
-async function reviseTaskSubmissionFromPanel(submissionId){
-  const subject=(document.getElementById('submission-revise-subject')?.value||'').trim();
-  const body=(document.getElementById('submission-revise-body')?.value||'').trim();
-  if(!subject||!body){showToast('请填写任务标题和正文','#fbbf24');return;}
-  showToast('正在审查修订后的任务书…','#60a5fa',2500);
+async function recheckTaskSubmissionFromPanel(submissionId){
+  showToast('正在重新检查当前草稿…','#60a5fa',2500);
   try{
-    const response=await fetch('/api/v2/task-submissions/'+encodeURIComponent(submissionId)+'/revise',{
-      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({subject,body})
+    const response=await fetch('/api/v2/task-submissions/'+encodeURIComponent(submissionId)+'/check',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:'{}'
     });
     const payload=await response.json().catch(()=>({}));
+    if(!payload.submission)throw new Error(payload.message||payload.error||payload.code||('HTTP '+response.status));
     if(payload.submission){
       const index=taskSubmissions.findIndex(row=>row.submission_id===submissionId);
       if(index>=0)taskSubmissions[index]=payload.submission;
@@ -18814,8 +19110,10 @@ async function reviseTaskSubmissionFromPanel(submissionId){
     taskPrimaryTab='submissions';
     selectedTaskSubmissionId=submissionId;
     renderTaskPage();
-    showToast(payload.created?'审查通过，已生成正式任务':'仍有阻塞项，请按详情继续修订',payload.created?'#4ade80':'#fca5a5',5000);
-  }catch(error){showToast('重新审查失败：'+String(error?.message||error),'#fca5a5',5000);}
+    showToast(payload.created?'检查通过，已生成正式任务':'检查完成，草稿仍可继续修订',payload.created?'#4ade80':'#fbbf24',5000);
+  }catch(error){
+    showToast('重新检查当前草稿失败：'+String(error?.message||error),'#fca5a5',5000);
+  }
 }
 
 function selectedTaskSubmission(){
@@ -22122,10 +22420,23 @@ function isReviewGateApproval(a){
   return String(a&&a.reviewer||'').toUpperCase()==='REVIEW-GATE';
 }
 function taskFormalReviews(f){
-  return taskApprovalsForFile(f).filter(a=>!isReviewGateApproval(a));
+  return taskApprovalsForFile(f).filter(a=>a.kind!=='governance'&&!isReviewGateApproval(a));
 }
 function taskHumanGateApprovals(f){
-  return taskApprovalsForFile(f).filter(isReviewGateApproval);
+  return taskApprovalsForFile(f).filter(a=>isReviewGateApproval(a)||(a.kind==='governance'&&a.blocks_task&&a.status==='pending_approval'));
+}
+
+function renderTaskGovernanceRecords(rows){
+  const section=document.getElementById('tdp-governance-section');
+  const host=document.getElementById('tdp-governance-records');
+  if(!section||!host)return;
+  const records=(rows||[]).filter(row=>row.kind==='governance');
+  section.style.display=records.length?'block':'none';
+  host.innerHTML=records.map(row=>`<div class="tdp-fm-trans-item">
+    <div><strong>${esc(row.requested_action||row.type||'治理记录')}</strong> · ${esc(row.status||'')}</div>
+    <div class="tdp-fm-v" style="margin-top:4px">${esc(row.summary||'')}</div>
+    <div class="tdp-fm-k" style="margin-top:5px">${esc(row.governance_id||'')} r${esc(String(row.revision||1))} · ${esc(row.scope_digest||'')}</div>
+  </div>`).join('');
 }
 
 function loadTaskScopedApprovals(f){
@@ -22143,11 +22454,13 @@ function loadTaskScopedApprovals(f){
       _tdpScopedApprovals=Array.isArray(rows)?rows:[];
       if(_tdpFile&&(taskIdPrefix(_tdpFile.filename)||'')===tid){
         renderTaskEvidence(_tdpFile);
+        renderTaskGovernanceRecords(_tdpScopedApprovals);
       }
       return _tdpScopedApprovals;
     })
     .catch(()=>{
       _tdpScopedApprovals=[];
+      renderTaskGovernanceRecords([]);
       return [];
     });
 }

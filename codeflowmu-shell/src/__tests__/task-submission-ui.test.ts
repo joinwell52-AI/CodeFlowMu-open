@@ -26,7 +26,9 @@ test("desktop task page has a persistent submission review surface", () => {
     'id="task-primary-submissions"',
     'id="task-submission-board"',
     "renderTaskSubmissionBoard",
-    "reviseTaskSubmissionFromPanel",
+    "showTaskSubmissionRevisionComposer",
+    "parseTaskSubmissionRevisionMarkdown",
+    "recheckTaskSubmissionFromPanel",
     "abandonTaskSubmissionFromPanel",
     "/api/v2/task-submissions?limit=200",
     "任务书需要风险预授权",
@@ -36,9 +38,35 @@ test("desktop task page has a persistent submission review surface", () => {
     "期望：",
     "实际：",
     "修复建议：",
+    "继续编辑（重新上传任务书）",
+    "重新上传修改后的任务书",
+    "重新检查当前草稿",
   ]) {
     assert.match(panel, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+});
+
+test("desktop revision opens the task composer and requires a replacement upload", () => {
+  assert.match(
+    panel,
+    /\['draft','checking','needs_revision','needs_approval','rejected','failed','formalization_failed'\]\.includes\(selected\.status\)/,
+  );
+  assert.match(
+    panel,
+    /\['draft','checking','failed','formalization_failed'\]\.includes\(selected\.status\)/,
+  );
+  assert.match(panel, /showTaskSubmissionRevisionComposer\(submissionId\)/);
+  assert.match(panel, /if\(revisingSubmissionId&&!_ddRevisionUploadName\)/);
+  assert.match(
+    panel,
+    /source_filename:_ddRevisionUploadName,check:true/,
+  );
+  assert.doesNotMatch(panel, /继续编辑（保存草稿）/);
+  assert.ok(
+    panel.includes(
+      "'/api/v2/task-submissions/'+encodeURIComponent(submissionId)+'/check'",
+    ),
+  );
 });
 
 test("desktop task submission keeps rejection out of the success path", () => {

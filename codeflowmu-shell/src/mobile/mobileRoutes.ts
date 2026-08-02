@@ -5,6 +5,8 @@ import { basename, join, resolve as pathResolve, sep } from "node:path";
 import { Router, type Request, type Response } from "express";
 import {
   getAdminTaskCloseout,
+  GovernanceApprovalError,
+  GovernanceApprovalService,
   OperationApprovalError,
   OperationApprovalService,
   parseMarkdownFrontmatter,
@@ -396,6 +398,38 @@ function mobileApprovalService(ctx: MobilePanelContext): OperationApprovalServic
   return new OperationApprovalService({ projectRoot: ctx.getProjectRoot() });
 }
 
+function mobileGovernanceApprovalService(
+  ctx: MobilePanelContext,
+): GovernanceApprovalService {
+  return new GovernanceApprovalService({ projectRoot: ctx.getProjectRoot() });
+}
+
+function mobileGovernanceApprovalStatus(status: string): string {
+  if (status === "pending_approval") return "pending";
+  if (["effective", "consumed"].includes(status)) return "approved";
+  return status;
+}
+
+function mobileGovernanceApprovalRow(
+  record: ReturnType<GovernanceApprovalService["get"]>,
+): Record<string, unknown> {
+  return {
+    ...record,
+    id: record.approval_id ?? `${record.governance_id}::${record.revision}`,
+    filename:
+      record.approval_id ?? `${record.governance_id}::${record.revision}`,
+    kind: "governance",
+    status: mobileGovernanceApprovalStatus(record.status),
+    title: record.intent_summary,
+    summary: record.boundary_summary,
+    approval_type: "governance_boundary_change",
+    from: record.authored_by,
+    to: "ADMIN",
+    can_approve: record.status === "pending_approval",
+    material_missing: false,
+  };
+}
+
 function mobileOperationApprovalStatus(record: OperationApprovalRecord): string {
   if (record.status === "pending_approval") return "pending";
   if (["approved", "executing", "succeeded", "partial_failed", "failed"].includes(record.status)) {
@@ -482,6 +516,53 @@ async function mobileApprovalDetail(
   };
 }
 
+async function mobileGovernanceApprovalDetail(
+  ctx: MobilePanelContext,
+  approvalId: string,
+) {
+  const service = mobileGovernanceApprovalService(ctx);
+  const record = service
+    .list({ limit: 1000 })
+    .find(
+      (row) =>
+        row.approval_id === approvalId ||
+        `${row.governance_id}::${row.revision}` === approvalId,
+    );
+  if (!record) return null;
+  const merged = mobileGovernanceApprovalRow(record);
+  return {
+    approval: {
+      ...merged,
+      body: [
+        `意图：${record.intent_summary}`,
+        `边界：${record.boundary_summary}`,
+        `允许：${record.allowed_actions.join("；")}`,
+        `禁止：${record.prohibited_actions.join("；")}`,
+        `目标：${record.targets.join("；")}`,
+        `内容哈希：${record.content_hash}`,
+        `范围摘要：${record.scope_digest}`,
+        `来源消息：${record.source_message_id ?? "—"}`,
+      ].join("\n\n"),
+    },
+    linked_task: null,
+    linked_report: null,
+    transitions: service
+      .listDecisions(record.governance_id)
+      .filter((row) => row.governance_revision === record.revision),
+  };
+}
+
+async function mobileUnifiedApprovalDetail(
+  ctx: MobilePanelContext,
+  approvalId: string,
+  lang: MobileUiLang,
+) {
+  return (
+    (await mobileGovernanceApprovalDetail(ctx, approvalId)) ??
+    mobileApprovalDetail(ctx, approvalId, lang)
+  );
+}
+
 function requestMobileUiLang(req: Request): MobileUiLang {
   const explicit = req.headers["x-codeflowmu-ui-lang"];
   if (explicit) return normalizeMobileUiLang(Array.isArray(explicit) ? explicit[0] : explicit);
@@ -489,7 +570,15 @@ function requestMobileUiLang(req: Request): MobileUiLang {
 }
 
 async function listMergedMobileApprovals(ctx: MobilePanelContext): Promise<Record<string, unknown>[]> {
-  return mobileApprovalService(ctx).list({ limit: 200 }).map(mobileOperationApprovalRow);
+  return [
+    ...mobileGovernanceApprovalService(ctx)
+      .list({ limit: 200 })
+      .filter((row) => row.status !== "draft")
+      .map(mobileGovernanceApprovalRow),
+    ...mobileApprovalService(ctx)
+      .list({ limit: 200 })
+      .map(mobileOperationApprovalRow),
+  ];
 }
 
 export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle {
@@ -1108,7 +1197,7 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
     try {
       const filename = String(req.query["filename"] ?? "");
       if (filename) {
-        const detail = await mobileApprovalDetail(
+        const detail = await mobileUnifiedApprovalDetail(
           ctx,
           filename,
           requestMobileUiLang(req),
@@ -1130,7 +1219,7 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
   router.get("/approvals/:filename", async (req: Request, res: Response) => {
     const filename = String(req.params["filename"] ?? "");
     try {
-      const detail = await mobileApprovalDetail(
+      const detail = await mobileUnifiedApprovalDetail(
         ctx,
         filename,
         requestMobileUiLang(req),
@@ -1145,11 +1234,46 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
     }
   });
 
-  const decideApproval = async (req: Request, res: Response, decision: "approve" | "reject") => {
+  const decideApproval = async (
+    req: Request,
+    res: Response,
+    decision: "approve" | "reject" | "changes",
+  ) => {
     const approvalId = String(req.params["filename"] ?? "");
     const reason = String((req.body as { reason?: string }).reason ?? "").trim();
     if (!reason) {
       res.status(400).json({ ok: false, error: "APPROVAL_REASON_REQUIRED" });
+      return;
+    }
+    const governanceService = mobileGovernanceApprovalService(ctx);
+    const governance = governanceService
+      .list({ limit: 1000 })
+      .find((row) => row.approval_id === approvalId);
+    if (governance) {
+      const actionId = `pwa-${decision}-${Date.now()}-${randomBytes(6).toString("hex")}`;
+      const result = governanceService.decide({
+        governanceId: governance.governance_id,
+        revision: governance.revision,
+        approvalId,
+        actor: "ADMIN",
+        decision:
+          decision === "approve"
+            ? "approved"
+            : decision === "reject"
+              ? "rejected"
+              : "changes_requested",
+        reason,
+        sourceUiActionId: actionId,
+        idempotencyKey: actionId,
+      });
+      res.json({ ok: true, ...result });
+      return;
+    }
+    if (decision === "changes") {
+      res.status(400).json({
+        ok: false,
+        error: "CHANGES_ONLY_FOR_GOVERNANCE",
+      });
       return;
     }
     const service = mobileApprovalService(ctx);
@@ -1160,6 +1284,14 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
   };
 
   const sendMobileApprovalError = (res: Response, error: unknown) => {
+    if (error instanceof GovernanceApprovalError) {
+      res.status(error.httpStatus).json({
+        ok: false,
+        error: error.code,
+        detail: error.message,
+      });
+      return;
+    }
     if (error instanceof OperationApprovalError) {
       res.status(error.httpStatus).json({ ok: false, error: error.code, detail: error.message });
       return;
@@ -1190,6 +1322,13 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
       }
       const decision = rawDecision;
       await decideApproval(req, res, decision);
+    } catch (err) {
+      sendMobileApprovalError(res, err);
+    }
+  });
+  router.post("/approvals/:filename/changes", async (req, res) => {
+    try {
+      await decideApproval(req, res, "changes");
     } catch (err) {
       sendMobileApprovalError(res, err);
     }

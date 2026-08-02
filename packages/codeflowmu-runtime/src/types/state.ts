@@ -123,6 +123,20 @@ export interface SessionRecord {
   runtime_configured_model_id?: string;
   /** Final model id sent to the SDK for this immutable session. */
   runtime_effective_model_id?: string;
+  /** Durable semantic checkpoint used to avoid replaying a stale failed action. */
+  runtime_operation_checkpoint?: {
+    task_id: string;
+    session_id: string;
+    completed_steps: string[];
+    pending_step: string;
+    last_verified_state: string;
+    failed_operation: string;
+    failed_operation_preconditions: Record<string, unknown>;
+    operation_fingerprint: string;
+    next_safe_action: string;
+    report_required: boolean;
+    retry_policy: "none" | "manual";
+  };
 }
 
 // ───────────────────────────────────────────────────────────────────────────

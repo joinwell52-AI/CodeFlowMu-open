@@ -108,6 +108,29 @@ describe("LifecycleStateMachine", () => {
     });
   });
 
+  it("open blocking ISSUE prevents review approval", async () => {
+    await withTempLifecycle(async ({ lifecycleRoot }) => {
+      const taskId = "TASK-20260731-099-PM-to-QA";
+      await writeTaskAt(lifecycleRoot, "review", `${taskId}.md`, {
+        task_id: taskId,
+        from: "PM",
+        to: "QA",
+        driver: "QA",
+        reviewer: "PM",
+        done_authority: "PM",
+        review_status: "pending",
+        issue_blocking: true,
+        blocking_issue_id: "ISSUE-20260731-099-REPORT-action",
+      });
+
+      const sm = new LifecycleStateMachine({ lifecycleRoot });
+      await assert.rejects(
+        () => sm.approveReview({ taskId, actor: "PM" }),
+        /unresolved blocking ISSUE ISSUE-20260731-099-REPORT-action/,
+      );
+    });
+  });
+
   it("3. review → active 打回成功并 reopened_count + 1", async () => {
     await withTempLifecycle(async ({ lifecycleRoot }) => {
       const taskId = "TASK-20260530-012-PM-to-OPS";

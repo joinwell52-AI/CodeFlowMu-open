@@ -96,9 +96,11 @@ test("revision preserves needs-revision history and increments admission revisio
     const revised = await reviseTaskSubmission(root, draft.submission_id, {
       subject: "Valid revision",
       body: "Implement and verify a small feature.",
+      source_filename: "ADMIN-to-PM-revised.md",
     });
     assert.equal(revised.admission_revision, 2);
     assert.equal(revised.status, "draft");
+    assert.equal(revised.last_uploaded_filename, "ADMIN-to-PM-revised.md");
     assert.ok(
       revised.history.some((entry) => entry.decision === "needs_revision"),
     );
@@ -106,6 +108,53 @@ test("revision preserves needs-revision history and increments admission revisio
     assert.equal(accepted.status, "accepted");
     assert.ok(
       accepted.history.some((entry) => entry.decision === "accepted"),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an interrupted checking state can recheck the same durable draft", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cfm-submission-recover-"));
+  try {
+    const draft = await createTaskSubmission(root, {
+      subject: "Recover interrupted check",
+      body: "Implement and verify a small feature.",
+    });
+    const path = taskSubmissionPath(root, draft.submission_id);
+    const persisted = JSON.parse(await readFile(path, "utf8"));
+    persisted.status = "checking";
+    persisted.updated_at = new Date().toISOString();
+    await writeFile(path, `${JSON.stringify(persisted, null, 2)}\n`, "utf8");
+
+    const recovered = await checkTaskSubmission(root, draft.submission_id);
+    assert.equal(recovered.status, "accepted");
+    assert.equal(recovered.admission_revision, 1);
+    assert.ok(
+      recovered.history.some(
+        (entry) => entry.status === "checking" && entry.admission_revision === 1,
+      ),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("abandoned submission cannot be edited or rechecked", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cfm-submission-abandoned-"));
+  try {
+    const draft = await createTaskSubmission(root, {
+      subject: "Abandoned",
+      body: "Implement and verify.",
+    });
+    await abandonTaskSubmission(root, draft.submission_id);
+    await assert.rejects(
+      () => checkTaskSubmission(root, draft.submission_id),
+      /TASK_SUBMISSION_ABANDONED/,
+    );
+    await assert.rejects(
+      () => reviseTaskSubmission(root, draft.submission_id, { body: "retry" }),
+      /TASK_SUBMISSION_ABANDONED/,
     );
   } finally {
     await rm(root, { recursive: true, force: true });

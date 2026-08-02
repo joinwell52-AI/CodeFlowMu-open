@@ -292,7 +292,7 @@ test("SdkRunHandle: exact git push creates a pre-action approval and leaves remo
   assert.equal(await git(repo, ["ls-remote", "origin", "refs/heads/main"]), "");
 });
 
-test("SdkRunHandle: force git push is denied without creating an unusable approval", async () => {
+test("SdkRunHandle: force git push requests formal governance approval without creating an unusable operation approval", async () => {
   const { repo } = await createPushFixture();
   const run = {
     id: "run-native-force-push-gate",
@@ -318,7 +318,70 @@ test("SdkRunHandle: force git push is denied without creating an unusable approv
     projectRoot: repo,
   });
   const settled = await handle.whenSettled();
-  assert.equal(settled.status, "failed");
-  assert.equal(settled.failure_code, OPERATION_BOUNDARY_DENIED);
+  assert.equal(settled.status, "finished");
+  assert.equal(settled.failure_code, "APPROVAL_REQUIRED");
+  assert.equal(
+    (settled as typeof settled & { operation_classification?: string })
+      .operation_classification,
+    "approval_required",
+  );
+  assert.equal(
+    (settled as typeof settled & { retry_policy?: string }).retry_policy,
+    "manual",
+  );
   assert.equal(new OperationApprovalService({ projectRoot: repo }).list().length, 0);
+});
+
+test("SdkRunHandle: deleting an already absent exact target is a successful no-op", async () => {
+  const projectRoot = await mkdtemp(join(tmpdir(), "cfmu-sdk-absent-cleanup-"));
+  const missingPath = join(
+    projectRoot,
+    "workspace",
+    "qa-run",
+    "_qa_wp00_spotcheck.py",
+  );
+  const run = {
+    id: "run-native-absent-cleanup",
+    supports: (cap: string) => cap === "stream" || cap === "cancel",
+    stream: async function* () {
+      yield {
+        type: "tool_call",
+        call_id: "delete-absent-1",
+        name: "delete_file",
+        status: "running",
+        args: { path: missingPath },
+      };
+    },
+    // Some native providers still report their own missing-file error. The
+    // operation boundary has already proved this exact cleanup is idempotent.
+    wait: async () => ({ status: "failed", error: "file not found" }),
+    cancel: async () => {},
+  };
+
+  const handle = new SdkRunHandle({
+    agent: mockAgent() as unknown as import("@cursor/sdk").Agent,
+    run: run as never,
+    sessionId: "sess-native-absent-cleanup",
+    agentId: "QA-01",
+    projectRoot,
+  });
+  const settled = await handle.whenSettled();
+  assert.equal(settled.status, "finished");
+  assert.equal(settled.failure_code, undefined);
+  assert.equal(
+    (settled as typeof settled & { operation_classification?: string })
+      .operation_classification,
+    "already_absent",
+  );
+  assert.deepEqual(
+    (settled as typeof settled & { operation_outcome?: unknown })
+      .operation_outcome,
+    {
+      ok: true,
+      changed: false,
+      reason: "already_absent",
+      targets: [missingPath],
+      classification: "already_absent",
+    },
+  );
 });

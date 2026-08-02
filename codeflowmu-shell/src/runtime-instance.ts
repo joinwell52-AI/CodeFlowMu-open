@@ -5,6 +5,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -82,6 +83,21 @@ export function runtimeInstancePath(hostRoot: string): string {
 function normalizePathForIdentity(value: string): string {
   const resolved = pathResolve(value);
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function writeRuntimeInstanceRecord(
+  hostRoot: string,
+  record: RuntimeInstanceRecord,
+): void {
+  const filePath = runtimeInstancePath(hostRoot);
+  mkdirSync(dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  try {
+    writeFileSync(tempPath, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+    renameSync(tempPath, filePath);
+  } finally {
+    rmSync(tempPath, { force: true });
+  }
 }
 
 function safeToken(value: string, fallback: string): string {
@@ -239,11 +255,7 @@ export function ensureRuntimeInstance(input: {
         belongsHere && existing!.created_at ? existing!.created_at : now,
       updated_at: now,
     };
-    writeFileSync(
-      runtimeInstancePath(hostRoot),
-      `${JSON.stringify(record, null, 2)}\n`,
-      "utf8",
-    );
+    writeRuntimeInstanceRecord(hostRoot, record);
     return record;
   });
 }
@@ -259,7 +271,7 @@ export function updateRuntimeInstanceProjectRoot(
     project_root: pathResolve(projectRoot),
     updated_at: new Date().toISOString(),
   };
-  writeFileSync(runtimeInstancePath(hostRoot), `${JSON.stringify(updated, null, 2)}\n`, "utf8");
+  writeRuntimeInstanceRecord(hostRoot, updated);
   return updated;
 }
 

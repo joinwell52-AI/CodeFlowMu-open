@@ -25,7 +25,13 @@ import { mergeMobileChatMessages } from "../mobile/mobileRoutes.ts";
 import { resetMobileEventStoreForTests } from "../mobile/mobileEventStore.ts";
 import { fcopLogsRuntimeDir, logsDateKey } from "../logs-paths.ts";
 import { appendPanelRuntimeAction } from "../panel-runtime-actions.ts";
-import { OperationApprovalService, PmQueueGuard, resolveLedgerLayout, type Runtime } from "@codeflowmu/runtime";
+import {
+  GovernanceApprovalService,
+  OperationApprovalService,
+  PmQueueGuard,
+  resolveLedgerLayout,
+  type Runtime,
+} from "@codeflowmu/runtime";
 
 function makeV3ProjectRoot(): { root: string; inbox: string; reviews: string } {
   const root = mkdtempSync(join(tmpdir(), "cf-mobile-proj-"));
@@ -431,6 +437,63 @@ Task: TASK-20260617-001
     assert.equal(approved.status, 200);
     assert.equal(typeof approved.body.execution_token, "string");
     assert.equal(approved.body.approval.status, "approved");
+
+    writeFileSync(
+      join(inbox, "TASK-20260731-100-ADMIN-to-PM.md"),
+      "---\ntask_id: TASK-20260731-100-ADMIN-to-PM\n---\n# Governance task\n",
+      "utf-8",
+    );
+    const governanceService = new GovernanceApprovalService({
+      projectRoot: root,
+      governanceIdFactory: () => "GOV-MOBILE-001",
+      approvalIdFactory: () => "APPROVAL-GOV-MOBILE-001",
+      decisionIdFactory: () => "DECISION-GOV-MOBILE-001",
+    });
+    const governanceDraft = governanceService.writeDraft({
+      type: "AUTHORIZATION",
+      issued_by: "ADMIN",
+      authored_by: "PM",
+      recipient: "DEV",
+      target_task_id: "TASK-20260731-100-ADMIN-to-PM",
+      thread_key: "mobile-governance",
+      project_id: "mobile-test",
+      source_kind: "pm_request",
+      intent_summary: "允许一次指定范围外部写入",
+      boundary_summary: "仅限指定目标",
+      allowed_actions: ["git.remote.push"],
+      prohibited_actions: ["release.publish"],
+      targets: ["origin/codex/mobile-governance"],
+      effective_conditions: ["scope matches"],
+      usage_limit: 1,
+      risk_and_rollback: "失败时停止",
+      revocation_conditions: ["ADMIN revokes"],
+      evidence_requirements: ["remote ref"],
+      blocks_task: true,
+    });
+    const governancePending = governanceService.submit(
+      governanceDraft.governance_id,
+      1,
+      "PM",
+    );
+    const governanceApprovals = await request(app)
+      .get("/api/v2/mobile/approvals")
+      .set("Authorization", `Bearer ${token}`);
+    assert.ok(
+      governanceApprovals.body.approvals.some(
+        (row: { filename?: string; kind?: string; status?: string }) =>
+          row.filename === governancePending.approval_id &&
+          row.kind === "governance" &&
+          row.status === "pending",
+      ),
+    );
+    const governanceApproved = await request(app)
+      .post(
+        `/api/v2/mobile/approvals/${governancePending.approval_id}/approve`,
+      )
+      .set("Authorization", `Bearer ${token}`)
+      .send({ reason: "ADMIN 在 PWA 正式审批组件确认" });
+    assert.equal(governanceApproved.status, 200);
+    assert.equal(governanceApproved.body.governance.status, "effective");
 
     const activity = await request(app)
       .get("/api/v2/mobile/activity")

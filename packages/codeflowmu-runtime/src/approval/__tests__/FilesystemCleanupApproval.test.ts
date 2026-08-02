@@ -14,6 +14,7 @@ import test from "node:test";
 import {
   FilesystemCleanupPreflightError,
   buildFilesystemCleanupApprovalInput,
+  assessFilesystemCleanupRisk,
   executeFilesystemCleanupApproval,
   inspectFilesystemCleanup,
 } from "../FilesystemCleanupApproval.ts";
@@ -102,7 +103,7 @@ test("cleanup preflight returns an exact manifest and approved execution quarant
   }
 });
 
-test("cleanup refuses project root, wildcard and Git-tracked content", () => {
+test("cleanup refuses unbounded targets while Git-tracked content enters approval", () => {
   const projectRoot = root();
   try {
     const tracked = join(projectRoot, "tracked.txt");
@@ -110,12 +111,45 @@ test("cleanup refuses project root, wildcard and Git-tracked content", () => {
     execFileSync("git", ["add", "tracked.txt"], { cwd: projectRoot });
     execFileSync("git", ["commit", "-m", "tracked"], { cwd: projectRoot, stdio: "ignore" });
 
-    for (const targets of [[projectRoot], ["build-*"], [tracked]]) {
+    for (const targets of [[projectRoot], ["build-*"]]) {
       assert.throws(
         () => inspectFilesystemCleanup({ projectRoot, targets }),
         (error: unknown) => error instanceof FilesystemCleanupPreflightError,
       );
     }
+    const trackedPreflight = inspectFilesystemCleanup({
+      projectRoot,
+      targets: [tracked],
+    });
+    assert.deepEqual(trackedPreflight.protected_exclusions, ["tracked.txt"]);
+  } finally {
+    rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("cleanup risk allows one task-created temporary file and treats absence as idempotent", () => {
+  const projectRoot = root();
+  try {
+    const taskDir = join(projectRoot, "workspace", "core-refactor-plan");
+    mkdirSync(taskDir, { recursive: true });
+    const target = join(taskDir, "_qa_wp00_spotcheck.py");
+    writeFileSync(target, "print('spotcheck')\n");
+
+    const allowed = assessFilesystemCleanupRisk({
+      projectRoot,
+      targets: [target],
+    });
+    assert.equal(allowed.decision, "ALLOW");
+    assert.equal(allowed.reason, "task_temporary_untracked_file");
+
+    rmSync(target);
+    const absent = assessFilesystemCleanupRisk({
+      projectRoot,
+      targets: [target],
+    });
+    assert.equal(absent.decision, "ALREADY_ABSENT");
+    assert.equal(absent.changed, false);
+    assert.equal(absent.reason, "already_absent");
   } finally {
     rmSync(projectRoot, { recursive: true, force: true });
   }

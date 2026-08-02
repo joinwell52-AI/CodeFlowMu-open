@@ -55,10 +55,17 @@ import {
   checkSkillsManifestHealth,
 } from "./fcop-v3-paths.ts";
 import {
+  diagnoseRuntimeProjectBinding,
   loadProjectRegistry,
   saveProjectRegistry,
+  type RuntimeProjectBindingPlan,
+  type RuntimeStartupProjectRootDiagnostic,
+  type RuntimeStartupProjectRootSource,
 } from "./project-registry.ts";
-import { updateRuntimeInstanceProjectRoot } from "./runtime-instance.ts";
+import {
+  loadRuntimeInstance,
+  updateRuntimeInstanceProjectRoot,
+} from "./runtime-instance.ts";
 import { formatDevelopmentProjectContextBlock } from "./project-context-prompt.ts";
 import {
   listCursorModels,
@@ -368,12 +375,14 @@ import {
   evaluatePmSummaryGate,
   OperationApprovalError,
   OperationApprovalService,
+  GovernanceApprovalService,
   buildFilesystemCleanupApprovalInput,
   executeFilesystemCleanupApproval,
   type CapabilityRequest,
   type OperationApprovalStatus,
 } from "@codeflowmu/runtime";
 import { buildGitPushApprovalInput, executeGitPushApproval } from "./git-operation-approval.ts";
+import { registerGovernanceApprovalRoutes } from "./governance-approval-routes.ts";
 import { buildProjectGraphProjection } from "./project-graph-projection.ts";
 import { confirmOperationDecisionNative, confirmOperationImpactNative } from "./native-operation-confirm.ts";
 import { RuntimeEventFileLogger, RUNTIME_EVENT_TYPES } from "./runtime-event-logger.ts";
@@ -668,7 +677,7 @@ const projectStore = new Map<string, Project>();
 let activeProjectId = "default";
 let projectStoreHydrated = false;
 
-function persistProjectStore(): void {
+function persistProjectStore(requireInstanceUpdate = false): void {
   saveProjectRegistry(
     activeProjectId,
     Array.from(projectStore.values()).map(({ id, name, root }) => ({
@@ -680,7 +689,16 @@ function persistProjectStore(): void {
   const active = projectStore.get(activeProjectId);
   const hostRoot = process.env["CODEFLOWMU_HOST_ROOT"]?.trim();
   if (active?.root && hostRoot) {
-    updateRuntimeInstanceProjectRoot(hostRoot, active.root);
+    const updated = updateRuntimeInstanceProjectRoot(hostRoot, active.root);
+    if (requireInstanceUpdate && !updated) {
+      throw new Error(
+        `PROJECT_SWITCH_INSTANCE_UPDATE_FAILED: ${hostRoot}`,
+      );
+    }
+  } else if (requireInstanceUpdate) {
+    throw new Error(
+      "PROJECT_SWITCH_INSTANCE_UPDATE_FAILED: active project or host root is missing",
+    );
   }
 }
 
@@ -3966,6 +3984,18 @@ function pmHeartbeatField(
   return String(row[key] ?? "").trim();
 }
 
+interface WebPanelRuntimeInstanceContext {
+  instanceId: string;
+  instanceRole: string;
+  hostRoot: string;
+  registryPath: string;
+  dataRoot: string;
+  writerLockPaths: string[];
+  startupProjectSource?: RuntimeStartupProjectRootSource;
+  startupProjectDiagnostics?: RuntimeStartupProjectRootDiagnostic[];
+  projectBindingPlan?: RuntimeProjectBindingPlan;
+}
+
 /**
  * 构造 PM 主动巡检的“业务状态摘要”。
  *
@@ -4056,14 +4086,7 @@ export function buildWebPanelApp(
     fcopRuntime?: FcopRuntimeSeed;
     /** Resolved data dir for agent-recycle-state.json (auto-recycle baseline). */
     dataDir?: string;
-    runtimeInstance?: {
-      instanceId: string;
-      instanceRole: string;
-      hostRoot: string;
-      registryPath: string;
-      dataRoot: string;
-      writerLockPaths: string[];
-    };
+    runtimeInstance?: WebPanelRuntimeInstanceContext;
     /** Agent auto-recycle when idle after N sessions (default: disabled). */
     agentRecycle?: AgentRecycleConfig;
     /** Stop the old Runtime and automatically reload Shell after project switch. */
@@ -4307,6 +4330,42 @@ export function buildWebPanelApp(
     if (opts.runtimeInstance && !opts.runtimeInstance.writerLockPaths?.length) {
       isolationAlerts.push("Runtime writer lock is not owned");
     }
+    const projectBindingPlan = opts.runtimeInstance?.projectBindingPlan;
+    const currentInstance = opts.runtimeInstance
+      ? loadRuntimeInstance(opts.runtimeInstance.hostRoot)
+      : null;
+    let writerLockProjectRoot: string | null = null;
+    const writerLockPath = opts.runtimeInstance?.writerLockPaths?.[0];
+    if (writerLockPath) {
+      try {
+        const record = JSON.parse(readFileSync(writerLockPath, "utf8")) as {
+          project_root?: unknown;
+        };
+        if (typeof record.project_root === "string") {
+          writerLockProjectRoot = record.project_root;
+        }
+      } catch {
+        isolationAlerts.push("Runtime writer lock record is unreadable");
+      }
+    }
+    const bindingConsistency = projectBindingPlan
+      ? diagnoseRuntimeProjectBinding({
+          expectedRoot: projectBindingPlan.activeProjectRoot,
+          instanceProjectRoot: currentInstance?.project_root,
+          writerLockProjectRoot,
+          plan: {
+            ...projectBindingPlan,
+            runtimeProjectRoot: runtime.projectRoot ?? projectBindingPlan.runtimeProjectRoot,
+          },
+        })
+      : null;
+    if (bindingConsistency && !bindingConsistency.ok) {
+      isolationAlerts.push(
+        `${bindingConsistency.code}: ${bindingConsistency.mismatches
+          .map(({ binding, actual }) => `${binding}=${actual ?? "<missing>"}`)
+          .join(", ")}`,
+      );
+    }
 
     // Best-effort Python detection for health dashboard
     let pythonVersion = "未检测";
@@ -4350,6 +4409,18 @@ export function buildWebPanelApp(
       mcpInjectorMode,
       root,
       projectRoot: root,
+      active_project_root: projectBindingPlan?.activeProjectRoot ?? root,
+      instance_project_root: currentInstance?.project_root ?? null,
+      runtime_project_root: runtime.projectRoot,
+      mcp_project_root: projectBindingPlan?.mcpProjectRoot ?? null,
+      mcp_cwd: projectBindingPlan?.mcpCwd ?? null,
+      report_watcher_root: projectBindingPlan?.reportWatcherRoot ?? null,
+      lifecycle_watcher_root: projectBindingPlan?.lifecycleWatcherRoot ?? null,
+      cursor_default_cwd: projectBindingPlan?.cursorDefaultCwd ?? null,
+      startup_project_source: opts.runtimeInstance?.startupProjectSource ?? null,
+      startup_project_diagnostics:
+        opts.runtimeInstance?.startupProjectDiagnostics ?? [],
+      project_binding_consistency: bindingConsistency,
       codeRoot: artifactLayout.artifactRoot,
       workspaceMode: artifactLayout.mode,
       artifactLayout: artifactLayout.relativeArtifactRoot,
@@ -7927,7 +7998,12 @@ export function buildWebPanelApp(
               }
             })
         : [];
-      const approvals = operationApprovalService().list({ limit: 1000 });
+      const approvals = [
+        ...governanceApprovalService()
+          .list({ limit: 1000 })
+          .map((row) => ({ ...row, kind: "governance" })),
+        ...operationApprovalService().list({ limit: 1000 }),
+      ];
       const runtimeEvents = activeSessions.map((session) => ({
         id: session.protocol.session_id,
         task_id: session.protocol.task_id,
@@ -9144,6 +9220,42 @@ export function buildWebPanelApp(
       if (resolution) fields.resolution = resolution.replace(/\n/g, " ").slice(0, 200);
       const updated = _wpPatchFmFields(raw, fields);
       writeFileSync(abs, updated, "utf-8");
+      const sourceTaskId = String(
+        fm["source_task"] ?? fm["task_id"] ?? "",
+      ).trim();
+      const issueId = String(
+        fm["issue_id"] ?? filename.replace(/\.md$/i, ""),
+      ).trim();
+      if (sourceTaskId) {
+        const taskHit = findTaskFileByIdPrefix(root, sourceTaskId);
+        if (taskHit?.path && existsSync(taskHit.path)) {
+          const taskRaw = readFileSync(taskHit.path, "utf-8");
+          const taskFm = parseMarkdownFrontmatter(taskRaw) as Record<
+            string,
+            unknown
+          >;
+          if (String(taskFm["blocking_issue_id"] ?? "").trim() === issueId) {
+            const taskPath = taskHit.path.replace(/\\/g, "/").toLowerCase();
+            const stage =
+              taskPath.match(
+                /\/fcop\/_lifecycle\/(inbox|active|review|done|archive)\//,
+              )?.[1] ?? "active";
+            const unblockedTask = _wpPatchFmFields(taskRaw, {
+              issue_blocking: "false",
+              blocking_issue_id: '""',
+              blocking_issue_reason: '""',
+              display_status: stage,
+              dispatch_state:
+                stage === "review"
+                  ? "waiting_review"
+                  : stage === "active"
+                    ? "pending"
+                    : stage,
+            });
+            writeFileSync(taskHit.path, unblockedTask, "utf-8");
+          }
+        }
+      }
       res.json({ ok: true, filename, status: "closed", closed_at: closedAt, closed_by: closedBy });
     } catch (err) {
       sendError(res, 500, "ISSUE_CLOSE_FAILED", String(err));
@@ -9152,6 +9264,48 @@ export function buildWebPanelApp(
 
   function operationApprovalService(): OperationApprovalService {
     return new OperationApprovalService({ projectRoot: projectRoot() });
+  }
+
+  function governanceApprovalService(): GovernanceApprovalService {
+    return new GovernanceApprovalService({ projectRoot: projectRoot() });
+  }
+
+  function governanceApprovalPanelRow(
+    row: ReturnType<GovernanceApprovalService["get"]>,
+  ): Record<string, unknown> {
+    const source = directChat.find((message) => message.id === row.source_message_id);
+    return {
+      ...row,
+      id: row.approval_id ?? `${row.governance_id}::${row.revision}`,
+      filename: row.approval_id ?? `${row.governance_id}::${row.revision}`,
+      kind: "governance",
+      created_at: row.submitted_at ?? row.created_at,
+      sender: row.authored_by,
+      risk: "high",
+      requested_action: row.type,
+      target_task: row.target_task_id,
+      summary: row.intent_summary,
+      trigger_reason: row.boundary_summary,
+      admin_question: `是否批准并使这份 ${row.type} 治理记录生效？`,
+      can_approve: row.status === "pending_approval",
+      gate_status: row.status === "pending_approval" ? "valid" : row.status,
+      source_message: source?.text ?? "",
+      source_message_id: row.source_message_id,
+      diff: [
+        "--- ADMIN chat evidence",
+        "+++ PM formal governance",
+        `@@ ${row.governance_id} revision ${row.revision} @@`,
+        ` source_message_id: ${row.source_message_id ?? ""}`,
+        ` source: ${source?.text ?? "(source retained by message id)"}`,
+        `+ intent: ${row.intent_summary}`,
+        `+ boundary: ${row.boundary_summary}`,
+        `+ allowed: ${row.allowed_actions.join(", ")}`,
+        `+ prohibited: ${row.prohibited_actions.join(", ")}`,
+        `+ targets: ${row.targets.join(", ")}`,
+        ` content_hash: ${row.content_hash}`,
+        ` scope_digest: ${row.scope_digest}`,
+      ].join("\n"),
+    };
   }
 
   function operationApprovalPanelRow(row: ReturnType<OperationApprovalService["get"]>): Record<string, unknown> {
@@ -9208,10 +9362,13 @@ export function buildWebPanelApp(
   app.get("/api/v2/approvals", async (req: Request, res: Response) => {
     try {
       const taskId = String(req.query["task_id"] ?? "").trim();
-      const pending = operationApprovalService().list({ status: "pending_approval", limit: 1000 })
+      const pendingOperations = operationApprovalService().list({ status: "pending_approval", limit: 1000 })
         .filter((row) => !taskId || row.task_id === taskId)
         .map(operationApprovalPanelRow);
-      res.json(pending);
+      const pendingGovernance = governanceApprovalService()
+        .list({ status: "pending_approval", ...(taskId ? { targetTaskId: taskId } : {}), limit: 1000 })
+        .map(governanceApprovalPanelRow);
+      res.json([...pendingGovernance, ...pendingOperations]);
     } catch (err) {
       sendOperationApprovalError(res, err);
     }
@@ -9225,9 +9382,16 @@ export function buildWebPanelApp(
     try {
       const limit = Math.min(Number((req.query["limit"] as string) ?? 50), 200);
       const rows = operationApprovalService().list({ limit: 1000 }).filter((row) => row.status !== "pending_approval");
-      const approved = rows.filter((row) => ["approved", "executing", "succeeded", "partial_failed", "failed"].includes(row.status)).length;
-      const rejected = rows.filter((row) => row.status === "rejected").length;
-      const history = rows.slice(0, limit).map((row) => ({
+      const governanceRows = governanceApprovalService()
+        .list({ limit: 1000 })
+        .filter((row) => !["draft", "pending_approval"].includes(row.status));
+      const approved =
+        rows.filter((row) => ["approved", "executing", "succeeded", "partial_failed", "failed"].includes(row.status)).length +
+        governanceRows.filter((row) => ["effective", "consumed"].includes(row.status)).length;
+      const rejected =
+        rows.filter((row) => row.status === "rejected").length +
+        governanceRows.filter((row) => row.status === "rejected").length;
+      const operationHistory = rows.map((row) => ({
         id: row.approval_id,
         filename: row.approval_id,
         time: row.decision?.at ?? row.updated_at,
@@ -9238,7 +9402,25 @@ export function buildWebPanelApp(
         status: row.status,
         primary_kind: row.primary_kind,
       }));
-      res.json({ stats: { total: rows.length, approved, rejected }, total: rows.length, history, _meta: { source: "operation_approval" } });
+      const governanceHistory = governanceRows.map((row) => ({
+        id: row.approval_id ?? `${row.governance_id}::${row.revision}`,
+        filename: row.governance_id,
+        time: row.created_at,
+        summary: row.intent_summary,
+        sender: row.authored_by,
+        risk: "high",
+        decision: row.status === "rejected" ? "reject" : row.status === "changes_requested" ? "pending" : "approve",
+        status: row.status,
+        primary_kind: "governance_boundary_change",
+        kind: "governance",
+        governance_id: row.governance_id,
+        revision: row.revision,
+      }));
+      const history = [...governanceHistory, ...operationHistory]
+        .sort((left, right) => String(right.time).localeCompare(String(left.time)))
+        .slice(0, limit);
+      const total = rows.length + governanceRows.length;
+      res.json({ stats: { total, approved, rejected }, total, history, _meta: { source: "unified_approval" } });
     } catch (err) {
       sendOperationApprovalError(res, err);
     }
@@ -10412,7 +10594,13 @@ export function buildWebPanelApp(
           .status(Number(result["status"] ?? (result["ok"] ? 200 : 500)))
           .json(result);
       } catch (error) {
-        sendError(res, 500, "TASK_SUBMISSION_CHECK_FAILED", String(error));
+        const message = error instanceof Error ? error.message : String(error);
+        const status = message.includes("NOT_FOUND")
+          ? 404
+          : message.includes("ABANDONED") || message.includes("NOT_EDITABLE")
+            ? 409
+            : 500;
+        sendError(res, status, "TASK_SUBMISSION_CHECK_FAILED", message);
       }
     },
   );
@@ -10442,8 +10630,33 @@ export function buildWebPanelApp(
             ...(req.body?.priority != null
               ? { priority: String(req.body.priority) }
               : {}),
+            ...(req.body?.source_filename != null
+              ? { source_filename: String(req.body.source_filename) }
+              : {}),
           },
         );
+        if (req.body?.check === false) {
+          sseEmit("codeflowmu.task_submission_revision_saved", {
+            event: "task_submission_revision_saved",
+            submission_id: record.submission_id,
+            admission_revision: record.admission_revision,
+            status: record.status,
+          });
+          res.json({
+            ok: true,
+            created: false,
+            status: 200,
+            submission_id: record.submission_id,
+            formal_task_id: null,
+            decision: null,
+            code: null,
+            blocking_findings: [],
+            recoverable: true,
+            next_action: "recheck_current_draft",
+            submission: record,
+          });
+          return;
+        }
         record = await checkTaskSubmission(projectRoot, record.submission_id);
         const result =
           record.status === "accepted"
@@ -10471,7 +10684,11 @@ export function buildWebPanelApp(
         const message = error instanceof Error ? error.message : String(error);
         const status = message.includes("NOT_FOUND")
           ? 404
-          : message.includes("ALREADY_FORMALIZED")
+          : message.includes("FILE_INVALID")
+            ? 400
+          : message.includes("ALREADY_FORMALIZED") ||
+              message.includes("ABANDONED") ||
+              message.includes("NOT_EDITABLE")
             ? 409
             : 500;
         sendError(res, status, "TASK_SUBMISSION_REVISE_FAILED", message);
@@ -10705,6 +10922,10 @@ export function buildWebPanelApp(
     attachments?: ChatImageAttachment[];
     source?: string;
     client?: string;
+    project_id?: string;
+    task_ids?: string[];
+    kind?: "governance_approval";
+    approval_card?: Record<string, unknown>;
   }
   const directChat: DirectChatMsg[] = [];
 
@@ -10944,6 +11165,9 @@ export function buildWebPanelApp(
       role: operatorRole === "PM" ? "agent" : "admin",
       text: message,
       ts: new Date().toISOString(),
+      session_id: triggerChatId,
+      project_id: activeProjectId || pathBasename(root),
+      ...(boundTaskId ? { task_ids: [boundTaskId] } : {}),
       ...(attachments.length ? { attachments } : {}),
       ...(msgSource ? { source: msgSource } : {}),
       ...(msgClient ? { client: msgClient } : {}),
@@ -11223,20 +11447,44 @@ export function buildWebPanelApp(
         sendError(res, 500, "WRITE_FAILED", String(err));
       }
     } else {
-      chatLog.push({
+      const evidenceId = `CHAT-${Date.now()}`;
+      const evidence: DirectChatMsg = {
+        id: evidenceId,
+        agentId: ADMIN_CHAT_AGENT_ID,
+        role: "admin",
+        text,
         ts: new Date().toISOString(),
+        session_id: evidenceId,
+        project_id: activeProjectId || pathBasename(resolveProjectRoot()),
+        ...(task_id ? { task_ids: [String(task_id).trim()] } : {}),
+        ...(attachments.length ? { attachments } : {}),
+        source: "pc",
+        client: "web",
+      };
+      chatLog.push({
+        ts: evidence.ts,
         role: "admin",
         text,
         ...(attachments.length ? { attachments } : {}),
       });
       if (chatLog.length > 200) chatLog.shift();
+      directChat.push(evidence);
+      if (directChat.length > 500) directChat.shift();
+      persistDirectChatMsg(evidence);
       sseEmit("codeflowmu.chat_message", {
+        id: evidence.id,
         role: "admin",
         text,
         attachments,
-        ts: chatLog[chatLog.length - 1]!.ts,
+        ts: evidence.ts,
+        session_id: evidence.session_id,
       });
-      res.json({ ok: true, as_task: false });
+      res.json({
+        ok: true,
+        as_task: false,
+        source_message_id: evidence.id,
+        source_session_id: evidence.session_id,
+      });
     }
   });
 
@@ -11527,16 +11775,53 @@ export function buildWebPanelApp(
    */
   app.get("/api/v2/chat/messages", (req: Request, res: Response) => {
     const { agentId, limit = "80" } = req.query as { agentId?: string; limit?: string };
-    const msgs = agentId
+    const msgs: DirectChatMsg[] = agentId
       ? directChat.filter((m) => m.agentId === agentId)
       : directChat;
+    let governanceCards: DirectChatMsg[] = [];
+    try {
+      governanceCards = governanceApprovalService()
+        .list({ limit: 500 })
+        .filter((row) => row.source_kind === "admin_chat" && row.status !== "draft")
+        .map((row) => {
+          const source = directChat.find(
+            (message) => message.id === row.source_message_id,
+          );
+          const card = governanceApprovalPanelRow(row);
+          return {
+            id: `GOVCARD-${row.governance_id}-${row.revision}`,
+            agentId: source?.agentId ?? ADMIN_CHAT_AGENT_ID,
+            role: "agent" as const,
+            text: row.intent_summary,
+            ts: row.submitted_at ?? row.created_at,
+            session_id: row.source_session_id ?? undefined,
+            project_id: row.project_id,
+            task_ids: [row.target_task_id],
+            kind: "governance_approval" as const,
+            approval_card: card,
+          };
+        })
+        .filter((message) => !agentId || message.agentId === agentId);
+    } catch {
+      governanceCards = [];
+    }
     res.setHeader("Cache-Control", "no-store");
-    res.json(msgs.slice(-Number(limit)));
+    res.json(
+      [...msgs, ...governanceCards]
+        .sort((left, right) => left.ts.localeCompare(right.ts))
+        .slice(-Number(limit)),
+    );
   });
 
   function projectRoot(): string {
     return resolveProjectRoot();
   }
+
+  registerGovernanceApprovalRoutes(app, {
+    projectRoot,
+    projectId: () => activeProjectId || pathBasename(projectRoot()),
+    emit: sseEmit,
+  });
 
   // ── Chat history API ─────────────────────────────────────────────────
   /**
@@ -12918,10 +13203,54 @@ export function buildWebPanelApp(
         });
       }
     }
+    const previousProjectId = activeProjectId;
+    const previousProject = projectStore.get(previousProjectId);
     activeProjectId = id;
+    try {
+      persistProjectStore(Boolean(opts.runtimeInstance));
+    } catch (err) {
+      activeProjectId = previousProjectId;
+      try {
+        saveProjectRegistry(
+          previousProjectId,
+          Array.from(projectStore.values()).map(({ id: projectId, name, root }) => ({
+            id: projectId,
+            name,
+            root,
+          })),
+        );
+        if (previousProject?.root && opts.runtimeInstance?.hostRoot) {
+          updateRuntimeInstanceProjectRoot(
+            opts.runtimeInstance.hostRoot,
+            previousProject.root,
+          );
+        }
+      } catch (rollbackError) {
+        console.error(
+          "[web-panel] project switch rollback failed:",
+          rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+        );
+      }
+      if (opts.reloadOnProjectSwitch) {
+        if (opts.projectRuntimeReloadScheduler) {
+          opts.projectRuntimeReloadScheduler();
+        } else {
+          setTimeout(() => {
+            spawnDetachedShellRestart();
+            setTimeout(() => process.exit(0), 600);
+          }, 800);
+        }
+      }
+      return res.status(409).json({
+        ok: false,
+        code: "PROJECT_SWITCH_PERSIST_FAILED",
+        error: err instanceof Error ? err.message : String(err),
+        activeProjectId: previousProjectId,
+        runtimeReloadScheduled: Boolean(opts.reloadOnProjectSwitch),
+      });
+    }
     applyProjectScopedOpts(target.root);
     lastAppliedProjectRoot = pathResolve(target.root);
-    persistProjectStore();
     const root = pathResolve(target.root);
     invalidateLedgerFreshCache(root);
     void ensureLedgerFresh(root).catch((err: unknown) => {
@@ -15472,6 +15801,11 @@ export function buildWebPanelApp(
       cursor_sdk_first_turn_abort: "首轮 abort（0 工具调用）",
       cursor_sdk_error_no_detail: "Cursor SDK 无详细错误",
       policy_blocked: "策略边界拦截",
+      policy_denied: "策略拒绝",
+      approval_required: "等待操作审批",
+      precondition_changed: "操作前置条件已变化",
+      already_absent: "目标已不存在（幂等完成）",
+      tool_runtime_error: "工具运行错误",
       transient_network: "网络瞬断",
       rate_limited: "限流 / 配额",
       unknown_sdk_error: "未知 SDK 错误",
@@ -15624,6 +15958,10 @@ export function buildWebPanelApp(
         st === "cancelled" || event.event_type === "runtime.session_cancelled";
       const isTurnLimit =
         reason === "TURN_LIMIT" || String(plEnd["failure_code"] ?? "") === "TURN_LIMIT";
+      const operationCategory = String(plEnd["failure_category"] ?? "").trim();
+      const isOperationGovernance =
+        operationCategory === "policy_denied" ||
+        operationCategory === "approval_required";
 
       if (event.event_type === "runtime.session_ended") {
         const reportWritten = plEnd["report_written"] === true;
@@ -15649,7 +15987,13 @@ export function buildWebPanelApp(
         }
       }
 
-      if (isCancel || isTurnLimit || st === "failed" || st === "timeout") {
+      if (
+        isCancel ||
+        isTurnLimit ||
+        st === "failed" ||
+        st === "timeout" ||
+        isOperationGovernance
+      ) {
         const reportWrittenEnd = plEnd["report_written"] === true;
         const severity =
           isTurnLimit || isCancel || reportWrittenEnd ? "WARN" : "ERROR";
@@ -15673,7 +16017,13 @@ export function buildWebPanelApp(
             detail ??
             description,
         );
-        const existingRoot = sessionRootFault.get(event.session_id);
+        const operationFingerprint = String(
+          plEnd["operation_fingerprint"] ?? "",
+        ).trim();
+        const rootFaultKey = operationFingerprint
+          ? `operation:${String(plEnd["task_id"] ?? "")}:${operationFingerprint}:${failureCode}`
+          : event.session_id;
+        const existingRoot = sessionRootFault.get(rootFaultKey);
         const rootFault = buildRootFaultFields({
           event_id: event.event_id,
           session_id: event.session_id,
@@ -15687,7 +16037,7 @@ export function buildWebPanelApp(
           parent_event_id: existingRoot?.root_event_id,
         });
         if (!existingRoot) {
-          sessionRootFault.set(event.session_id, {
+          sessionRootFault.set(rootFaultKey, {
             root_fault_id: rootFault.root_fault_id,
             root_event_id: event.event_id,
           });
@@ -15701,6 +16051,10 @@ export function buildWebPanelApp(
             ? "turn_limit"
             : isCancel
               ? "session_cancelled"
+              : operationCategory === "approval_required"
+                ? "operation_approval_required"
+                : operationCategory === "policy_denied"
+                  ? "operation_policy_denied"
               : "session_failed",
           description,
           message: description,
@@ -15713,6 +16067,12 @@ export function buildWebPanelApp(
           report_path: plEnd["report_path"],
           ...mergedSdk,
           ...rootFault,
+          retry_policy: plEnd["retry_policy"] ?? rootFault.retry_policy,
+          next_retry_at: plEnd["next_retry_at"],
+          retry_count: plEnd["retry_count"],
+          operation_fingerprint: plEnd["operation_fingerprint"],
+          next_safe_action: plEnd["next_safe_action"],
+          report_required: plEnd["report_required"],
           ts: Date.now(),
         });
         sessionLastSdkFailureDetail.delete(event.session_id);
@@ -15795,7 +16155,13 @@ export function buildWebPanelApp(
         st === "retrying" ||
         st === "delayed" ||
         isTransientSdkError(errText);
-      if (!isTransient && (st === "failed" || st === "error") && errText) {
+      const operationState =
+        st === "waiting_approval" || st === "needs_replan";
+      if (
+        !isTransient &&
+        (st === "failed" || st === "error" || operationState) &&
+        errText
+      ) {
         const failureCode = extractStableFailureCode(
           raw["failure_code"] ??
             pl["failure_code"] ??
@@ -15803,11 +16169,18 @@ export function buildWebPanelApp(
             pl["code"] ??
             errText,
         );
-        const existingRoot = sessionRootFault.get(event.session_id);
+        const operationFingerprint = String(
+          raw["operation_fingerprint"] ?? pl["operation_fingerprint"] ?? "",
+        ).trim();
+        const taskId = String(raw["task_id"] ?? pl["task_id"] ?? "");
+        const rootFaultKey = operationFingerprint
+          ? `operation:${taskId}:${operationFingerprint}:${failureCode}`
+          : event.session_id;
+        const existingRoot = sessionRootFault.get(rootFaultKey);
         const rootFault = buildRootFaultFields({
           event_id: event.event_id,
           session_id: event.session_id,
-          task_id: String(raw["task_id"] ?? pl["task_id"] ?? ""),
+          task_id: taskId,
           thread_key: String(raw["thread_key"] ?? pl["thread_key"] ?? ""),
           agent_id: event.agent_id,
           tool_call_id: String(
@@ -15820,7 +16193,7 @@ export function buildWebPanelApp(
           parent_event_id: existingRoot?.root_event_id,
         });
         if (!existingRoot) {
-          sessionRootFault.set(event.session_id, {
+          sessionRootFault.set(rootFaultKey, {
             root_fault_id: rootFault.root_fault_id,
             root_event_id: event.event_id,
           });
@@ -15833,7 +16206,22 @@ export function buildWebPanelApp(
           recovered: false,
           session_id: event.session_id,
           run_id: event.run_id,
+          task_id: taskId,
           ...rootFault,
+          failure_category:
+            raw["failure_category"] ??
+            pl["failure_category"] ??
+            rootFault.category,
+          retry_policy:
+            raw["retry_policy"] ??
+            pl["retry_policy"] ??
+            rootFault.retry_policy,
+          operation_fingerprint:
+            operationFingerprint || undefined,
+          next_safe_action:
+            raw["next_safe_action"] ?? pl["next_safe_action"],
+          report_required:
+            raw["report_required"] ?? pl["report_required"],
           ts: Date.now(),
         });
       }
@@ -18176,14 +18564,7 @@ export async function startWebPanel(
     sdkAdapter?: AgentSdkAdapter;
     fcopRuntime?: FcopRuntimeSeed;
     dataDir?: string;
-    runtimeInstance?: {
-      instanceId: string;
-      instanceRole: string;
-      hostRoot: string;
-      registryPath: string;
-      dataRoot: string;
-      writerLockPaths: string[];
-    };
+    runtimeInstance?: WebPanelRuntimeInstanceContext;
     agentRecycle?: AgentRecycleConfig;
     reloadOnProjectSwitch?: boolean;
     projectRuntimeReloadScheduler?: () => void;

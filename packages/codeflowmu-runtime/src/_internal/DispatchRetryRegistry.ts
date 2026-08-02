@@ -41,6 +41,11 @@ export interface DispatchRetryRecord {
   lastFailedAt: number;
   rawCode?: string;
   rawMessage?: string;
+  operationFingerprint?: string;
+  retryPolicy?: "none" | "manual" | "auto";
+  nextSafeAction?: string;
+  recoveryState?: "waiting_approval" | "needs_replan" | "waiting_admin_decision";
+  reportRequired?: boolean;
 
   /** @deprecated 使用 decisionRequired */
   blocked?: boolean;
@@ -116,7 +121,15 @@ export class DispatchRetryRegistry {
   recordFailure(
     key: string,
     err: Error,
-    meta: NormalizeDispatchFailureOptions & { filepath?: string; task_id?: string } = {},
+    meta: NormalizeDispatchFailureOptions & {
+      filepath?: string;
+      task_id?: string;
+      operationFingerprint?: string;
+      retryPolicy?: "none" | "manual" | "auto";
+      nextSafeAction?: string;
+      recoveryState?: "waiting_approval" | "needs_replan" | "waiting_admin_decision";
+      reportRequired?: boolean;
+    } = {},
   ): DispatchRetryRecord {
     const norm = normalizeDispatchFailure(err, meta);
     const prev = this._records.get(key);
@@ -140,6 +153,13 @@ export class DispatchRetryRegistry {
       lastFailedAt: now,
       rawCode: norm.rawCode,
       rawMessage: norm.rawMessage,
+      operationFingerprint:
+        meta.operationFingerprint ?? prev?.operationFingerprint,
+      retryPolicy:
+        meta.retryPolicy ?? prev?.retryPolicy ?? (norm.retryable ? "auto" : "manual"),
+      nextSafeAction: meta.nextSafeAction ?? prev?.nextSafeAction,
+      recoveryState: meta.recoveryState ?? prev?.recoveryState,
+      reportRequired: meta.reportRequired ?? prev?.reportRequired,
     };
 
     if (!norm.retryable) {

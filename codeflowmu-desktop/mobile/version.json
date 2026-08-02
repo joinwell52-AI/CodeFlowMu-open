@@ -1,7 +1,6 @@
 {
-  "app_version": "V1.0.56",
-  "resource_version": "1.0.56",
-  "cache_name": "codeflowmu-pwa-v1.0.56",
-  "updated_at": "2026-07-30T16:16:22Z",
-  "release_notes": "Task delivery admission review and fail-closed formalization"
+  "app_version": "V1.0.57",
+  "resource_version": "1.0.57",
+  "cache_name": "codeflowmu-pwa-v1.0.57",
+  "updated_at": "2026-07-31T06:40:43Z"
 }

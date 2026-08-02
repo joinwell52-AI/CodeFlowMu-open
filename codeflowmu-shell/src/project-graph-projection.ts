@@ -144,7 +144,13 @@ export function computeWorkflowStage(input: {
   const runtimeEvents = linkedRows(input.runtimeEvents, id, input.rootTaskId);
   const waitingAdmin =
     ["waiting_admin", "waiting_admin_decision", "needs_human"].includes(status) ||
-    pendingEvidence(approvals) ||
+    approvals.some(
+      (row) =>
+        ["pending", "pending_approval", "waiting", "waiting_admin"].includes(
+          statusOf(row),
+        ) &&
+        (text(row, "kind") !== "governance" || bool(row, "blocks_task")),
+    ) ||
     (!acceptedEvidence([input.task]) && reports.some((row) => {
       const reporter = text(row, "reporter", "sender", "role").toUpperCase();
       const recipient = text(row, "recipient", "to").toUpperCase();

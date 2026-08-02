@@ -6,7 +6,15 @@ import {
   renameSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import {
+  basename,
+  dirname,
+  extname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from "node:path";
 
 import type {
   CapabilityRequest,
@@ -39,6 +47,36 @@ export type FilesystemCleanupPreflight = {
   retention_days: number;
   recovery: string;
 };
+
+export type FilesystemCleanupRiskAssessment =
+  | {
+      decision: "ALLOW";
+      reason: "task_temporary_untracked_file";
+      changed: true;
+      resolved_targets: string[];
+      git_status: Record<string, "untracked">;
+    }
+  | {
+      decision: "ALREADY_ABSENT";
+      reason: "already_absent";
+      changed: false;
+      resolved_targets: string[];
+      git_status: Record<string, "absent">;
+    }
+  | {
+      decision: "REQUIRE_APPROVAL";
+      reason: string;
+      changed: false;
+      resolved_targets: string[];
+      git_status: Record<string, "tracked" | "untracked" | "absent">;
+    }
+  | {
+      decision: "DENY";
+      reason: string;
+      changed: false;
+      resolved_targets: string[];
+      git_status: Record<string, "tracked" | "untracked" | "absent">;
+    };
 
 export class FilesystemCleanupPreflightError extends Error {
   constructor(
@@ -82,6 +120,32 @@ function protectedByPath(projectRoot: string, target: string): boolean {
   );
 }
 
+function permanentlyProtectedByPath(projectRoot: string, target: string): boolean {
+  const rel = normalizedRelative(projectRoot, target).toLowerCase();
+  return (
+    rel === "" ||
+    rel === ".git" ||
+    rel.startsWith(".git/") ||
+    /(?:^|\/)(?:\.env(?:\..+)?|credentials?(?:\..+)?|secrets?(?:\..+)?|id_rsa(?:\..+)?|[^/]+\.(?:pem|key|p12|pfx))$/i.test(
+      rel,
+    )
+  );
+}
+
+function isTaskWorkspacePath(projectRoot: string, target: string): boolean {
+  return /^workspace\/[^/]+\//i.test(normalizedRelative(projectRoot, target));
+}
+
+function isExplicitTemporaryFile(target: string, explicitlyTemporary: boolean): boolean {
+  if (explicitlyTemporary) return true;
+  const name = basename(target).toLowerCase();
+  return (
+    /^_?(?:qa|dev|ops|pm)[_-].*(?:spotcheck|probe|scratch|temp|tmp)/.test(name) ||
+    /(?:^|[._-])(?:spotcheck|probe|scratch|temp|tmp)(?:[._-]|$)/.test(name) ||
+    /\.(?:tmp|temp)$/i.test(name)
+  );
+}
+
 function trackedPaths(projectRoot: string, targets: string[]): Set<string> {
   try {
     const args = [
@@ -104,6 +168,134 @@ function trackedPaths(projectRoot: string, targets: string[]): Set<string> {
   } catch {
     return new Set();
   }
+}
+
+function resolveExactTargets(projectRoot: string, targets: string[]): string[] {
+  if (!Array.isArray(targets) || targets.length === 0) {
+    throw new FilesystemCleanupPreflightError(
+      "CLEANUP_TARGETS_REQUIRED",
+      "at least one exact cleanup target is required",
+    );
+  }
+  return [...new Set(targets.map((raw) => {
+    const value = String(raw ?? "").trim();
+    if (!value || containsUnresolvedTarget(value)) {
+      throw new FilesystemCleanupPreflightError(
+        "CLEANUP_TARGET_UNRESOLVED",
+        `cleanup target is not exact: ${value || "(empty)"}`,
+      );
+    }
+    const target = isAbsolute(value) ? resolve(value) : resolve(projectRoot, value);
+    if (!isInside(projectRoot, target) || target === projectRoot) {
+      throw new FilesystemCleanupPreflightError(
+        "CLEANUP_TARGET_OUT_OF_SCOPE",
+        `cleanup target is outside the active project or is the project root: ${target}`,
+      );
+    }
+    return target;
+  }))];
+}
+
+export function assessFilesystemCleanupRisk(input: {
+  projectRoot: string;
+  targets: string[];
+  explicitlyTemporary?: boolean;
+}): FilesystemCleanupRiskAssessment {
+  const projectRoot = resolve(input.projectRoot);
+  let resolvedTargets: string[] = [];
+  try {
+    resolvedTargets = resolveExactTargets(projectRoot, input.targets);
+  } catch (error) {
+    return {
+      decision: "DENY",
+      reason: error instanceof Error ? error.message : String(error),
+      changed: false,
+      resolved_targets: resolvedTargets,
+      git_status: {},
+    };
+  }
+
+  const existing = resolvedTargets.filter((target) => existsSync(target));
+  const tracked = trackedPaths(projectRoot, existing);
+  const gitStatus: Record<string, "tracked" | "untracked" | "absent"> = {};
+  for (const target of resolvedTargets) {
+    const rel = normalizedRelative(projectRoot, target);
+    gitStatus[target] = !existsSync(target)
+      ? "absent"
+      : tracked.has(rel)
+        ? "tracked"
+        : "untracked";
+  }
+
+  if (existing.length === 0) {
+    return {
+      decision: "ALREADY_ABSENT",
+      reason: "already_absent",
+      changed: false,
+      resolved_targets: resolvedTargets,
+      git_status: gitStatus as Record<string, "absent">,
+    };
+  }
+  if (resolvedTargets.some((target) => permanentlyProtectedByPath(projectRoot, target))) {
+    return {
+      decision: "DENY",
+      reason: "cleanup targets credentials, Git metadata, or an unbounded root",
+      changed: false,
+      resolved_targets: resolvedTargets,
+      git_status: gitStatus,
+    };
+  }
+  for (const target of existing) {
+    const stat = lstatSync(target);
+    if (stat.isSymbolicLink()) {
+      return {
+        decision: "DENY",
+        reason: `cleanup target is a symbolic link and cannot be safely bounded: ${target}`,
+        changed: false,
+        resolved_targets: resolvedTargets,
+        git_status: gitStatus,
+      };
+    }
+  }
+
+  const oneTaskTemporaryFile =
+    resolvedTargets.length === 1 &&
+    existing.length === 1 &&
+    lstatSync(existing[0]!).isFile() &&
+    gitStatus[existing[0]!] === "untracked" &&
+    isTaskWorkspacePath(projectRoot, existing[0]!) &&
+    isExplicitTemporaryFile(existing[0]!, input.explicitlyTemporary === true);
+  if (oneTaskTemporaryFile) {
+    return {
+      decision: "ALLOW",
+      reason: "task_temporary_untracked_file",
+      changed: true,
+      resolved_targets: resolvedTargets,
+      git_status: gitStatus as Record<string, "untracked">,
+    };
+  }
+
+  const riskReasons = [
+    ...(resolvedTargets.length > 1 ? ["multiple_targets"] : []),
+    ...(existing.some((target) => lstatSync(target).isDirectory()) ? ["directory_or_recursive"] : []),
+    ...(existing.some((target) => tracked.has(normalizedRelative(projectRoot, target)))
+      ? ["git_tracked"]
+      : []),
+    ...(existing.some((target) => protectedByPath(projectRoot, target))
+      ? ["protected_content"]
+      : []),
+    ...(existing.some((target) => !isExplicitTemporaryFile(target, input.explicitlyTemporary === true))
+      ? ["origin_not_confirmed_temporary"]
+      : []),
+    ...(resolvedTargets.length !== existing.length ? ["precondition_changed"] : []),
+  ];
+  return {
+    decision: "REQUIRE_APPROVAL",
+    reason: riskReasons.join(",") || "cleanup_requires_human_risk_review",
+    changed: false,
+    resolved_targets: resolvedTargets,
+    git_status: gitStatus,
+  };
 }
 
 function walk(target: string, manifest: FilesystemCleanupManifestEntry[]): void {
@@ -132,27 +324,7 @@ export function inspectFilesystemCleanup(input: {
   retentionDays?: number;
 }): FilesystemCleanupPreflight {
   const projectRoot = resolve(input.projectRoot);
-  if (!Array.isArray(input.targets) || input.targets.length === 0) {
-    throw new FilesystemCleanupPreflightError(
-      "CLEANUP_TARGETS_REQUIRED",
-      "at least one exact cleanup target is required",
-    );
-  }
-  const resolvedTargets = [...new Set(input.targets.map((raw) => {
-    const value = String(raw ?? "").trim();
-    if (!value || containsUnresolvedTarget(value)) {
-      throw new FilesystemCleanupPreflightError(
-        "CLEANUP_TARGET_UNRESOLVED",
-        `cleanup target is not exact: ${value || "(empty)"}`,
-      );
-    }
-    const target = isAbsolute(value) ? resolve(value) : resolve(projectRoot, value);
-    if (!isInside(projectRoot, target) || target === projectRoot) {
-      throw new FilesystemCleanupPreflightError(
-        "CLEANUP_TARGET_OUT_OF_SCOPE",
-        `cleanup target is outside the active project or is the project root: ${target}`,
-      );
-    }
+  const resolvedTargets = resolveExactTargets(projectRoot, input.targets).map((target) => {
     if (!existsSync(target)) {
       throw new FilesystemCleanupPreflightError(
         "CLEANUP_TARGET_MISSING",
@@ -160,7 +332,7 @@ export function inspectFilesystemCleanup(input: {
       );
     }
     return target;
-  }))];
+  });
 
   const manifest: FilesystemCleanupManifestEntry[] = [];
   for (const target of resolvedTargets) walk(target, manifest);
@@ -173,12 +345,6 @@ export function inspectFilesystemCleanup(input: {
       return protectedByPath(projectRoot, entry.path) || tracked.has(rel);
     })
     .map((entry) => normalizedRelative(projectRoot, entry.path));
-  if (protectedExclusions.length > 0) {
-    throw new FilesystemCleanupPreflightError(
-      "CLEANUP_PROTECTED_CONTENT",
-      `cleanup contains protected or Git-tracked content: ${protectedExclusions.slice(0, 20).join(", ")}`,
-    );
-  }
 
   const fileTypes: Record<string, number> = {};
   const files = manifest.filter((entry) => entry.kind === "file");
@@ -203,7 +369,7 @@ export function inspectFilesystemCleanup(input: {
     latest_modified_at:
       times.length > 0 ? new Date(times[times.length - 1]!).toISOString() : null,
     manifest,
-    protected_exclusions: [],
+    protected_exclusions: protectedExclusions,
     recommended_mode: "quarantine",
     requested_mode: requestedMode,
     retention_days: retentionDays,

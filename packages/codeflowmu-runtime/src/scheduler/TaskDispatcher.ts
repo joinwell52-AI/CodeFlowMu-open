@@ -2074,6 +2074,10 @@ export class TaskDispatcher {
           tool_call_count?: number;
           error?: string;
           reason?: string;
+          retry_policy?: string;
+          operation_fingerprint?: string;
+          next_safe_action?: string;
+          report_required?: boolean;
         }
       | undefined;
     if (payload?.failure_code === TRANSIENT_SDK_DELAYED) {
@@ -2086,15 +2090,40 @@ export class TaskDispatcher {
     const failureCode = String(payload?.failure_code ?? "").trim().toUpperCase();
     const failureCategory = String(payload?.failure_category ?? "").trim().toLowerCase();
     const operationApprovalWait = failureCode === OPERATION_APPROVAL_REQUIRED;
-    if (!operationApprovalWait && st !== "failed" && st !== "timeout") return;
+    const governanceApprovalWait =
+      failureCode === "APPROVAL_REQUIRED" ||
+      failureCode === "APPROVAL_PENDING";
+    const governanceApprovalStopped =
+      failureCode.startsWith("APPROVAL_") && !governanceApprovalWait;
+    const operationPolicyDenied =
+      failureCode === "OPERATION_BOUNDARY_DENIED" ||
+      failureCode === "ABSOLUTELY_PROHIBITED";
+    if (
+      !operationApprovalWait &&
+      !governanceApprovalWait &&
+      !governanceApprovalStopped &&
+      !operationPolicyDenied &&
+      st !== "failed" &&
+      st !== "timeout"
+    ) return;
     if (payload?.report_written === true) return;
     const isGovernanceBlock =
       failureCode === "CODEFLOWMU_POLICY_BLOCKED" ||
       operationApprovalWait ||
+      governanceApprovalWait ||
+      governanceApprovalStopped ||
+      operationPolicyDenied ||
       failureCategory === "policy_blocked" ||
+      failureCategory === "policy_denied" ||
+      failureCategory === "approval_required" ||
       failureCategory === "governance";
     if (isGovernanceBlock) {
-      const retryKey = `${evt.agent_id}:${taskId}`;
+      const operationFingerprint = String(
+        payload?.operation_fingerprint ?? "",
+      ).trim();
+      const retryKey = `${evt.agent_id}:${taskId}${
+        operationFingerprint ? `:${operationFingerprint}` : ""
+      }`;
       const reason = String(
         payload?.error ??
           payload?.reason ??
@@ -2110,6 +2139,19 @@ export class TaskDispatcher {
             reason.match(/"approval_id"\s*:\s*"([^"]+)"/)?.[1] ?? "";
         }
       }
+      const governanceState = operationApprovalWait || governanceApprovalWait
+        ? "waiting_approval"
+        : operationPolicyDenied || governanceApprovalStopped
+          ? "needs_replan"
+          : "waiting_admin_decision";
+      const retryPolicy =
+        operationPolicyDenied || governanceApprovalStopped ? "none" : "manual";
+      const normalizedFailureCategory =
+        operationApprovalWait || governanceApprovalWait
+        ? "approval_required"
+        : operationPolicyDenied || governanceApprovalStopped
+          ? "policy_denied"
+          : "policy_blocked";
       const rec = this._dispatchRetryRegistry.recordFailure(
         retryKey,
         new Error(reason),
@@ -2118,6 +2160,11 @@ export class TaskDispatcher {
           task_id: taskId,
           retryable: false,
           rawCode: failureCode || "CODEFLOWMU_POLICY_BLOCKED",
+          operationFingerprint: operationFingerprint || undefined,
+          retryPolicy,
+          nextSafeAction: String(payload?.next_safe_action ?? "").trim() || undefined,
+          recoveryState: governanceState,
+          reportRequired: payload?.report_required === true,
         },
       );
       try {
@@ -2126,13 +2173,25 @@ export class TaskDispatcher {
         await fs.writeFile(
           resolved,
           _patchFmScalarFields(raw, {
-            state: "waiting_admin_decision",
-            dispatch_state: "waiting_admin",
+            state: governanceState,
+            dispatch_state:
+              operationPolicyDenied || governanceApprovalStopped
+                ? "blocked"
+                : "waiting_admin",
             failure_code: failureCode || "CODEFLOWMU_POLICY_BLOCKED",
-            failure_category: "governance",
-            retry_policy: "manual",
+            failure_category: normalizedFailureCategory,
+            retry_policy: retryPolicy,
             guard_worked: true,
             runtime_crashed: false,
+            ...(operationFingerprint
+              ? { operation_fingerprint: operationFingerprint }
+              : {}),
+            ...(payload?.next_safe_action
+              ? { next_safe_action: String(payload.next_safe_action) }
+              : {}),
+            ...(payload?.report_required === true
+              ? { report_required: true }
+              : {}),
             ...(approvalId ? { approval_id: approvalId } : {}),
           }),
           "utf-8",
@@ -2148,10 +2207,14 @@ export class TaskDispatcher {
         at: toLocalIsoString(this._now()),
         by: "runtime",
         from: "dispatched",
-        to: "waiting_admin_decision",
+        to: governanceState,
         note: `${failureCode || "CODEFLOWMU_POLICY_BLOCKED"}: ${
           approvalId ? `approval_id=${approvalId}; ` : ""
-        }guard worked; manual decision required`,
+        }guard worked; retry_policy=${retryPolicy}${
+          operationFingerprint
+            ? `; operation_fingerprint=${operationFingerprint}`
+            : ""
+        }`,
       }).catch(() => undefined);
       this._panelEvents?.emit("codeflowmu.task_blocked", {
         event: "TASK_GOVERNANCE_BLOCKED",
@@ -2159,12 +2222,20 @@ export class TaskDispatcher {
         session_id: evt.session_id,
         task_id: taskId,
         failure_code: failureCode || "CODEFLOWMU_POLICY_BLOCKED",
-        category: "governance",
+        category: normalizedFailureCategory,
         severity: "warning",
-        retry_policy: "manual",
+        retry_policy: retryPolicy,
+        state: governanceState,
         guard_worked: true,
         runtime_crashed: false,
         decision_required: rec.decisionRequired,
+        ...(operationFingerprint
+          ? { operation_fingerprint: operationFingerprint }
+          : {}),
+        ...(payload?.next_safe_action
+          ? { next_safe_action: payload.next_safe_action }
+          : {}),
+        report_required: payload?.report_required === true,
         ...(approvalId ? { approval_id: approvalId } : {}),
       });
       return;
@@ -3035,7 +3106,7 @@ write_task(
   body="## 背景\\n<why>\\n\\n## 具体要求\\n<what exactly>\\n\\n## 回执要求\\n写 REPORT-*-DEV-to-PM.md",
   priority="P1",                   # inherit from incoming task or downgrade
   parent="${taskId}",
-  references="${taskId}"
+  references=["${taskId}"]
 )
 \`\`\`
 

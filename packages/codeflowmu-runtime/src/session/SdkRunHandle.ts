@@ -22,6 +22,7 @@
  */
 
 import type { Agent, SDKMessage } from "@cursor/sdk";
+import { createHash } from "node:crypto";
 
 import type { SessionRun } from "@codeflowmu/protocol";
 
@@ -80,6 +81,36 @@ export interface SdkRunLike {
 function makeRunIdFromSdk(sdkRunId: string): string {
   return `run-${sdkRunId.replace(/[^a-z0-9-]/gi, "").toLowerCase()}`;
 }
+
+function operationFingerprint(
+  toolName: string,
+  args: Record<string, unknown>,
+): string {
+  const canonical = JSON.stringify(
+    Object.fromEntries(
+      Object.entries(args).sort(([left], [right]) => left.localeCompare(right)),
+    ),
+  );
+  return createHash("sha256")
+    .update(`${toolName.trim().toLowerCase()}\n${canonical}`)
+    .digest("hex")
+    .slice(0, 24);
+}
+
+export type SessionRunWithOperationBoundary = {
+  operation_fingerprint?: string;
+  operation_classification?:
+    | "allowed_cleanup"
+    | "already_absent"
+    | "approval_required"
+    | "governance_authorized"
+    | "absolutely_prohibited"
+    | "policy_denied";
+  operation_outcome?: Record<string, unknown>;
+  retry_policy?: "none" | "manual";
+  next_safe_action?: string;
+  report_required?: boolean;
+};
 
 /**
  * Map a Cursor SDK `SDKMessage.type` to our `RuntimeEventType`. The 8
@@ -174,6 +205,12 @@ export class SdkRunHandle implements RunHandle {
   private _roleToolBlockedMessage: string | undefined;
   private _operationBoundaryFailureCode: string | undefined;
   private _operationBoundaryMessage: string | undefined;
+  private _operationFingerprint: string | undefined;
+  private _operationClassification:
+    | SessionRunWithOperationBoundary["operation_classification"];
+  private _operationOutcome: Record<string, unknown> | undefined;
+  private _operationRetryPolicy: "none" | "manual" | undefined;
+  private _operationNextSafeAction: string | undefined;
   private readonly _projectRoot: string | undefined;
   private readonly _taskId: string | undefined;
   private readonly _gateCheckedToolCallIds = new Set<string>();
@@ -351,16 +388,16 @@ export class SdkRunHandle implements RunHandle {
           ...(sdkFailureFields ?? {}),
         },
       });
-      const operationDenied =
-        this._operationBoundaryFailureCode != null &&
-        this._operationBoundaryFailureCode !== OPERATION_APPROVAL_REQUIRED;
       const resolvedStatus =
-        this._turnLimitExceeded || this._roleToolBlocked || operationDenied
+        this._turnLimitExceeded || this._roleToolBlocked
           ? "failed"
-          : this._operationBoundaryFailureCode === OPERATION_APPROVAL_REQUIRED
+          : this._operationBoundaryFailureCode != null ||
+              this._operationClassification === "already_absent"
             ? "finished"
             : this._resolveWaitStatus(result);
-      const sessionRun: SessionRun & SessionRunWithSdkFailure = {
+      const sessionRun: SessionRun &
+        SessionRunWithSdkFailure &
+        SessionRunWithOperationBoundary = {
         run_id: this.run_id,
         started_at: this._startedAt,
         ended_at: endedAt,
@@ -384,6 +421,24 @@ export class SdkRunHandle implements RunHandle {
         ...(resolvedStatus === "failed" && sdkError ? { sdk_error: sdkError } : {}),
         ...(resolvedStatus === "failed" && sdkFailureFields
           ? { sdk_failure_detail: sdkFailureFields }
+          : {}),
+        ...(this._operationFingerprint
+          ? { operation_fingerprint: this._operationFingerprint }
+          : {}),
+        ...(this._operationClassification
+          ? { operation_classification: this._operationClassification }
+          : {}),
+        ...(this._operationOutcome
+          ? { operation_outcome: this._operationOutcome }
+          : {}),
+        ...(this._operationRetryPolicy
+          ? { retry_policy: this._operationRetryPolicy }
+          : {}),
+        ...(this._operationNextSafeAction
+          ? { next_safe_action: this._operationNextSafeAction }
+          : {}),
+        ...(this._operationBoundaryFailureCode
+          ? { report_required: true }
           : {}),
       };
       this._settled = true;
@@ -578,6 +633,7 @@ export class SdkRunHandle implements RunHandle {
     const toolName = this._extractToolCallName(message);
     const args = this._extractToolCallArgs(message);
     const projectRoot = this._projectRoot ?? process.cwd();
+    const currentOperationFingerprint = operationFingerprint(toolName, args);
     const operationBoundary = await evaluateNativeOperationBoundary({
       toolName,
       args,
@@ -587,11 +643,41 @@ export class SdkRunHandle implements RunHandle {
       sessionId: this.session_id,
       ...(this._taskId ? { taskId: this._taskId } : {}),
     });
+    if (operationBoundary.decision === "ALLOW" && operationBoundary.outcome) {
+      this._operationFingerprint = currentOperationFingerprint;
+      this._operationClassification = operationBoundary.outcome.classification;
+      this._operationOutcome = operationBoundary.outcome;
+      this._operationRetryPolicy = "none";
+      this._operationNextSafeAction =
+        operationBoundary.outcome.reason === "already_absent"
+          ? "continue_to_next_step"
+          : "execute_exact_cleanup";
+      this._dispatch({
+        event_id: `${this.run_id}-operation-boundary-${(this._eventSeq++).toString(36)}`,
+        at: this._now().toISOString(),
+        event_type: "sdk.status",
+        session_id: this.session_id,
+        run_id: this.run_id,
+        agent_id: this.agent_id,
+        payload: {
+          status: "completed",
+          failure_category: operationBoundary.outcome.classification,
+          retry_policy: "none",
+          operation_fingerprint: this._operationFingerprint,
+          operation_outcome: operationBoundary.outcome,
+          next_safe_action: this._operationNextSafeAction,
+        },
+      });
+    }
     if (operationBoundary.decision !== "ALLOW") {
+      this._operationFingerprint = currentOperationFingerprint;
       if (operationBoundary.decision === "REQUIRE_APPROVAL") {
         const prepared = new OperationApprovalService({ projectRoot }).prepare(operationBoundary.input);
         if (prepared.decision === "REQUIRE_APPROVAL") {
           this._operationBoundaryFailureCode = OPERATION_APPROVAL_REQUIRED;
+          this._operationClassification = "approval_required";
+          this._operationRetryPolicy = "manual";
+          this._operationNextSafeAction = "wait_for_operation_approval";
           this._operationBoundaryMessage = JSON.stringify({
             code: OPERATION_APPROVAL_REQUIRED,
             approval_id: prepared.approval.approval_id,
@@ -600,9 +686,28 @@ export class SdkRunHandle implements RunHandle {
           });
         }
       } else {
-        this._operationBoundaryFailureCode = OPERATION_BOUNDARY_DENIED;
+        this._operationBoundaryFailureCode =
+          operationBoundary.code ?? OPERATION_BOUNDARY_DENIED;
+        const governanceApprovalWait =
+          this._operationBoundaryFailureCode.startsWith("APPROVAL_") &&
+          this._operationBoundaryFailureCode !== "APPROVAL_REJECTED" &&
+          this._operationBoundaryFailureCode !== "APPROVAL_EXPIRED" &&
+          this._operationBoundaryFailureCode !== "APPROVAL_REVOKED" &&
+          this._operationBoundaryFailureCode !==
+            "APPROVAL_ALREADY_CONSUMED";
+        this._operationClassification = governanceApprovalWait
+          ? "approval_required"
+          : this._operationBoundaryFailureCode === "ABSOLUTELY_PROHIBITED"
+            ? "absolutely_prohibited"
+            : "policy_denied";
+        this._operationRetryPolicy = governanceApprovalWait
+          ? "manual"
+          : "none";
+        this._operationNextSafeAction =
+          operationBoundary.next_safe_action ??
+          "write_report_or_replan_without_replaying_operation";
         this._operationBoundaryMessage = JSON.stringify({
-          code: OPERATION_BOUNDARY_DENIED,
+          code: this._operationBoundaryFailureCode,
           reason: operationBoundary.reason,
         });
       }
@@ -615,8 +720,18 @@ export class SdkRunHandle implements RunHandle {
           run_id: this.run_id,
           agent_id: this.agent_id,
           payload: {
-            status: "failed",
+            status:
+              this._operationBoundaryFailureCode ===
+                OPERATION_APPROVAL_REQUIRED ||
+              this._operationClassification === "approval_required"
+                ? "waiting_approval"
+                : "needs_replan",
             failure_code: this._operationBoundaryFailureCode,
+            failure_category: this._operationClassification,
+            retry_policy: this._operationRetryPolicy,
+            operation_fingerprint: this._operationFingerprint,
+            next_safe_action: this._operationNextSafeAction,
+            report_required: true,
             tool: toolName,
             message: this._operationBoundaryMessage,
           },

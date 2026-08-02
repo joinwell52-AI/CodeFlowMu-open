@@ -166,3 +166,55 @@ test("PM final report waits for ADMIN, then accepted task evidence becomes done"
     "done",
   );
 });
+
+test("governance records are task leaves and only blocking approvals change workflow stage", () => {
+  const graph = buildProjectGraphProjection({
+    projectId: "mother",
+    tasks: [
+      {
+        task_id: "TASK-20260731-040",
+        title: "Governed task",
+        state: "active",
+      },
+    ],
+    approvals: [
+      {
+        governance_id: "GOV-1",
+        approval_id: "APPROVAL-GOV-1",
+        kind: "governance",
+        target_task_id: "TASK-20260731-040",
+        status: "pending_approval",
+        blocks_task: false,
+      },
+    ],
+  });
+  assert.equal(
+    graph.nodes.find((node) => node.id === "approval:APPROVAL-GOV-1")
+      ?.parent_id,
+    "task:TASK-20260731-040",
+  );
+  assert.equal(
+    graph.nodes.find((node) => node.id === "task:TASK-20260731-040")
+      ?.workflow_stage,
+    "doing",
+  );
+
+  assert.equal(
+    computeWorkflowStage({
+      task: { task_id: "TASK-20260731-040", state: "active" },
+      rootTaskId: "TASK-20260731-040",
+      reports: [],
+      reviews: [],
+      approvals: [
+        {
+          kind: "governance",
+          target_task_id: "TASK-20260731-040",
+          status: "pending_approval",
+          blocks_task: true,
+        },
+      ],
+      runtimeEvents: [],
+    }),
+    "waiting_admin",
+  );
+});

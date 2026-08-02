@@ -73,6 +73,7 @@ export interface TaskSubmissionRecord {
   legacy_anomaly?: boolean;
   legacy_task_path?: string;
   migration_options?: string[];
+  last_uploaded_filename?: string;
   history: TaskSubmissionHistoryEntry[];
 }
 
@@ -86,6 +87,7 @@ export interface TaskSubmissionDraft {
   attachments?: Array<Record<string, unknown>>;
   thread_key?: string;
   idempotency_key?: string;
+  source_filename?: string;
 }
 
 const projectLocks = new Map<string, Promise<unknown>>();
@@ -520,7 +522,16 @@ export async function checkTaskSubmission(
     const record = await getTaskSubmission(projectRoot, submissionId);
     if (!record) throw new Error("TASK_SUBMISSION_NOT_FOUND");
     if (record.status === "created") return record;
+    if (record.status === "accepted" || record.status === "formalizing") {
+      return record;
+    }
+    if (record.status === "abandoned") {
+      throw new Error("TASK_SUBMISSION_ABANDONED");
+    }
 
+    // `checking` is deliberately recoverable. If a previous process stopped
+    // after persisting this state, re-running admission against the same
+    // durable draft completes the transition without another upload.
     record.status = "checking";
     record.updated_at = new Date().toISOString();
     record.error = undefined;
@@ -575,6 +586,12 @@ export async function reviseTaskSubmission(
     if (record.status === "created" || record.formal_task_id) {
       throw new Error("TASK_SUBMISSION_ALREADY_FORMALIZED");
     }
+    if (record.status === "abandoned") {
+      throw new Error("TASK_SUBMISSION_ABANDONED");
+    }
+    if (record.status === "accepted" || record.status === "formalizing") {
+      throw new Error("TASK_SUBMISSION_NOT_EDITABLE");
+    }
     if (draft.subject != null) record.subject = draft.subject.trim();
     if (draft.body != null) record.draft_body = draft.body.trim();
     if (draft.priority != null) {
@@ -593,6 +610,13 @@ export async function reviseTaskSubmission(
       }));
     }
     if (draft.thread_key) record.formal_thread_key = draft.thread_key.trim();
+    if (draft.source_filename != null) {
+      const sourceFilename = basename(draft.source_filename.trim());
+      if (!sourceFilename || !/\.md$/i.test(sourceFilename)) {
+        throw new Error("TASK_SUBMISSION_REVISION_FILE_INVALID");
+      }
+      record.last_uploaded_filename = sourceFilename;
+    }
     record.admission_revision += 1;
     record.status = "draft";
     record.decision = null;
@@ -601,7 +625,14 @@ export async function reviseTaskSubmission(
     record.blocking_findings = [];
     record.error = undefined;
     record.updated_at = new Date().toISOString();
-    appendHistory(record, "draft", null, "submission revised");
+    appendHistory(
+      record,
+      "draft",
+      null,
+      record.last_uploaded_filename
+        ? `submission revised from ${record.last_uploaded_filename}`
+        : "submission revised",
+    );
     await atomicWriteJson(
       taskSubmissionPath(projectRoot, submissionId),
       record,

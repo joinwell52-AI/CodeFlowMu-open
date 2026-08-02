@@ -4,16 +4,122 @@ import {
   buildGitPushApprovalInput,
   type GitPushSubject,
 } from "./GitPushApproval.ts";
+import {
+  GovernanceApprovalError,
+  GovernanceApprovalService,
+  type GovernanceAuthorizationReference,
+} from "./GovernanceApprovalService.ts";
 import type { PrepareOperationInput } from "./OperationApprovalService.ts";
-import { buildFilesystemCleanupApprovalInput } from "./FilesystemCleanupApproval.ts";
+import {
+  assessFilesystemCleanupRisk,
+  buildFilesystemCleanupApprovalInput,
+} from "./FilesystemCleanupApproval.ts";
+import { validateWindowsShellCommand } from "./WindowsShellDialect.ts";
 
 export const OPERATION_APPROVAL_REQUIRED = "OPERATION_APPROVAL_REQUIRED";
 export const OPERATION_BOUNDARY_DENIED = "OPERATION_BOUNDARY_DENIED";
 
 export type NativeOperationBoundaryDecision =
-  | { decision: "ALLOW" }
-  | { decision: "DENY"; reason: string }
+  | {
+      decision: "ALLOW";
+      outcome?: {
+        ok: true;
+        changed: boolean;
+        reason:
+          | "task_temporary_untracked_file"
+          | "already_absent"
+          | "governance_authorization_consumed";
+        targets: string[];
+        classification:
+          | "allowed_cleanup"
+          | "already_absent"
+          | "governance_authorized";
+        governance_id?: string;
+      };
+    }
+  | {
+      decision: "DENY";
+      reason: string;
+      code?: string;
+      next_safe_action?: string;
+    }
   | { decision: "REQUIRE_APPROVAL"; input: PrepareOperationInput };
+
+function governanceAuthorizationReference(
+  args: Record<string, unknown>,
+): GovernanceAuthorizationReference | null {
+  const raw = args["governance_authorization"];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const value = raw as Record<string, unknown>;
+  const reference = {
+    governance_id: String(value["governance_id"] ?? "").trim(),
+    approval_id: String(value["approval_id"] ?? "").trim(),
+    decision_id: String(value["decision_id"] ?? "").trim(),
+    scope_digest: String(value["scope_digest"] ?? "").trim(),
+    content_hash: String(value["content_hash"] ?? "").trim(),
+    idempotency_key: String(value["idempotency_key"] ?? "").trim(),
+  };
+  return Object.values(reference).every(Boolean) ? reference : null;
+}
+
+function evaluateGovernanceAuthorization(input: {
+  args: Record<string, unknown>;
+  projectRoot: string;
+  projectId: string;
+  taskId?: string;
+  action: string;
+  targets: string[];
+  toolName: string;
+}): NativeOperationBoundaryDecision | null {
+  const reference = governanceAuthorizationReference(input.args);
+  if (!reference) return null;
+  try {
+    const governance = new GovernanceApprovalService({
+      projectRoot: input.projectRoot,
+    }).authorizeAction(
+      reference,
+      {
+        project_id: input.projectId,
+        target_task_id: input.taskId ?? "",
+        action: input.action,
+        targets: input.targets,
+      },
+      {
+        tool: input.toolName,
+        pre_action_gate: true,
+      },
+    );
+    return {
+      decision: "ALLOW",
+      outcome: {
+        ok: true,
+        changed: true,
+        reason: "governance_authorization_consumed",
+        targets: input.targets,
+        classification: "governance_authorized",
+        governance_id: governance.governance_id,
+      },
+    };
+  } catch (error) {
+    if (error instanceof GovernanceApprovalError) {
+      return {
+        decision: "DENY",
+        code: error.code,
+        reason: error.message,
+        next_safe_action:
+          error.code === "ABSOLUTELY_PROHIBITED"
+            ? "stop_and_report_policy_violation"
+            : "request_new_or_corrected_governance_approval",
+      };
+    }
+    return {
+      decision: "DENY",
+      code: "APPROVAL_REQUIRED",
+      reason: error instanceof Error ? error.message : String(error),
+      next_safe_action: "request_governance_approval",
+    };
+  }
+}
 
 function extractCommand(args: Record<string, unknown>): string {
   for (const key of ["command", "cmd", "script", "input"]) {
@@ -175,19 +281,45 @@ export async function evaluateNativeOperationBoundary(input: {
   const runtimeProtocolWrite = isRuntimeGovernanceWriteTool(input.toolName);
   const directMutation = isDirectMutationTool(input.toolName);
 
+  if (command) {
+    const shellValidation = validateWindowsShellCommand({
+      command,
+      args: input.args,
+    });
+    if (!shellValidation.ok) {
+      return {
+        decision: "DENY",
+        reason: shellValidation.reason,
+        next_safe_action: shellValidation.next_safe_action,
+      };
+    }
+  }
+
   if (isGovernanceBoundarySource(target) && !readOnly && !runtimeProtocolWrite) {
-    return { decision: "DENY", reason: "governance_boundary_adapter_not_registered" };
+    return {
+      decision: "DENY",
+      code: "ABSOLUTELY_PROHIBITED",
+      reason: "governance_boundary_adapter_not_registered",
+    };
   }
   if (isGovernanceStorageTarget(target)) {
     if (readOnly || runtimeProtocolWrite) return { decision: "ALLOW" };
     if (directMutation || command) {
-      return { decision: "DENY", reason: "governance_storage_boundary_violation" };
+      return {
+        decision: "DENY",
+        code: "ABSOLUTELY_PROHIBITED",
+        reason: "governance_storage_boundary_violation",
+      };
     }
     return { decision: "DENY", reason: "governance_storage_boundary_unknown_tool" };
   }
   if (commandTargetsGovernanceStorage(command)) {
     if (isReadOnlyGovernanceShellCommand(command)) return { decision: "ALLOW" };
-    return { decision: "DENY", reason: "governance_storage_boundary_violation" };
+    return {
+      decision: "DENY",
+      code: "ABSOLUTELY_PROHIBITED",
+      reason: "governance_storage_boundary_violation",
+    };
   }
   const tool = normalizedToolName(input.toolName);
   if (
@@ -203,12 +335,58 @@ export async function evaluateNativeOperationBoundary(input: {
     if (rawTargets.length === 0) {
       return { decision: "DENY", reason: "filesystem_cleanup_targets_missing" };
     }
+    const assessment = assessFilesystemCleanupRisk({
+      projectRoot: input.projectRoot,
+      targets: rawTargets,
+      explicitlyTemporary:
+        input.args["temporary"] === true ||
+        input.args["session_created"] === true,
+    });
+    if (assessment.decision === "DENY") {
+      return { decision: "DENY", reason: assessment.reason };
+    }
+    if (assessment.decision === "ALREADY_ABSENT") {
+      return {
+        decision: "ALLOW",
+        outcome: {
+          ok: true,
+          changed: false,
+          reason: "already_absent",
+          targets: assessment.resolved_targets,
+          classification: "already_absent",
+        },
+      };
+    }
+    if (assessment.decision === "ALLOW") {
+      return {
+        decision: "ALLOW",
+        outcome: {
+          ok: true,
+          changed: true,
+          reason: "task_temporary_untracked_file",
+          targets: assessment.resolved_targets,
+          classification: "allowed_cleanup",
+        },
+      };
+    }
+    const governedCleanup = evaluateGovernanceAuthorization({
+      args: input.args,
+      projectRoot: input.projectRoot,
+      projectId: input.projectId,
+      taskId: input.taskId,
+      action: "filesystem.cleanup",
+      targets: assessment.resolved_targets,
+      toolName: input.toolName,
+    });
+    if (governedCleanup) return governedCleanup;
     try {
       return {
         decision: "REQUIRE_APPROVAL",
         input: buildFilesystemCleanupApprovalInput({
           projectRoot: input.projectRoot,
-          targets: rawTargets,
+          targets: assessment.resolved_targets.filter((target) =>
+            assessment.git_status[target] !== "absent"
+          ),
           subject: {
             actor: input.agentId,
             role: roleFromAgentId(input.agentId),
@@ -236,7 +414,29 @@ export async function evaluateNativeOperationBoundary(input: {
   }
   const unsupportedReason = command ? unsupportedHighRiskReason(command) : null;
   if (unsupportedReason) {
-    return { decision: "DENY", reason: unsupportedReason };
+    if (isActualDiskFormatCommand(command)) {
+      return {
+        decision: "DENY",
+        code: "ABSOLUTELY_PROHIBITED",
+        reason: unsupportedReason,
+      };
+    }
+    const governedShell = evaluateGovernanceAuthorization({
+      args: input.args,
+      projectRoot: input.projectRoot,
+      projectId: input.projectId,
+      taskId: input.taskId,
+      action: "shell.execute",
+      targets: [command],
+      toolName: input.toolName,
+    });
+    if (governedShell) return governedShell;
+    return {
+      decision: "DENY",
+      code: "APPROVAL_REQUIRED",
+      reason: unsupportedReason,
+      next_safe_action: "ask_PM_to_request_formal_governance_approval",
+    };
   }
   if (!command || !/\bgit(?:\.exe)?\s+push\b/i.test(command)) {
     return { decision: "ALLOW" };
@@ -246,7 +446,12 @@ export async function evaluateNativeOperationBoundary(input: {
     return { decision: "DENY", reason: "git_push_compound_command_impact_unknown" };
   }
   if (/\s(?:--force(?:-with-lease)?|-f)(?:\s|$)/i.test(command)) {
-    return { decision: "DENY", reason: "git_push_force_update_not_supported" };
+    return {
+      decision: "DENY",
+      code: "APPROVAL_REQUIRED",
+      reason: "git_push_force_update_not_supported",
+      next_safe_action: "ask_PM_to_request_formal_governance_approval",
+    };
   }
 
   const match = command.match(
@@ -269,6 +474,16 @@ export async function evaluateNativeOperationBoundary(input: {
     ...(input.sessionId ? { session_id: input.sessionId } : {}),
     ...(input.taskId ? { task_id: input.taskId } : {}),
   };
+  const governedPush = evaluateGovernanceAuthorization({
+    args: input.args,
+    projectRoot: input.projectRoot,
+    projectId: input.projectId,
+    taskId: input.taskId,
+    action: "git.remote.push",
+    targets: [`origin/${match[1]!}`],
+    toolName: input.toolName,
+  });
+  if (governedPush) return governedPush;
   try {
     return {
       decision: "REQUIRE_APPROVAL",

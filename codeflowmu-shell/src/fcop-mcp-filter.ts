@@ -75,7 +75,22 @@ const pythonBin =
   process.env["PYTHON_BIN"] ??
   "python";
 
-const projectRoot = process.env["FCOP_PROJECT_DIR"]?.trim() || process.cwd();
+const configuredProjectRoot = process.env["FCOP_PROJECT_DIR"]?.trim();
+const launchCwd = path.resolve(process.cwd());
+const projectRoot = path.resolve(configuredProjectRoot || launchCwd);
+const pathIdentity = (value: string): string =>
+  process.platform === "win32" ? value.toLowerCase() : value;
+if (
+  configuredProjectRoot &&
+  pathIdentity(projectRoot) !== pathIdentity(launchCwd)
+) {
+  process.stderr.write(
+    `[fcop-mcp-filter] ACTIVE_PROJECT_BINDING_MISMATCH: ` +
+      `FCOP_PROJECT_DIR=${projectRoot}, cwd=${launchCwd}. ` +
+      "MCP project write capability refused.\n",
+  );
+  process.exit(78);
+}
 const thisDir = path.dirname(fileURLToPath(import.meta.url));
 const oneShotScript = path.resolve(
   thisDir,

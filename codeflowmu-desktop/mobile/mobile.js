@@ -6,10 +6,11 @@
   "use strict";
 
   /** 本机当前运行的 PWA 包版本（发版时与 version.json / index.html ?v= 对齐） */
-  var BUNDLE_VERSION = "V1.0.56";
-  var PWA_CACHE_BUST = "1.0.56";
+  var BUNDLE_VERSION = "V1.0.57";
+  var PWA_CACHE_BUST = "1.0.57";
   var PWA_VERSION_STORAGE_KEY = "cfm_pwa_installed_version";
   var PWA_LEGACY_CACHE_NAMES = [
+    "codeflowmu-pwa-v1.0.56",
     "codeflowmu-pwa-v1.0.55",
     "codeflowmu-pwa-v1.0.54",
     "codeflowmu-pwa-v1.0.52",
@@ -1252,13 +1253,18 @@
   function normalizeTask(row) {
     if (!row) return row;
     var fn = row.filename || row.id || row.task_id || "";
+    var recoveryState = String(row.state || (row.yaml && row.yaml.state) || "").toLowerCase();
+    var status =
+      recoveryState === "waiting_approval" || recoveryState === "needs_replan"
+        ? recoveryState
+        : String(row.status || row.display_status || row.bucket || "todo").toLowerCase();
     return {
       kind: "task",
       id: fn,
       filename: fn,
       task_id: row.task_id || fn,
       title: row.title || row.subject || fn,
-      status: String(row.status || row.display_status || row.bucket || "todo").toLowerCase(),
+      status: status,
       sender: row.from || row.sender || "—",
       recipient: row.to || row.recipient || "—",
       owner_role: row.owner_role || row.owner || "",
@@ -1270,6 +1276,18 @@
       parent: row.parent || row.parent_task_id || (row.yaml && row.yaml.parent) || "",
       parent_task_id: row.parent_task_id || row.parent || (row.yaml && row.yaml.parent) || "",
       task_spec_admission: row.task_spec_admission || null,
+      failure_code: row.failure_code || (row.yaml && row.yaml.failure_code) || "",
+      failure_category: row.failure_category || (row.yaml && row.yaml.failure_category) || "",
+      retry_policy: row.retry_policy || (row.yaml && row.yaml.retry_policy) || "",
+      retry_count: row.retry_count || row.failureCount || 0,
+      next_retry_at: row.next_retry_at || row.nextRetryAt || null,
+      operation_fingerprint:
+        row.operation_fingerprint || (row.yaml && row.yaml.operation_fingerprint) || "",
+      next_safe_action:
+        row.next_safe_action || (row.yaml && row.yaml.next_safe_action) || "",
+      report_required:
+        row.report_required === true ||
+        String(row.report_required || (row.yaml && row.yaml.report_required) || "") === "true",
       body: row.body || "",
     };
   }
@@ -1311,6 +1329,7 @@
       sender: row.from || row.sender || row.reviewer || "—",
       recipient: row.to || row.recipient || "ADMIN",
       approval_type: row.approval_type || row.decision || "",
+      governance: row.kind === "governance",
       can_approve: row.can_approve !== false,
       material_missing: !!row.material_missing,
       execution_status: row.execution_status || (row.execution && row.execution.status) || "not_started",
@@ -3347,7 +3366,13 @@
     var st = (task.status || "").toLowerCase();
     var alert = $("fpStatusAlert");
     if (alert) {
-      if (st === "blocked" || st === "failed" || st === "task_spec_rejected") {
+      if (
+        st === "blocked" ||
+        st === "failed" ||
+        st === "task_spec_rejected" ||
+        st === "waiting_approval" ||
+        st === "needs_replan"
+      ) {
         alert.classList.remove("hidden");
         alert.className = "detail-alert failed";
         if (st === "task_spec_rejected") {
@@ -3357,6 +3382,18 @@
             .filter(Boolean)
             .join(", ");
           alert.textContent = t("taskSpecRejected") + (findingIds ? "：" + findingIds : "");
+        } else if (st === "waiting_approval" || st === "needs_replan") {
+          var recoveryParts = [
+            task.failure_category || st,
+            task.retry_policy ? "retry=" + task.retry_policy : "",
+            task.retry_count ? "count=" + task.retry_count : "",
+            task.operation_fingerprint
+              ? "operation=" + task.operation_fingerprint.slice(0, 12)
+              : "",
+            task.next_safe_action ? "next=" + task.next_safe_action : "",
+            task.report_required ? "report_required=true" : "",
+          ].filter(Boolean);
+          alert.textContent = recoveryParts.join(" · ");
         } else {
           alert.textContent = t("reportNeedsAction") + " (" + st + ")";
         }
@@ -3461,6 +3498,7 @@
       var disabled = approval.can_approve === false || approval.material_missing;
       var approveBtn = $("fpApprovalApprove");
       var rejectBtn = $("fpApprovalReject");
+      var changesBtn = $("fpApprovalChanges");
       var hint = $("fpApprovalGateHint");
       if (approveBtn) {
         approveBtn.disabled = disabled;
@@ -3471,6 +3509,10 @@
         rejectBtn.disabled = false;
         rejectBtn.classList.add("btn-secondary-block");
         rejectBtn.classList.remove("btn-block-primary");
+      }
+      if (changesBtn) {
+        changesBtn.classList.toggle("hidden", !approval.governance);
+        changesBtn.disabled = !approval.governance;
       }
       if (hint) {
         hint.classList.toggle("hidden", !disabled);
@@ -3598,6 +3640,31 @@
         body: { reason: reason },
       });
       showToast(t("approvalRejectedToast"));
+      closeTaskDetail();
+      await loadApprovals();
+      renderApprovalsList();
+    } catch (e) {
+      showErrorToast(t("toastError") + "：" + userFacingError(e));
+    }
+  }
+
+  async function requestCurrentApprovalChanges() {
+    var item = state.currentDetail;
+    if (!item || state.detailKind !== "approval" || !item.governance) return;
+    var reason = window.prompt("请说明需要 PM 修改的内容");
+    if (reason == null) return;
+    reason = String(reason).trim();
+    if (!reason) {
+      showToast("修改要求不能为空");
+      return;
+    }
+    try {
+      await api("/api/v2/mobile/approvals/" + encodeURIComponent(item.filename) + "/changes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: { reason: reason },
+      });
+      showToast("已要求 PM 修改");
       closeTaskDetail();
       await loadApprovals();
       renderApprovalsList();
@@ -5257,6 +5324,8 @@
       $("fpApprovalApprove").addEventListener("click", approveCurrentApproval);
     $("fpApprovalReject") &&
       $("fpApprovalReject").addEventListener("click", rejectCurrentApproval);
+    $("fpApprovalChanges") &&
+      $("fpApprovalChanges").addEventListener("click", requestCurrentApprovalChanges);
     $("bindBannerBtn") &&
       $("bindBannerBtn").addEventListener("click", function () {
         openBindPage({ keepTab: true });

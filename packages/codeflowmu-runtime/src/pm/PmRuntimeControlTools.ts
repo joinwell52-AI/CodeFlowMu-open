@@ -14,6 +14,13 @@ export const PM_RUNTIME_CONTROL_TOOL_NAMES = [
   "pm.inspect_runtime_topology",
   "pm.create_child_task",
   "pm.request_operation_approval",
+  "pm.write_governance_record",
+  "pm.revise_governance_record",
+  "pm.submit_governance_for_approval",
+  "pm.list_governance_records",
+  "pm.get_governance_record",
+  "pm.request_authorization",
+  "pm.reference_effective_governance",
   "pm.capture_evidence",
   "software.inventory",
   "software.search",
@@ -32,6 +39,73 @@ export type PmRuntimeControlToolDefinition = {
 };
 
 const stringProp = (description: string) => ({ type: "string", description });
+const stringArrayProp = (description: string) => ({
+  type: "array",
+  items: { type: "string" },
+  description,
+});
+
+const governanceRecordProperties = {
+  type: {
+    type: "string",
+    enum: [
+      "DIRECTIVE",
+      "AUTHORIZATION",
+      "DECISION",
+      "AMENDMENT",
+      "APPROVAL_REQUEST",
+      "REVOCATION",
+      "SUPERSEDE",
+    ],
+  },
+  recipient: stringProp("治理记录接收角色"),
+  target_task_id: stringProp("当前项目中已存在的目标 TASK id"),
+  thread_key: stringProp("目标 TASK 所属 thread_key"),
+  project_id: stringProp("当前项目 id"),
+  source_kind: {
+    type: "string",
+    enum: ["admin_chat", "pm_request", "legacy"],
+  },
+  source_message_id: stringProp("ADMIN 聊天证据 message id"),
+  source_session_id: stringProp("ADMIN 聊天证据 session id"),
+  intent_summary: stringProp("PM 对原始意图的准确复述"),
+  boundary_summary: stringProp("授权或指令边界"),
+  allowed_actions: stringArrayProp("明确允许的动作"),
+  prohibited_actions: stringArrayProp("明确禁止的动作"),
+  targets: stringArrayProp("目标资源"),
+  effective_conditions: stringArrayProp("生效条件"),
+  expires_at: stringProp("可选 ISO 失效时间"),
+  usage_limit: { type: "integer", minimum: 1 },
+  retry_semantics: {
+    type: "string",
+    enum: ["never", "if_no_side_effect", "explicit_new_approval"],
+  },
+  risk_and_rollback: stringProp("风险和回滚方案"),
+  revocation_conditions: stringArrayProp("撤销条件"),
+  evidence_requirements: stringArrayProp("执行证据要求"),
+  references: stringArrayProp("关联证据"),
+  supersedes: stringProp("被替代的治理记录 id"),
+  blocks_task: { type: "boolean" },
+  idempotency_key: stringProp("幂等键"),
+} as const;
+
+const governanceRecordRequired = [
+  "type",
+  "recipient",
+  "target_task_id",
+  "thread_key",
+  "project_id",
+  "source_kind",
+  "intent_summary",
+  "boundary_summary",
+  "allowed_actions",
+  "prohibited_actions",
+  "targets",
+  "effective_conditions",
+  "risk_and_rollback",
+  "revocation_conditions",
+  "evidence_requirements",
+] as const;
 
 export const PM_RUNTIME_CONTROL_TOOL_DEFINITIONS: readonly PmRuntimeControlToolDefinition[] = [
   {
@@ -230,6 +304,117 @@ export const PM_RUNTIME_CONTROL_TOOL_DEFINITIONS: readonly PmRuntimeControlToolD
         operation_digest: stringProp("可选调用方预计算摘要，仅用于对照"),
       },
       required: ["task_id", "operation_type", "targets", "reason", "expected_benefit", "risk", "rollback_plan"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "pm.write_governance_record",
+    description:
+      "把 ADMIN 聊天指令、授权或范围变化写成正式治理草稿；不会自动生效。",
+    inputSchema: {
+      type: "object",
+      properties: governanceRecordProperties,
+      required: governanceRecordRequired,
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "pm.revise_governance_record",
+    description:
+      "在 ADMIN 要求修改后创建新的治理 revision；不会覆盖旧版本。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        governance_id: stringProp("待修订治理记录 id"),
+        revision: { type: "integer", minimum: 1 },
+        ...governanceRecordProperties,
+      },
+      required: [
+        "governance_id",
+        "revision",
+        ...governanceRecordRequired,
+      ],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "pm.submit_governance_for_approval",
+    description:
+      "对正式治理草稿执行来源、任务、项目和哈希校验，并提交 ADMIN 审批。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        governance_id: stringProp("治理记录 id"),
+        revision: { type: "integer", minimum: 1 },
+        idempotency_key: stringProp("提交幂等键"),
+      },
+      required: ["governance_id", "revision", "idempotency_key"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "pm.list_governance_records",
+    description: "列出治理记录，可按状态或目标 TASK 过滤。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: stringProp("可选治理状态"),
+        task_id: stringProp("可选目标 TASK id"),
+        limit: { type: "integer", minimum: 1, maximum: 1000 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "pm.get_governance_record",
+    description: "读取指定治理记录 revision、决定记录和审批卡投影。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        governance_id: stringProp("治理记录 id"),
+        revision: { type: "integer", minimum: 1 },
+      },
+      required: ["governance_id", "revision"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "pm.request_authorization",
+    description:
+      "创建 AUTHORIZATION 正式记录并提交审批；只返回待审批项，不直接授权。",
+    inputSchema: {
+      type: "object",
+      properties: governanceRecordProperties,
+      required: governanceRecordRequired.filter((name) => name !== "type"),
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "pm.reference_effective_governance",
+    description:
+      "在受限动作前机械校验治理审批 id、决定、范围、哈希和有效状态。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        governance_id: stringProp("治理记录 id"),
+        approval_id: stringProp("审批 id"),
+        decision_id: stringProp("不可变 ADMIN 决定 id"),
+        scope_digest: stringProp("获批范围摘要"),
+        content_hash: stringProp("获批内容哈希"),
+        idempotency_key: stringProp("后续消费幂等键"),
+        project_id: stringProp("当前项目 id"),
+        target_task_id: stringProp("当前 TASK id"),
+      },
+      required: [
+        "governance_id",
+        "approval_id",
+        "decision_id",
+        "scope_digest",
+        "content_hash",
+        "idempotency_key",
+        "project_id",
+        "target_task_id",
+      ],
       additionalProperties: false,
     },
   },
@@ -504,6 +689,77 @@ export async function invokePmRuntimeControlTool(input: {
         actor: agentId,
         session_id: input.sessionId,
         current_task_id: input.currentTaskId,
+      };
+      break;
+    case "pm.write_governance_record":
+      method = "POST";
+      path = "/api/v2/pm/governance/records";
+      body = {
+        ...input.args,
+        actor: agentId,
+      };
+      break;
+    case "pm.revise_governance_record":
+      method = "POST";
+      path =
+        `/api/v2/pm/governance/records/${encodeURIComponent(requiredString(input.args, "governance_id"))}` +
+        `/${encodeURIComponent(requiredString(input.args, "revision"))}/revise`;
+      body = {
+        ...input.args,
+        actor: agentId,
+      };
+      break;
+    case "pm.submit_governance_for_approval":
+      method = "POST";
+      path =
+        `/api/v2/pm/governance/records/${encodeURIComponent(requiredString(input.args, "governance_id"))}` +
+        `/${encodeURIComponent(requiredString(input.args, "revision"))}/submit`;
+      body = {
+        actor: agentId,
+        idempotency_key: requiredString(input.args, "idempotency_key"),
+      };
+      break;
+    case "pm.list_governance_records":
+      path = withQuery("/api/v2/governance/records", {
+        status: optionalString(input.args, "status"),
+        task_id: optionalString(input.args, "task_id"),
+        limit: optionalString(input.args, "limit"),
+      });
+      break;
+    case "pm.get_governance_record":
+      path =
+        `/api/v2/governance/records/${encodeURIComponent(requiredString(input.args, "governance_id"))}` +
+        `/${encodeURIComponent(requiredString(input.args, "revision"))}`;
+      break;
+    case "pm.request_authorization": {
+      method = "POST";
+      path = "/api/v2/pm/governance/records";
+      body = {
+        ...input.args,
+        type: "AUTHORIZATION",
+        actor: agentId,
+        submit_immediately: true,
+      };
+      break;
+    }
+    case "pm.reference_effective_governance":
+      method = "POST";
+      path = "/api/v2/governance/authorizations/validate";
+      body = {
+        reference: {
+          governance_id: requiredString(input.args, "governance_id"),
+          approval_id: requiredString(input.args, "approval_id"),
+          decision_id: requiredString(input.args, "decision_id"),
+          scope_digest: requiredString(input.args, "scope_digest"),
+          content_hash: requiredString(input.args, "content_hash"),
+          idempotency_key: requiredString(input.args, "idempotency_key"),
+        },
+        expected: {
+          project_id: requiredString(input.args, "project_id"),
+          target_task_id: requiredString(input.args, "target_task_id"),
+          scope_digest: requiredString(input.args, "scope_digest"),
+          content_hash: requiredString(input.args, "content_hash"),
+        },
       };
       break;
     case "pm.capture_evidence":

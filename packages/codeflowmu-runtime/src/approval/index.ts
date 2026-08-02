@@ -30,3 +30,34 @@ export {
   OPERATION_BOUNDARY_DENIED,
   type NativeOperationBoundaryDecision,
 } from "./NativeOperationApprovalGate.ts";
+export {
+  identifyWindowsShellDialect,
+  validateWindowsShellCommand,
+  windowsUtf8Prelude,
+  type WindowsShellDialect,
+  type WindowsShellDialectResult,
+} from "./WindowsShellDialect.ts";
+export {
+  GOVERNANCE_APPROVAL_CODES,
+  GOVERNANCE_RECORD_TYPES,
+  GovernanceApprovalError,
+  GovernanceApprovalService,
+  type GovernanceApprovalCode,
+  type GovernanceApprovalServiceOptions,
+  type GovernanceAuthorizationReference,
+  type GovernanceDecision,
+  type GovernanceDecisionRecord,
+  type GovernanceRecord,
+  type GovernanceRecordInput,
+  type GovernanceRecordType,
+  type GovernanceSourceVerification,
+  type GovernanceSourceVerifier,
+  type GovernanceStatus,
+} from "./GovernanceApprovalService.ts";
+export {
+  GOVERNANCE_ADMIN_TOOL_DEFINITIONS,
+  GOVERNANCE_ADMIN_TOOL_NAMES,
+  invokeGovernanceAdminTool,
+  type GovernanceAdminToolDefinition,
+  type GovernanceAdminToolName,
+} from "./GovernanceAdminTools.ts";

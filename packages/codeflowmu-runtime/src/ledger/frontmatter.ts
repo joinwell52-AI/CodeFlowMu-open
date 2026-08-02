@@ -52,6 +52,44 @@ export function strField(fm: Record<string, unknown>, key: string): string {
   return String(v).trim();
 }
 
+/**
+ * Relation fields existed in several historical encodings:
+ * YAML/JSON arrays, Python repr strings, one scalar id, or empty values.
+ * Readers normalize all of them without rewriting the source document.
+ */
+export function normalizeRelationList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (value == null) return [];
+  const raw = String(value).trim();
+  if (!raw || /^(?:null|none|\[\])$/i.test(raw)) return [];
+
+  if (raw.startsWith("[") && raw.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed)) {
+        return parsed.map((item) => String(item).trim()).filter(Boolean);
+      }
+    } catch {
+      const inner = raw.slice(1, -1).trim();
+      if (!inner) return [];
+      const values: string[] = [];
+      const matcher = /'([^']*)'|"([^"]*)"|([^,\s]+)/g;
+      let match: RegExpExecArray | null;
+      while ((match = matcher.exec(inner)) !== null) {
+        const item = String(match[1] ?? match[2] ?? match[3] ?? "").trim();
+        if (item) values.push(item);
+      }
+      return values;
+    }
+  }
+  return raw
+    .split(/\r?\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 export function listField(fm: Record<string, unknown>, key: string): string[] {
   const v = fm[key];
   if (Array.isArray(v)) {
@@ -74,8 +112,7 @@ export function listField(fm: Record<string, unknown>, key: string): string[] {
         .filter(Boolean);
     }
   }
-  if (typeof v === "string" && v.trim()) return [v.trim()];
-  return [];
+  return normalizeRelationList(v);
 }
 
 const TASK_ID_LONG_RE =
@@ -160,7 +197,10 @@ export function inferTaskParentFromBody(
 
 /** Resolve linked TASK id from report frontmatter (task_id, else first references[]). */
 export function resolveReportTaskId(fm: Record<string, unknown>): string {
-  const direct = strField(fm, "task_id").replace(/\.md$/i, "").trim();
+  const direct = (
+    strField(fm, "source_task_id") ||
+    strField(fm, "task_id")
+  ).replace(/\.md$/i, "").trim();
   if (direct) return direct;
   const references = listField(fm, "references");
   if (references.length) {

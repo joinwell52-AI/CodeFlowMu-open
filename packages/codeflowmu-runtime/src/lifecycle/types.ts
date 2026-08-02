@@ -40,6 +40,10 @@ export type TaskFm = {
   /** Hot-path / ledger projection — not a physical _lifecycle stage. */
   lifecycle_projection?: string;
   display_status?: string;
+  dispatch_state?: string;
+  issue_blocking?: boolean;
+  blocking_issue_id?: string;
+  blocking_issue_reason?: string;
   reviewed_at?: string;
   reviewed_by?: string;
   review_note?: string;

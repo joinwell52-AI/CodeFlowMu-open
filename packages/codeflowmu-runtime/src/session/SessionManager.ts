@@ -69,7 +69,11 @@ import {
   rebuildSdkFailureForSessionEnd,
   type SessionRunWithSdkFailure,
 } from "./sdk-failure-classifier.ts";
-import { OPERATION_APPROVAL_REQUIRED } from "../approval/index.ts";
+import {
+  OPERATION_APPROVAL_REQUIRED,
+  OPERATION_BOUNDARY_DENIED,
+} from "../approval/index.ts";
+import type { SessionRunWithOperationBoundary } from "./SdkRunHandle.ts";
 
 /**
  * Payload passed into `Agent.send()` for a freshly started session.
@@ -1033,9 +1037,16 @@ export class SessionManager {
       typeof (settledRun as SessionRun & { sdk_error?: unknown }).sdk_error === "string" &&
       String((settledRun as SessionRun & { sdk_error?: unknown }).sdk_error).trim().length > 0;
     const actionPausedForApproval =
-      settledRun.failure_code === OPERATION_APPROVAL_REQUIRED;
+      settledRun.failure_code === OPERATION_APPROVAL_REQUIRED ||
+      settledRun.failure_code === "APPROVAL_REQUIRED" ||
+      settledRun.failure_code === "APPROVAL_PENDING";
+    const actionStoppedByPolicy =
+      settledRun.failure_code === OPERATION_BOUNDARY_DENIED ||
+      settledRun.failure_code === "ABSOLUTELY_PROHIBITED" ||
+      String(settledRun.failure_code ?? "").startsWith("APPROVAL_");
     const settledWithFailure =
       !actionPausedForApproval &&
+      !actionStoppedByPolicy &&
       (settledRun.status === "failed" ||
         Boolean(settledRun.failure_code) ||
         settledWithSdkError ||
@@ -1053,7 +1064,7 @@ export class SessionManager {
           ? { failure_code: TRANSIENT_SDK_DELAYED }
           : {}),
       };
-    } else if (actionPausedForApproval) {
+    } else if (actionPausedForApproval || actionStoppedByPolicy) {
       // Cursor SDK cannot suspend one in-flight native tool call. The run is
       // cancelled before side effects, but the durable session/task remains a
       // recoverable approval wait instead of being recorded as a failure.
@@ -1089,6 +1100,29 @@ export class SessionManager {
         ),
       },
       runtime_last_event_at: endedAt,
+      ...(() => {
+        const operation = finalRun as SessionRun & SessionRunWithOperationBoundary;
+        if (!operation.operation_fingerprint || !operation.operation_classification) {
+          return {};
+        }
+        return {
+          runtime_operation_checkpoint: {
+            task_id: record.protocol.task_id,
+            session_id: sessionId,
+            completed_steps: [],
+            pending_step: operation.next_safe_action ?? "",
+            last_verified_state:
+              operation.operation_classification ?? "operation_observed",
+            failed_operation: finalRun.last_tool ?? "",
+            failed_operation_preconditions:
+              operation.operation_outcome ?? {},
+            operation_fingerprint: operation.operation_fingerprint,
+            next_safe_action: operation.next_safe_action ?? "",
+            report_required: operation.report_required === true,
+            retry_policy: operation.retry_policy ?? "none",
+          },
+        };
+      })(),
     };
     try {
       await this._sessionStore.save(updated);
@@ -1105,6 +1139,8 @@ export class SessionManager {
     let settlement_reason: string;
     if (actionPausedForApproval) {
       settlement_reason = "waiting_operation_approval";
+    } else if (actionStoppedByPolicy) {
+      settlement_reason = "operation_policy_denied";
     } else if (reportOnDisk && protocolStatus === "completed") {
       settlement_reason = "completed-with-report";
     } else if (reportOnDisk && protocolStatus === "cancelled") {
@@ -1131,6 +1167,8 @@ export class SessionManager {
           )
         : undefined;
     const runWithFailure = finalRun as SessionRun & SessionRunWithSdkFailure;
+    const runWithOperation =
+      finalRun as SessionRun & SessionRunWithOperationBoundary;
     const sessionErrorMessage =
       err?.message ??
       (typeof runWithFailure.sdk_error === "string"
@@ -1185,6 +1223,24 @@ export class SessionManager {
         ...(reportPath ? { report_path: reportPath } : {}),
         ...(finalRun.failure_code
           ? { failure_code: finalRun.failure_code }
+          : {}),
+        ...(runWithOperation.operation_classification
+          ? { failure_category: runWithOperation.operation_classification }
+          : {}),
+        ...(runWithOperation.retry_policy
+          ? { retry_policy: runWithOperation.retry_policy }
+          : {}),
+        ...(runWithOperation.operation_fingerprint
+          ? { operation_fingerprint: runWithOperation.operation_fingerprint }
+          : {}),
+        ...(runWithOperation.operation_outcome
+          ? { operation_outcome: runWithOperation.operation_outcome }
+          : {}),
+        ...(runWithOperation.next_safe_action
+          ? { next_safe_action: runWithOperation.next_safe_action }
+          : {}),
+        ...(runWithOperation.report_required
+          ? { report_required: true }
           : {}),
         ...(finalRun.failure_code === TRANSIENT_SDK_DELAYED
           ? { transient_sdk_error: true }

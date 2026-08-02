@@ -225,6 +225,14 @@ export class LifecycleStateMachine {
     if (from !== "review") {
       throw new Error(`approve_review denied: expected state review, got ${from}`);
     }
+    if (
+      fm.issue_blocking === true &&
+      String(fm.blocking_issue_id ?? "").trim()
+    ) {
+      throw new Error(
+        `approve_review denied: unresolved blocking ISSUE ${fm.blocking_issue_id}`,
+      );
+    }
     const actorIsAdmin = input.actor.trim().toUpperCase() === "ADMIN";
     const pendingHumanReview = await hasPendingHumanReview(
       this.lifecycleRoot,

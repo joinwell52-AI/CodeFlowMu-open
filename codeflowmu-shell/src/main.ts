@@ -81,7 +81,11 @@ import { logFcopClientCreateFailure } from "./fcop-client-diagnostics.ts";
 import { startWebPanel, type WebPanelHandle } from "./web-panel.ts";
 import { readFcopJsonMeta, readShellVersion } from "./fcop-env-probe.ts";
 import { ensureAdoptedFromSource } from "./fcop-adopted-bootstrap.ts";
-import { resolveRuntimeStartupProjectRoot } from "./project-registry.ts";
+import {
+  buildRuntimeProjectBindingPlan,
+  diagnoseRuntimeProjectBinding,
+  resolveRuntimeStartupProjectRootDetailed,
+} from "./project-registry.ts";
 import {
   ensureRuntimeInstance,
   loadRuntimeInstance,
@@ -341,15 +345,30 @@ async function main(): Promise<void> {
   const existingRegistryPath = localInstance
     ? runtimeInstanceRegistryPath(localInstance.instance_id)
     : undefined;
-  let _earlyProjectRoot = resolveRuntimeStartupProjectRoot({
+  const requestedRegistryPath = launchArgs.registryPath ?? existingRegistryPath;
+  const registryBelongsToRuntimeInstance = Boolean(
+    localInstance &&
+      requestedRegistryPath &&
+      existingRegistryPath &&
+      pathResolve(requestedRegistryPath).toLowerCase() ===
+        pathResolve(existingRegistryPath).toLowerCase(),
+  );
+  const startupProjectResolution = resolveRuntimeStartupProjectRootDetailed({
     explicitProjectRoot: launchArgs.projectRoot,
     instanceProjectRoot: localInstance?.project_root,
     discoveredBootstrapRoot: _bootstrapProjectRoot,
     openEditionBootstrapRoot: _openEditionBootstrapRoot,
     globalBootstrapRoot: hostRoot,
-    registryPath: launchArgs.registryPath ?? existingRegistryPath,
+    registryPath: requestedRegistryPath,
+    registryBelongsToRuntimeInstance,
   });
+  let _earlyProjectRoot = startupProjectResolution.root;
   if (!_earlyProjectRoot) _earlyProjectRoot = hostRoot;
+  for (const diagnostic of startupProjectResolution.diagnostics) {
+    consoleLogger.warn(
+      `[shell] startup project diagnostic ${diagnostic.code}: ${diagnostic.message}`,
+    );
+  }
   const _teamConfigRootResolution = resolveTeamConfigRoot({
     openEditionHostRoot: resolveOpenEditionHostRoot(),
     codeflowmuHostRoot: process.env["CODEFLOWMU_HOST_ROOT"],
@@ -372,7 +391,6 @@ async function main(): Promise<void> {
   process.env["CODEFLOWMU_INSTANCE_ROLE"] =
     activeRuntimeInstance.instance_role;
   process.env["CODEFLOW_PROJECTS_REGISTRY"] =
-    launchArgs.registryPath ??
     runtimeInstanceRegistryPath(activeRuntimeInstance.instance_id);
   if (launchArgs.noGateway || _teamMeta?.runtimeGatewayEnabled === false) {
     process.env["CODEFLOWMU_GATEWAY_DISABLED"] = "1";
@@ -492,6 +510,33 @@ async function main(): Promise<void> {
   const workspaceHasFcop = Boolean(
     workspaceRoot && existsSync(join(workspaceRoot, "fcop", "fcop.json")),
   );
+  const projectBindingPlan = workspaceRoot
+    ? buildRuntimeProjectBindingPlan(workspaceRoot)
+    : null;
+
+  if (projectBindingPlan) {
+    const bindingConsistency = diagnoseRuntimeProjectBinding({
+      expectedRoot: projectBindingPlan.activeProjectRoot,
+      instanceProjectRoot: activeRuntimeInstance.project_root,
+      writerLockProjectRoot: _earlyProjectRoot,
+      plan: projectBindingPlan,
+    });
+    if (!bindingConsistency.ok) {
+      const detail = bindingConsistency.mismatches
+        .map(({ binding, actual }) => `${binding}=${actual ?? "<missing>"}`)
+        .join(", ");
+      runtimeWriterLock?.release();
+      runtimeWriterLock = null;
+      throw new Error(
+        `${bindingConsistency.code}: expected ${bindingConsistency.expectedRoot}; ${detail}. ` +
+          "Project write capability was not started.",
+      );
+    }
+    consoleLogger.info(
+      `[shell] active project binding: source=${startupProjectResolution.source} ` +
+        `host_root=${hostRoot} active_project_root=${projectBindingPlan.activeProjectRoot}`,
+    );
+  }
 
   // Open first-run/repair is an explicit Panel action. Do not silently plant
   // adopted clauses or Skills before env/check can present the init button.
@@ -538,7 +583,9 @@ async function main(): Promise<void> {
   const adapterCfg = {
     ...cfg.cursor,
     ...(_pythonBin ? { pythonBin: _pythonBin } : {}),
-    ...(workspaceRoot ? { projectRoot: workspaceRoot } : {}),
+    ...(projectBindingPlan
+      ? { projectRoot: projectBindingPlan.cursorDefaultCwd }
+      : {}),
   };
   const sdkAdapter =
     makeRealCursorSdkAdapter(adapterCfg) ?? makeFakeCursorSdkAdapter();
@@ -573,7 +620,10 @@ async function main(): Promise<void> {
   // disable the fcop client entirely and stay on the YAML emit fallback (same
   // posture as `CODEFLOW_SKIP_FCOP_PROBE=1`).
   let fcopClient: FcopProjectClient | undefined;
-  let fcopProjectRoot: string | null = workspaceHasFcop ? workspaceRoot : null;
+  let fcopProjectRoot: string | null =
+    workspaceHasFcop && projectBindingPlan
+      ? projectBindingPlan.fcopProjectDir
+      : null;
   type FcopFallbackReason =
     | "windows_stdio_guard"
     | "no_fcop_json"
@@ -630,13 +680,15 @@ async function main(): Promise<void> {
   // FCoP v3 lifecycle inbox — all incoming tasks land here.
   // (v2 used fcop/tasks/; v3 uses fcop/_lifecycle/inbox/ per ADR-0022+v3-migration)
   const fcopTasksDir =
-    fcopProjectRoot
-      ? join(fcopProjectRoot, "fcop", "_lifecycle", "inbox")
+    fcopProjectRoot && projectBindingPlan
+      ? join(projectBindingPlan.lifecycleWatcherRoot, "fcop", "_lifecycle", "inbox")
       : undefined;
   // v0.3 loop closure: watch fcop/reports/ so worker reports trigger PM
   // consolidation sessions automatically (DEV → PM → ADMIN chain).
   const fcopReportsDir =
-    fcopProjectRoot ? join(fcopProjectRoot, "fcop", "reports") : undefined;
+    fcopProjectRoot && projectBindingPlan
+      ? join(projectBindingPlan.reportWatcherRoot, "fcop", "reports")
+      : undefined;
 
   // ADMIN direct drop: same as PM→worker, tasks land in the lifecycle inbox.
   const adminTasksDir = fcopTasksDir;
@@ -648,7 +700,9 @@ async function main(): Promise<void> {
 
   const mcpBridgeCfg = {
     ...(_pythonBin ? { pythonBin: _pythonBin } : {}),
-    ...(workspaceRoot ? { projectRoot: workspaceRoot } : {}),
+    ...(projectBindingPlan
+      ? { projectRoot: projectBindingPlan.mcpProjectRoot }
+      : {}),
   };
 
   const runtime = await Runtime.create({
@@ -681,7 +735,9 @@ async function main(): Promise<void> {
     legacyReportDispatcher: false,
     legacyReviewEngine: resolveLegacyReviewEngine(),
     ...(fcopReportsDir ? { fcopReportsDir } : {}),
-    ...(fcopProjectRoot ? { projectRoot: fcopProjectRoot } : {}),
+    ...(projectBindingPlan
+      ? { projectRoot: projectBindingPlan.runtimeProjectRoot }
+      : {}),
     ...(mcpBridgeCfg.pythonBin ? { pythonBin: mcpBridgeCfg.pythonBin } : {}),
     sessionMaxToolRounds: cfg.doorbell.maxToolRounds,
     runtimeProvider: cfg.provider,
@@ -695,14 +751,14 @@ async function main(): Promise<void> {
   const agentResult = await registerDefaultAgentKitIfEmpty({
     dataDir,
     runtime,
-    projectRoot: workspaceRoot ?? undefined,
+    projectRoot: projectBindingPlan?.cursorDefaultCwd,
     teamConfigRoot: _teamConfigRoot ?? undefined,
   });
 
   const modelSync = await syncTeamModelsFromConfig({
     dataDir,
     runtime,
-    projectRoot: workspaceRoot ?? undefined,
+    projectRoot: projectBindingPlan?.cursorDefaultCwd,
     teamConfigRoot: _teamConfigRoot,
   });
   if (modelSync.updated > 0) {
@@ -719,8 +775,8 @@ async function main(): Promise<void> {
   // runtime.sessionManager.startSession() directly (no file-drop needed).
   const planDir =
     fcopTasksDir ??
-    (workspaceRoot
-      ? join(workspaceRoot, "fcop", "_lifecycle", "inbox")
+    (projectBindingPlan
+      ? join(projectBindingPlan.lifecycleWatcherRoot, "fcop", "_lifecycle", "inbox")
       : join(process.cwd(), "fcop", "_lifecycle", "inbox"));
   const planScheduler = new PlanScheduler({
     runtime,
@@ -755,7 +811,7 @@ async function main(): Promise<void> {
     webPanel = await startWebPanel(runtime, {
       logger: consoleLogger,
       port: _panelPort,
-      projectRoot: workspaceRoot ?? undefined,
+      projectRoot: projectBindingPlan?.activeProjectRoot,
       teamConfigRoot: _teamConfigRoot,
       teamConfigRootType: _teamConfigRootResolution.type,
       adminTasksDir: adminTasksDir,
@@ -773,6 +829,9 @@ async function main(): Promise<void> {
         registryPath: process.env["CODEFLOW_PROJECTS_REGISTRY"]!,
         dataRoot: dataDir,
         writerLockPaths: runtimeWriterLock?.paths ?? [],
+        startupProjectSource: startupProjectResolution.source,
+        startupProjectDiagnostics: startupProjectResolution.diagnostics,
+        projectBindingPlan: projectBindingPlan ?? undefined,
       },
       agentRecycle: cfg.agentRecycle,
       reloadOnProjectSwitch: true,

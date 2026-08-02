@@ -9,6 +9,8 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -30,6 +32,8 @@ export interface LoadProjectRegistryResult {
   activeProjectId: string;
   projects: RegisteredProject[];
   loadedFromDisk: boolean;
+  registryStatus: "loaded" | "missing" | "invalid";
+  requestedActiveProjectId: string;
 }
 
 export function projectsRegistryPath(): string {
@@ -112,6 +116,8 @@ export function loadProjectRegistry(
         },
       ],
       loadedFromDisk: false,
+      registryStatus: "missing",
+      requestedActiveProjectId: "default",
     };
   }
   try {
@@ -137,7 +143,13 @@ export function loadProjectRegistry(
       preferred,
       bootstrap,
     );
-    return { activeProjectId, projects, loadedFromDisk: true };
+    return {
+      activeProjectId,
+      projects,
+      loadedFromDisk: true,
+      registryStatus: "loaded",
+      requestedActiveProjectId: preferred,
+    };
   } catch {
     return {
       activeProjectId: "default",
@@ -149,6 +161,8 @@ export function loadProjectRegistry(
         },
       ],
       loadedFromDisk: false,
+      registryStatus: "invalid",
+      requestedActiveProjectId: "default",
     };
   }
 }
@@ -181,6 +195,146 @@ export interface RuntimeStartupProjectRootOptions {
   openEditionBootstrapRoot?: string | null;
   globalBootstrapRoot?: string | null;
   registryPath?: string;
+  /** True only when registryPath belongs to the validated local Runtime instance. */
+  registryBelongsToRuntimeInstance?: boolean;
+}
+
+export type RuntimeStartupProjectRootSource =
+  | "explicit_project_root"
+  | "instance_registry_active"
+  | "instance_project_root"
+  | "discovered_bootstrap_root"
+  | "open_edition_bootstrap_root"
+  | "global_bootstrap_root"
+  | "unresolved";
+
+export interface RuntimeStartupProjectRootDiagnostic {
+  code:
+    | "EXPLICIT_PROJECT_ROOT_MISSING"
+    | "INSTANCE_REGISTRY_NOT_OWNED"
+    | "INSTANCE_REGISTRY_MISSING"
+    | "INSTANCE_REGISTRY_INVALID"
+    | "ACTIVE_PROJECT_NOT_REGISTERED"
+    | "ACTIVE_PROJECT_ROOT_MISSING";
+  message: string;
+  registryPath?: string;
+  activeProjectId?: string;
+  activeProjectRoot?: string;
+}
+
+export interface RuntimeStartupProjectRootResolution {
+  root: string | null;
+  source: RuntimeStartupProjectRootSource;
+  activeProjectId: string | null;
+  diagnostics: RuntimeStartupProjectRootDiagnostic[];
+}
+
+function existingRoot(value?: string | null): string | null {
+  if (!value?.trim()) return null;
+  const resolved = pathResolve(value);
+  return existsSync(resolved) ? resolved : null;
+}
+
+/**
+ * Resolve startup root with an auditable source and safe fallback diagnostics.
+ * A persisted registry may override instance.project_root only after the host
+ * has proved that registry belongs to the same local Runtime instance.
+ */
+export function resolveRuntimeStartupProjectRootDetailed(
+  options: RuntimeStartupProjectRootOptions,
+): RuntimeStartupProjectRootResolution {
+  const diagnostics: RuntimeStartupProjectRootDiagnostic[] = [];
+  const explicit = existingRoot(options.explicitProjectRoot);
+  if (explicit) {
+    return {
+      root: explicit,
+      source: "explicit_project_root",
+      activeProjectId: null,
+      diagnostics,
+    };
+  }
+  if (options.explicitProjectRoot?.trim()) {
+    diagnostics.push({
+      code: "EXPLICIT_PROJECT_ROOT_MISSING",
+      message: `Explicit project root does not exist: ${pathResolve(options.explicitProjectRoot)}`,
+      activeProjectRoot: pathResolve(options.explicitProjectRoot),
+    });
+  }
+
+  const registryPath = options.registryPath
+    ? pathResolve(options.registryPath)
+    : undefined;
+  if (registryPath && options.registryBelongsToRuntimeInstance === true) {
+    const bootstrap =
+      options.instanceProjectRoot ??
+      options.discoveredBootstrapRoot ??
+      options.openEditionBootstrapRoot ??
+      options.globalBootstrapRoot ??
+      process.cwd();
+    const registry = loadProjectRegistry(bootstrap, registryPath);
+    if (registry.registryStatus === "missing") {
+      diagnostics.push({
+        code: "INSTANCE_REGISTRY_MISSING",
+        message: `Runtime instance project registry is missing: ${registryPath}`,
+        registryPath,
+      });
+    } else if (registry.registryStatus === "invalid") {
+      diagnostics.push({
+        code: "INSTANCE_REGISTRY_INVALID",
+        message: `Runtime instance project registry is invalid: ${registryPath}`,
+        registryPath,
+      });
+    } else {
+      const requestedId = registry.requestedActiveProjectId;
+      const active = registry.projects.find((project) => project.id === requestedId);
+      if (!active) {
+        diagnostics.push({
+          code: "ACTIVE_PROJECT_NOT_REGISTERED",
+          message: `Active project ${requestedId} is not present in ${registryPath}`,
+          registryPath,
+          activeProjectId: requestedId,
+        });
+      } else if (!existsSync(active.root)) {
+        diagnostics.push({
+          code: "ACTIVE_PROJECT_ROOT_MISSING",
+          message: `Active project root no longer exists: ${active.root}`,
+          registryPath,
+          activeProjectId: requestedId,
+          activeProjectRoot: pathResolve(active.root),
+        });
+      } else {
+        return {
+          root: pathResolve(active.root),
+          source: "instance_registry_active",
+          activeProjectId: requestedId,
+          diagnostics,
+        };
+      }
+    }
+  } else if (registryPath) {
+    diagnostics.push({
+      code: "INSTANCE_REGISTRY_NOT_OWNED",
+      message: `Ignoring project registry that is not owned by the current Runtime instance: ${registryPath}`,
+      registryPath,
+    });
+  }
+
+  const fallbacks: Array<{
+    value?: string | null;
+    source: RuntimeStartupProjectRootSource;
+  }> = [
+    { value: options.instanceProjectRoot, source: "instance_project_root" },
+    { value: options.discoveredBootstrapRoot, source: "discovered_bootstrap_root" },
+    { value: options.openEditionBootstrapRoot, source: "open_edition_bootstrap_root" },
+    { value: options.globalBootstrapRoot, source: "global_bootstrap_root" },
+  ];
+  for (const fallback of fallbacks) {
+    const root = existingRoot(fallback.value);
+    if (root) {
+      return { root, source: fallback.source, activeProjectId: null, diagnostics };
+    }
+  }
+  return { root: null, source: "unresolved", activeProjectId: null, diagnostics };
 }
 
 /**
@@ -192,26 +346,93 @@ export interface RuntimeStartupProjectRootOptions {
 export function resolveRuntimeStartupProjectRoot(
   options: RuntimeStartupProjectRootOptions,
 ): string | null {
-  for (const candidate of [
-    options.explicitProjectRoot,
-    options.instanceProjectRoot,
-    options.discoveredBootstrapRoot,
-    options.openEditionBootstrapRoot,
-  ]) {
-    if (candidate?.trim() && existsSync(pathResolve(candidate))) {
-      return pathResolve(candidate);
-    }
+  return resolveRuntimeStartupProjectRootDetailed(options).root;
+}
+
+export interface RuntimeProjectBindingPlan {
+  activeProjectRoot: string;
+  workspaceRoot: string;
+  runtimeProjectRoot: string;
+  mcpProjectRoot: string;
+  mcpCwd: string;
+  fcopProjectDir: string;
+  reportWatcherRoot: string;
+  lifecycleWatcherRoot: string;
+  cursorDefaultCwd: string;
+}
+
+export function buildRuntimeProjectBindingPlan(
+  activeProjectRoot: string,
+): RuntimeProjectBindingPlan {
+  const root = pathResolve(activeProjectRoot);
+  return {
+    activeProjectRoot: root,
+    workspaceRoot: root,
+    runtimeProjectRoot: root,
+    mcpProjectRoot: root,
+    mcpCwd: root,
+    fcopProjectDir: root,
+    reportWatcherRoot: root,
+    lifecycleWatcherRoot: root,
+    cursorDefaultCwd: root,
+  };
+}
+
+export interface RuntimeProjectBindingConsistency {
+  ok: boolean;
+  code: "ACTIVE_PROJECT_BINDING_OK" | "ACTIVE_PROJECT_BINDING_MISMATCH";
+  expectedRoot: string;
+  mismatches: Array<{ binding: string; actual: string | null }>;
+}
+
+export function diagnoseRuntimeProjectBinding(input: {
+  expectedRoot: string;
+  instanceProjectRoot?: string | null;
+  writerLockProjectRoot?: string | null;
+  plan: RuntimeProjectBindingPlan;
+}): RuntimeProjectBindingConsistency {
+  const expectedRoot = pathResolve(input.expectedRoot);
+  const values: Array<[string, string | null | undefined]> = [
+    ["instance.project_root", input.instanceProjectRoot],
+    ["runtime.lock.project_root", input.writerLockProjectRoot],
+    ["Runtime workspaceRoot", input.plan.workspaceRoot],
+    ["Runtime projectRoot", input.plan.runtimeProjectRoot],
+    ["MCP FCOP_PROJECT_DIR", input.plan.mcpProjectRoot],
+    ["MCP cwd", input.plan.mcpCwd],
+    ["report-watcher root", input.plan.reportWatcherRoot],
+    ["lifecycle watcher root", input.plan.lifecycleWatcherRoot],
+    ["Cursor defaultCwd", input.plan.cursorDefaultCwd],
+  ];
+  const normalize = (value: string): string => {
+    const resolved = pathResolve(value);
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  };
+  const expectedIdentity = normalize(expectedRoot);
+  const mismatches = values
+    .filter(([, value]) => !value || normalize(value) !== expectedIdentity)
+    .map(([binding, value]) => ({
+      binding,
+      actual: value ? pathResolve(value) : null,
+    }));
+  return {
+    ok: mismatches.length === 0,
+    code: mismatches.length === 0
+      ? "ACTIVE_PROJECT_BINDING_OK"
+      : "ACTIVE_PROJECT_BINDING_MISMATCH",
+    expectedRoot,
+    mismatches,
+  };
+}
+
+function writeJsonAtomic(filePath: string, value: unknown): void {
+  mkdirSync(dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  try {
+    writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
+    renameSync(tempPath, filePath);
+  } finally {
+    rmSync(tempPath, { force: true });
   }
-  const bootstrapRoot =
-    options.globalBootstrapRoot ??
-    options.openEditionBootstrapRoot ??
-    options.discoveredBootstrapRoot;
-  return bootstrapRoot
-    ? resolveActiveProjectRoot(
-        bootstrapRoot,
-        options.registryPath ?? projectsRegistryPath(),
-      )
-    : null;
 }
 
 export function saveProjectRegistry(
@@ -228,6 +449,5 @@ export function saveProjectRegistry(
       root: pathResolve(p.root),
     })),
   };
-  mkdirSync(dirname(registryPath), { recursive: true });
-  writeFileSync(registryPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf-8");
+  writeJsonAtomic(registryPath, snapshot);
 }
