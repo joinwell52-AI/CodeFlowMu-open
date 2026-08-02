@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <code>V1.2.7-open</code> · <code>Windows 10/11</code> · <code>Node.js 22+</code> · <code>Python 3.10+</code> · <code>Cursor SDK</code>
+  <code>V1.2.8-open</code> · <code>Windows 10/11</code> · <code>Node.js 22+</code> · <code>Python 3.10+</code> · <code>Cursor SDK</code>
 </p>
 
 <p align="center">
@@ -45,7 +45,7 @@ Requirement → PM Plan → TASK → DEV / OPS / QA → REPORT → REVIEW / APPR
 
 ## Real Product Screens
 
-Every image below is captured from the real product, not a concept mockup. The current application version is `V1.2.7-open`; the English PC screenshots were captured from the running `V1.2.6-open` application. The phone screenshots are real PWA captures from V1.0.58, with the release-notes view from V1.0.59.
+Every image below is captured from the real product, not a concept mockup. The current application version is `V1.2.8-open`; the English PC screenshots were captured from the running `V1.2.6-open` application. The phone screenshots are real PWA captures from V1.0.58, with the release-notes view from V1.0.59.
 
 ### PC Panel: the complete team at a glance
 

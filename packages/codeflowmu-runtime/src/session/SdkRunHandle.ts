@@ -41,12 +41,6 @@ import {
   buildSdkFailurePayloadFields,
   type SessionRunWithSdkFailure,
 } from "./sdk-failure-classifier.ts";
-import {
-  evaluateRoleToolCall,
-  formatRoleToolBlockedPayload,
-  recordRoleToolBlocked,
-  ROLE_TOOL_BLOCKED,
-} from "../registry/RoleToolPolicy.ts";
 import { guardPmProductWorkerWriteTask } from "../pm/ProductDeliveryRuntimeGate.ts";
 import { guardPmDevDispatchWriteReport } from "../pm/guardPmDevDispatchWriteReport.ts";
 import {
@@ -201,8 +195,6 @@ export class SdkRunHandle implements RunHandle {
   private readonly _maxToolRounds: number | undefined;
   private readonly _tokenEstimate: CursorTokenEstimate | undefined;
   private _turnLimitExceeded = false;
-  private _roleToolBlocked = false;
-  private _roleToolBlockedMessage: string | undefined;
   private _operationBoundaryFailureCode: string | undefined;
   private _operationBoundaryMessage: string | undefined;
   private _operationFingerprint: string | undefined;
@@ -211,6 +203,7 @@ export class SdkRunHandle implements RunHandle {
   private _operationOutcome: Record<string, unknown> | undefined;
   private _operationRetryPolicy: "none" | "manual" | undefined;
   private _operationNextSafeAction: string | undefined;
+  private _operationReportRequired = false;
   private readonly _projectRoot: string | undefined;
   private readonly _taskId: string | undefined;
   private readonly _gateCheckedToolCallIds = new Set<string>();
@@ -389,7 +382,7 @@ export class SdkRunHandle implements RunHandle {
         },
       });
       const resolvedStatus =
-        this._turnLimitExceeded || this._roleToolBlocked
+        this._turnLimitExceeded
           ? "failed"
           : this._operationBoundaryFailureCode != null ||
               this._operationClassification === "already_absent"
@@ -407,14 +400,9 @@ export class SdkRunHandle implements RunHandle {
         ...(this._lastAction ? { last_action: this._lastAction } : {}),
         ...(this._operationBoundaryFailureCode
           ? { failure_code: this._operationBoundaryFailureCode }
-          : this._roleToolBlocked
-            ? { failure_code: ROLE_TOOL_BLOCKED }
           : this._turnLimitExceeded
             ? { failure_code: "TURN_LIMIT" as const }
             : this._transientFailureCode(result)),
-        ...(this._roleToolBlocked && this._roleToolBlockedMessage
-          ? { sdk_error: this._roleToolBlockedMessage }
-          : {}),
         ...(this._operationBoundaryMessage
           ? { sdk_error: this._operationBoundaryMessage }
           : {}),
@@ -437,7 +425,7 @@ export class SdkRunHandle implements RunHandle {
         ...(this._operationNextSafeAction
           ? { next_safe_action: this._operationNextSafeAction }
           : {}),
-        ...(this._operationBoundaryFailureCode
+        ...(this._operationReportRequired
           ? { report_required: true }
           : {}),
       };
@@ -678,6 +666,7 @@ export class SdkRunHandle implements RunHandle {
           this._operationClassification = "approval_required";
           this._operationRetryPolicy = "manual";
           this._operationNextSafeAction = "wait_for_operation_approval";
+          this._operationReportRequired = false;
           this._operationBoundaryMessage = JSON.stringify({
             code: OPERATION_APPROVAL_REQUIRED,
             approval_id: prepared.approval.approval_id,
@@ -706,6 +695,7 @@ export class SdkRunHandle implements RunHandle {
         this._operationNextSafeAction =
           operationBoundary.next_safe_action ??
           "write_report_or_replan_without_replaying_operation";
+        this._operationReportRequired = !governanceApprovalWait;
         this._operationBoundaryMessage = JSON.stringify({
           code: this._operationBoundaryFailureCode,
           reason: operationBoundary.reason,
@@ -731,7 +721,7 @@ export class SdkRunHandle implements RunHandle {
             retry_policy: this._operationRetryPolicy,
             operation_fingerprint: this._operationFingerprint,
             next_safe_action: this._operationNextSafeAction,
-            report_required: true,
+            report_required: this._operationReportRequired,
             tool: toolName,
             message: this._operationBoundaryMessage,
           },
@@ -768,45 +758,33 @@ export class SdkRunHandle implements RunHandle {
         });
       }
     }
-    const gate = asyncBlockedReason
-      ? { allow: false, severity: "block" as const, reason: asyncBlockedReason }
-      : evaluateRoleToolCall({
-      agentId: this.agent_id,
-      toolName,
-      args,
-      projectRoot,
-      channel: "cursor_sdk",
-    });
-    if (gate.allow) return false;
-
-    const blockedMessage = formatRoleToolBlockedPayload(gate);
-    await recordRoleToolBlocked({
-      projectRoot,
-      agentId: this.agent_id,
-      toolName,
-      reason: gate.reason,
-      channel: "cursor_sdk",
-      sessionId: this.session_id,
-      runId: this.run_id,
-    });
-
-    this._roleToolBlocked = true;
-    this._roleToolBlockedMessage = blockedMessage;
+    // NativeOperationApprovalGate is the single authoritative operation
+    // decision point. The remaining guards are business-workflow invariants
+    // (task dispatch/report closure), not a second role/tool policy gate.
+    if (!asyncBlockedReason) return false;
+    this._operationBoundaryFailureCode = OPERATION_BOUNDARY_DENIED;
+    this._operationBoundaryMessage = asyncBlockedReason;
+    this._operationClassification = "policy_denied";
+    this._operationReportRequired = true;
+    this._operationFingerprint = createHash("sha256")
+      .update(`${toolName}\n${asyncBlockedReason}`)
+      .digest("hex");
+    this._operationNextSafeAction = "replan_to_satisfy_the_workflow_invariant";
     this._dispatch({
-      event_id: `${this.run_id}-role-tool-blocked-${(this._eventSeq++).toString(36)}`,
+      event_id: `${this.run_id}-workflow-invariant-denied-${(this._eventSeq++).toString(36)}`,
       at: this._now().toISOString(),
       event_type: "sdk.status",
       session_id: this.session_id,
       run_id: this.run_id,
       agent_id: this.agent_id,
       payload: {
-        status: "failed",
-        failure_code: ROLE_TOOL_BLOCKED,
+        status: "finished",
+        failure_code: OPERATION_BOUNDARY_DENIED,
         tool: toolName,
-        message: blockedMessage,
+        message: asyncBlockedReason,
       },
     });
-    await this.cancel(`role_tool_blocked:${toolName}`);
+    await this.cancel(`workflow_invariant_denied:${toolName}`);
     return true;
   }
 

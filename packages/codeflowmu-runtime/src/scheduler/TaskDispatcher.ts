@@ -2170,6 +2170,7 @@ export class TaskDispatcher {
       try {
         const resolved = await resolveTaskFileForMutation(filepath);
         const raw = await fs.readFile(resolved, "utf-8");
+        const currentState = raw.match(/^state:\s*([^\r\n]+)$/m)?.[1]?.trim() || "dispatched";
         await fs.writeFile(
           resolved,
           _patchFmScalarFields(raw, {
@@ -2183,6 +2184,14 @@ export class TaskDispatcher {
             retry_policy: retryPolicy,
             guard_worked: true,
             runtime_crashed: false,
+            prior_state:
+              currentState === "waiting_approval" || currentState === "needs_replan"
+                ? "dispatched"
+                : currentState,
+            resume_strategy:
+              operationApprovalWait || governanceApprovalWait
+                ? "execute_approved_structured_operation_then_wake_role"
+                : "replan_without_replaying_operation",
             ...(operationFingerprint
               ? { operation_fingerprint: operationFingerprint }
               : {}),

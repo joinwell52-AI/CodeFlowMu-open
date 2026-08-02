@@ -45,7 +45,7 @@ export function extractStableFailureCode(
 ): string {
   const text = String(value ?? "").trim();
   const known = text.match(
-    /\b(CODEFLOWMU_POLICY_BLOCKED|AUTHORITY_DENIED|MODEL_NOT_FOUND|FUNCTION_RESPONSE_MISALIGNED|ERR_MODULE_NOT_FOUND|TASK_[A-Z_]+|LEDGER_[A-Z_]+|ECONNRESET|ETIMEDOUT|TURN_LIMIT)\b/i,
+    /\b(OPERATION_APPROVAL_REQUIRED|APPROVAL_(?:REQUIRED|PENDING|REJECTED|EXPIRED|REVOKED|SCOPE_MISMATCH|ALREADY_CONSUMED|STALE|ADAPTER_REQUIRED)|OPERATION_BOUNDARY_DENIED|ABSOLUTELY_PROHIBITED|CODEFLOWMU_POLICY_BLOCKED|AUTHORITY_DENIED|MODEL_NOT_FOUND|FUNCTION_RESPONSE_MISALIGNED|ERR_MODULE_NOT_FOUND|TASK_[A-Z_]+|LEDGER_[A-Z_]+|ECONNRESET|ETIMEDOUT|TURN_LIMIT)\b/i,
   );
   if (known) return known[1]!.toUpperCase();
   const token = text.match(/\b[A-Z][A-Z0-9_]{3,}\b/);
@@ -58,6 +58,26 @@ export function classifyRootFault(
 ): Pick<RootFaultFields, "category" | "severity" | "retry_policy"> {
   const code = failureCode.toUpperCase();
   const text = `${code} ${message}`.toLowerCase();
+  if (
+    code === "OPERATION_APPROVAL_REQUIRED" ||
+    code === "APPROVAL_REQUIRED" ||
+    code === "APPROVAL_PENDING"
+  ) {
+    return { category: "governance", severity: "P3", retry_policy: "manual" };
+  }
+  if (
+    code === "APPROVAL_REJECTED" ||
+    code === "APPROVAL_EXPIRED" ||
+    code === "APPROVAL_REVOKED" ||
+    code === "APPROVAL_SCOPE_MISMATCH" ||
+    code === "APPROVAL_ALREADY_CONSUMED" ||
+    code === "APPROVAL_STALE" ||
+    code === "APPROVAL_ADAPTER_REQUIRED" ||
+    code === "OPERATION_BOUNDARY_DENIED" ||
+    code === "ABSOLUTELY_PROHIBITED"
+  ) {
+    return { category: "governance", severity: "P3", retry_policy: "none" };
+  }
   if (
     code === "CODEFLOWMU_POLICY_BLOCKED" ||
     code === "AUTHORITY_DENIED" ||

@@ -42,13 +42,13 @@ test("native boundary denies unmigrated production, security, external and destr
   }
 });
 
-test("native boundary denies live governance source edits but allows approval tests", async () => {
+test("native boundary requires approval for live protected source edits but allows approval tests", async () => {
   const live = await evaluateNativeOperationBoundary({
     ...base,
     toolName: "edit",
     args: { path: "packages/codeflowmu-runtime/src/approval/OperationApprovalService.ts" },
   });
-  assert.equal(live.decision, "DENY");
+  assert.equal(live.decision, "REQUIRE_APPROVAL");
 
   const testFile = await evaluateNativeOperationBoundary({
     ...base,
@@ -209,7 +209,7 @@ test("Windows PowerShell 5 && chains are stopped before native execution", async
   }
 });
 
-test("an exact effective governance authorization is consumed before a high-risk tool call", async () => {
+test("a capability lease cannot bypass remote-push preflight or operation approval", async () => {
   const projectRoot = mkdtempSync(join(tmpdir(), "cfm-native-governance-"));
   try {
     mkdirSync(join(projectRoot, "fcop", "_lifecycle", "active"), {
@@ -265,10 +265,12 @@ test("an exact effective governance authorization is consumed before a high-risk
     });
     const authorization = {
       governance_id: approved.governance.governance_id,
+      revision: approved.governance.revision,
       approval_id: approved.governance.approval_id,
       decision_id: approved.decision.decision_id,
       scope_digest: approved.governance.scope_digest,
       content_hash: approved.governance.content_hash,
+      lease_id: approved.decision.lease_id,
       idempotency_key: "native-tool-consume-1",
     };
     const call = {
@@ -283,13 +285,7 @@ test("an exact effective governance authorization is consumed before a high-risk
       },
     };
     const allowed = await evaluateNativeOperationBoundary(call);
-    assert.equal(allowed.decision, "ALLOW");
-    if (allowed.decision === "ALLOW") {
-      assert.equal(
-        allowed.outcome?.classification,
-        "governance_authorized",
-      );
-    }
+    assert.equal(allowed.decision, "DENY");
     const replay = await evaluateNativeOperationBoundary({
       ...call,
       args: {
@@ -301,9 +297,7 @@ test("an exact effective governance authorization is consumed before a high-risk
       },
     });
     assert.equal(replay.decision, "DENY");
-    if (replay.decision === "DENY") {
-      assert.equal(replay.code, "APPROVAL_ALREADY_CONSUMED");
-    }
+    assert.equal(service.get(approved.governance.governance_id, 1).status, "effective");
   } finally {
     rmSync(projectRoot, { recursive: true, force: true });
   }

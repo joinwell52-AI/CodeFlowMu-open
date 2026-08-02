@@ -272,4 +272,231 @@ describe("TaskDispatcher dispatch-retry (P0)", () => {
       }
     });
   });
+
+  it("policy rejection enters manual governance wait and never auto-redispatches", async () => {
+    await withTempScheduler(async ({ inboxDir, stateDir }) => {
+      const pipeline = await buildPipeline(inboxDir, stateDir);
+      try {
+        await pipeline.registry.register(makeAgentSpec());
+        const taskId = "TASK-20260509-013-PM-to-DEV";
+        const filename = `${taskId}.md`;
+        const filepath = join(inboxDir, filename);
+        await writeFile(
+          filepath,
+          patchFmState(TASK_BODY(taskId, "DEV"), "dispatched"),
+          "utf-8",
+        );
+
+        const restore = (
+          pipeline.dispatcher as unknown as {
+            _maybeRestoreInboxAfterFailedSession: (
+              event: {
+                event_id: string;
+                at: string;
+                event_type: "runtime.session_ended";
+                session_id: string;
+                agent_id: string;
+                payload: Record<string, unknown>;
+              },
+              filepath: string,
+              filename: string,
+            ) => Promise<void>;
+          }
+        )._maybeRestoreInboxAfterFailedSession.bind(pipeline.dispatcher);
+
+        await restore(
+          {
+            event_id: "evt-policy-1",
+            at: new Date().toISOString(),
+            event_type: "runtime.session_ended",
+            session_id: "session-policy-1",
+            agent_id: AGENT_ID,
+            payload: {
+              status: "failed",
+              task_id: taskId,
+              failure_code: "CODEFLOWMU_POLICY_BLOCKED",
+              failure_category: "policy_blocked",
+              report_written: false,
+            },
+          },
+          filepath,
+          filename,
+        );
+
+        const retryKey = `${AGENT_ID}:TASK-20260509-013`;
+        const rec = pipeline.dispatcher.getDispatchRetryRecord(retryKey);
+        assert.equal(rec?.decisionRequired, true);
+        assert.equal(rec?.retryable, false);
+        assert.equal(rec?.rawCode, "CODEFLOWMU_POLICY_BLOCKED");
+
+        const text = await readFile(filepath, "utf-8");
+        assert.match(text, /^state: waiting_admin_decision$/m);
+        assert.match(text, /^dispatch_state: waiting_admin$/m);
+        assert.match(text, /^retry_policy: manual$/m);
+        assert.match(text, /^guard_worked: true$/m);
+        assert.match(text, /^runtime_crashed: false$/m);
+        assert.doesNotMatch(text, /^state: inbox$/m);
+
+        let startCalls = 0;
+        (
+          pipeline.sessionManager as unknown as {
+            startSession: SessionManager["startSession"];
+          }
+        ).startSession = async () => {
+          startCalls += 1;
+          throw new Error("must not start");
+        };
+        const dispatch = (
+          pipeline.dispatcher as unknown as {
+            _dispatch: (
+              fp: string,
+              fn: string,
+              recipient: string,
+            ) => Promise<DispatchOutcome>;
+          }
+        )._dispatch.bind(pipeline.dispatcher);
+        await writeFile(filepath, patchFmState(text, "inbox"), "utf-8");
+        const outcome = await dispatch(filepath, filename, "DEV");
+        assert.equal(outcome.kind, "waiting_admin_decision");
+        assert.equal(startCalls, 0);
+      } finally {
+        await pipeline.shutdown();
+      }
+    });
+  });
+
+  it("operation boundary denial enters needs_replan with retry_policy none", async () => {
+    await withTempScheduler(async ({ inboxDir, stateDir }) => {
+      const pipeline = await buildPipeline(inboxDir, stateDir);
+      try {
+        await pipeline.registry.register(makeAgentSpec());
+        const taskId = "TASK-20260731-002-PM-to-QA";
+        const filename = `${taskId}.md`;
+        const filepath = join(inboxDir, filename);
+        await writeFile(
+          filepath,
+          patchFmState(TASK_BODY(taskId, "DEV"), "dispatched"),
+          "utf-8",
+        );
+
+        const restore = (
+          pipeline.dispatcher as unknown as {
+            _maybeRestoreInboxAfterFailedSession: (
+              event: {
+                event_id: string;
+                at: string;
+                event_type: "runtime.session_ended";
+                session_id: string;
+                agent_id: string;
+                payload: Record<string, unknown>;
+              },
+              filepath: string,
+              filename: string,
+            ) => Promise<void>;
+          }
+        )._maybeRestoreInboxAfterFailedSession.bind(pipeline.dispatcher);
+
+        await restore(
+          {
+            event_id: "evt-operation-denied-1",
+            at: new Date().toISOString(),
+            event_type: "runtime.session_ended",
+            session_id: "session-operation-denied-1",
+            agent_id: AGENT_ID,
+            payload: {
+              status: "completed",
+              task_id: taskId,
+              failure_code: "OPERATION_BOUNDARY_DENIED",
+              failure_category: "policy_denied",
+              retry_policy: "none",
+              operation_fingerprint: "cleanup-deadbeef",
+              next_safe_action: "write_report_or_replan_without_replaying_operation",
+              report_required: true,
+              report_written: false,
+            },
+          },
+          filepath,
+          filename,
+        );
+
+        const text = await readFile(filepath, "utf-8");
+        assert.match(text, /^state: needs_replan$/m);
+        assert.match(text, /^dispatch_state: blocked$/m);
+        assert.match(text, /^failure_category: policy_denied$/m);
+        assert.match(text, /^retry_policy: none$/m);
+        assert.match(text, /^operation_fingerprint: cleanup-deadbeef$/m);
+        assert.match(text, /^report_required: true$/m);
+        assert.doesNotMatch(text, /^state: inbox$/m);
+      } finally {
+        await pipeline.shutdown();
+      }
+    });
+  });
+
+  it("operation approval pause enters waiting_approval without requiring a failure report", async () => {
+    await withTempScheduler(async ({ inboxDir, stateDir }) => {
+      const pipeline = await buildPipeline(inboxDir, stateDir);
+      try {
+        await pipeline.registry.register(makeAgentSpec());
+        const taskId = "TASK-20260731-003-PM-to-DEV";
+        const filename = `${taskId}.md`;
+        const filepath = join(inboxDir, filename);
+        await writeFile(
+          filepath,
+          patchFmState(TASK_BODY(taskId, "DEV"), "dispatched"),
+          "utf-8",
+        );
+        const restore = (
+          pipeline.dispatcher as unknown as {
+            _maybeRestoreInboxAfterFailedSession: (
+              event: {
+                event_id: string;
+                at: string;
+                event_type: "runtime.session_ended";
+                session_id: string;
+                agent_id: string;
+                payload: Record<string, unknown>;
+              },
+              filepath: string,
+              filename: string,
+            ) => Promise<void>;
+          }
+        )._maybeRestoreInboxAfterFailedSession.bind(pipeline.dispatcher);
+
+        await restore(
+          {
+            event_id: "evt-operation-approval-1",
+            at: new Date().toISOString(),
+            event_type: "runtime.session_ended",
+            session_id: "session-operation-approval-1",
+            agent_id: AGENT_ID,
+            payload: {
+              status: "completed",
+              task_id: taskId,
+              failure_code: "OPERATION_APPROVAL_REQUIRED",
+              failure_category: "approval_required",
+              error: JSON.stringify({
+                code: "OPERATION_APPROVAL_REQUIRED",
+                approval_id: "APPROVAL-EXACT-1",
+              }),
+              report_required: false,
+              report_written: false,
+            },
+          },
+          filepath,
+          filename,
+        );
+
+        const text = await readFile(filepath, "utf-8");
+        assert.match(text, /^state: waiting_approval$/m);
+        assert.match(text, /^dispatch_state: waiting_admin$/m);
+        assert.match(text, /^failure_category: approval_required$/m);
+        assert.match(text, /^approval_id: APPROVAL-EXACT-1$/m);
+        assert.doesNotMatch(text, /^report_required: true$/m);
+        assert.doesNotMatch(text, /^state: inbox$/m);
+      } finally {
+        await pipeline.shutdown();
+      }
+    });
+  });
 });

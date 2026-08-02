@@ -21,6 +21,7 @@ import {
 
 import { fcopLogsRuntimeDir } from "../logs/actionLogPaths.ts";
 import { recordSkillInvocation } from "../pm/SkillInvocationJournal.ts";
+import { evaluateUnifiedOperationPolicy } from "../approval/UnifiedOperationPolicy.ts";
 import { resolveRoleFromAgentId, type ToolGuardRole } from "./ToolAuthorityGuard.ts";
 
 export type ToolIntent = "read" | "write" | "shell" | "edit" | "mcp" | "unknown";
@@ -801,99 +802,55 @@ function evaluatePmToolCall(input: EvaluateRoleToolCallInput): RoleToolDecision 
   return { allow: true };
 }
 
-function pmImplementationOverrideAllows(input: EvaluateRoleToolCallInput): boolean {
-  const args = input.args ?? {};
-  if (args["pm_implementation_override"] !== true) return false;
-  if (String(args["approved_by"] ?? "").trim().toUpperCase() !== "ADMIN") return false;
-  if (!String(args["reason"] ?? "").trim() || !String(args["task_id"] ?? "").trim()) {
-    return false;
-  }
-  const expiresAt = Date.parse(String(args["expires_at"] ?? ""));
-  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false;
-  const scopeRaw = args["scope"];
-  const scope = (Array.isArray(scopeRaw) ? scopeRaw : [scopeRaw])
-    .filter((value): value is string => typeof value === "string")
-    .map((value) => normalizeRelPath(input.projectRoot, value).toLowerCase());
-  const target = extractPathFromArgs(args);
-  if (!target || scope.length === 0) return false;
-  const rel = normalizeRelPath(input.projectRoot, target).toLowerCase();
-  return scope.some((allowed) => rel === allowed || rel.startsWith(`${allowed.replace(/\/$/, "")}/`));
-}
-
+/**
+ * Compatibility projection only. Runtime hosts must call
+ * evaluateNativeOperationBoundary(), which is the sole final decision gate.
+ */
 export function evaluateRoleToolCall(
   input: EvaluateRoleToolCallInput,
 ): RoleToolDecision {
-  const args = input.args ?? {};
-  const toolNorm = normalizeToolName(input.toolName);
-  const intent = classifyToolIntent(input.toolName, args);
-  const path = extractPathFromArgs(args);
-
-  if (intent === "shell" || SHELL_TOOL_NAMES.has(toolNorm)) {
-    const cmd = extractShellCommand(args);
-    if (shellRequiresMissingInteractiveArgument(cmd)) {
-      return {
-        allow: false,
-        severity: "block",
-        reason:
-          "Interactive web command is missing an explicit URI; provide -Uri/--url so the shared Runtime terminal cannot stop for input",
-      };
-    }
-  }
-
-  if (shouldEnforceProjectWriteBoundary(input)) {
-    if (
-      (intent === "edit" || intent === "write" || EDIT_TOOL_NAMES.has(toolNorm)) &&
-      (!input.projectRoot || !path || !isInsideActiveProject(input.projectRoot, path))
-    ) {
-      return {
-        allow: false,
-        severity: "block",
-        reason:
-          "Open edition write boundary: native writes are allowed only inside the Panel active project root",
-      };
-    }
-    if (intent === "shell" || SHELL_TOOL_NAMES.has(toolNorm)) {
-      const cmd = extractShellCommand(args);
-      if (shellLooksWriteOnly(cmd) && commandEscapesActiveProject(cmd, input)) {
-        return {
-          allow: false,
-          severity: "block",
-          reason:
-            "Open edition write boundary: shell writes cannot escape the Panel active project root",
-        };
-      }
-    }
-  }
-  if (
-    path &&
-    (intent === "edit" || intent === "write" || EDIT_TOOL_NAMES.has(toolNorm)) &&
-    pathTouchesProtectedInstall(path, input)
-  ) {
+  if (!input.projectRoot) {
     return {
       allow: false,
       severity: "block",
-      reason: "Open edition install directory is read-only; write only inside the active project root",
+      reason: "Active project root is required for effect-based policy",
     };
   }
-  if (intent === "shell" || SHELL_TOOL_NAMES.has(toolNorm)) {
-    const cmd = extractShellCommand(args);
-    if (shellLooksWriteOnly(cmd) && commandTouchesProtectedInstall(cmd, input)) {
-      return {
-        allow: false,
-        severity: "block",
-        reason: "Open edition install directory is read-only; shell writes to tool files are not allowed",
-      };
-    }
-  }
-
-  const role: ToolGuardRole = resolveRoleFromAgentId(input.agentId);
-  if (role !== "PM") {
+  const toolNorm = normalizeToolName(input.toolName);
+  const command = extractShellCommand(input.args);
+  if (
+    PM_FCOP_MCP_ALLOW.has(toolNorm) ||
+    isPmGovernanceSkill(input.toolName) ||
+    shellLooksAllowedFcopOneShot(command)
+  ) {
     return { allow: true };
   }
-  if (pmImplementationOverrideAllows(input)) {
-    return { allow: true };
+  const decision = evaluateUnifiedOperationPolicy({
+    toolName: input.toolName,
+    args: input.args ?? {},
+    projectRoot: input.projectRoot,
+    projectId:
+      input.projectRoot.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ||
+      "project",
+    agentId: input.agentId,
+    taskId:
+      typeof input.args?.["task_id"] === "string"
+        ? String(input.args["task_id"])
+        : undefined,
+  });
+  if (decision.decision === "ALLOW") return { allow: true };
+  if (decision.decision === "REQUIRE_APPROVAL") {
+    return {
+      allow: false,
+      severity: "warn",
+      reason: `OPERATION_APPROVAL_REQUIRED:${decision.executor}`,
+    };
   }
-  return evaluatePmToolCall(input);
+  return {
+    allow: false,
+    severity: "block",
+    reason: `${decision.code}:${decision.reason}`,
+  };
 }
 
 export function formatRoleToolBlockedPayload(

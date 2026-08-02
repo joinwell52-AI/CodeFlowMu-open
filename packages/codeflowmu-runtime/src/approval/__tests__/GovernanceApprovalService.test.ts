@@ -125,10 +125,12 @@ function approve(
   });
   const reference: GovernanceAuthorizationReference = {
     governance_id: result.governance.governance_id,
+    revision: result.governance.revision,
     approval_id: result.governance.approval_id!,
     decision_id: result.decision.decision_id,
     scope_digest: result.governance.scope_digest,
     content_hash: result.governance.content_hash,
+    lease_id: result.decision.lease_id!,
     idempotency_key: `consume-${suffix}`,
   };
   return { ...result, reference };
@@ -408,8 +410,10 @@ test("rejection and revocation remain explicit terminal authorization states", (
         approvalService.validateAuthorization(
           {
             governance_id: rejected.governance.governance_id,
+            revision: rejected.governance.revision,
             approval_id: rejected.governance.approval_id!,
             decision_id: rejected.decision.decision_id,
+            lease_id: "LEASE-NOT-ISSUED-FOR-REJECTION",
             scope_digest: rejected.governance.scope_digest,
             content_hash: rejected.governance.content_hash,
             idempotency_key: "consume-rejected",

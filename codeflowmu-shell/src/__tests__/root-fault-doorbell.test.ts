@@ -6,9 +6,37 @@ import { queryLogCenter } from "../log-center.ts";
 import {
   buildRootFaultFields,
   buildRootFaultId,
+  classifyRootFault,
+  extractStableFailureCode,
 } from "../root-fault.ts";
 
 describe("root fault identity and doorbell dedupe", () => {
+  it("preserves approval lifecycle codes instead of collapsing them into a generic policy block", () => {
+    for (const code of [
+      "OPERATION_APPROVAL_REQUIRED",
+      "APPROVAL_REJECTED",
+      "APPROVAL_EXPIRED",
+      "APPROVAL_REVOKED",
+      "APPROVAL_SCOPE_MISMATCH",
+      "APPROVAL_ALREADY_CONSUMED",
+      "APPROVAL_STALE",
+      "APPROVAL_ADAPTER_REQUIRED",
+      "ABSOLUTELY_PROHIBITED",
+    ]) {
+      assert.equal(extractStableFailureCode(`failure: ${code}`), code);
+    }
+    assert.deepEqual(classifyRootFault("OPERATION_APPROVAL_REQUIRED"), {
+      category: "governance",
+      severity: "P3",
+      retry_policy: "manual",
+    });
+    assert.deepEqual(classifyRootFault("APPROVAL_STALE"), {
+      category: "governance",
+      severity: "P3",
+      retry_policy: "none",
+    });
+  });
+
   it("collapses root and derived events in live and hydration paths", () => {
     const buffer = new DoorbellBuffer();
     const rootId = buildRootFaultId({

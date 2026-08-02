@@ -12,7 +12,6 @@ import { promisify } from "node:util";
 
 import type { Agent } from "@codeflowmu/protocol";
 
-import { ROLE_TOOL_BLOCKED } from "../../registry/RoleToolPolicy.ts";
 import {
   OperationApprovalService,
   OPERATION_APPROVAL_REQUIRED,
@@ -137,7 +136,7 @@ test("SdkRunHandle: 6th unique call_id triggers TURN_LIMIT", async () => {
   assert.equal(settled.failure_code, "TURN_LIMIT");
 });
 
-test("SdkRunHandle: PM edit on product path triggers CODEFLOWMU_POLICY_BLOCKED and cancel", async () => {
+test("SdkRunHandle: PM edit on protected product code enters operation approval without failing", async () => {
   const projectRoot = await mkdtemp(join(tmpdir(), "cfmu-sdk-gate-"));
   let cancelReason: string | undefined;
   const messages = [
@@ -173,13 +172,10 @@ test("SdkRunHandle: PM edit on product path triggers CODEFLOWMU_POLICY_BLOCKED a
   });
 
   const settled = await handle.whenSettled();
-  assert.equal(settled.status, "failed");
-  assert.equal(settled.failure_code, ROLE_TOOL_BLOCKED);
-  assert.match(
-    (settled as typeof settled & { sdk_error?: string }).sdk_error ?? "",
-    /CODEFLOWMU_POLICY_BLOCKED/,
-  );
-  assert.match(cancelReason ?? "", /role_tool_blocked:edit/);
+  assert.equal(settled.status, "finished");
+  assert.equal(settled.failure_code, OPERATION_APPROVAL_REQUIRED);
+  assert.match(cancelReason ?? "", /operation_boundary:edit/);
+  assert.equal(new OperationApprovalService({ projectRoot }).list().length, 1);
 });
 
 test("SdkRunHandle: Open DEV edit of install code is cancelled before the run continues", async () => {
@@ -210,9 +206,9 @@ test("SdkRunHandle: Open DEV edit of install code is cancelled before the run co
       projectRoot: "D:/CodeFlowMu-open/workspace/newproject",
     });
     const settled = await handle.whenSettled();
-    assert.equal(settled.status, "failed");
-    assert.equal(settled.failure_code, ROLE_TOOL_BLOCKED);
-    assert.match(cancelReason ?? "", /role_tool_blocked:edit/);
+    assert.equal(settled.status, "finished");
+    assert.equal(settled.failure_code, "ABSOLUTELY_PROHIBITED");
+    assert.match(cancelReason ?? "", /operation_boundary:edit/);
   } finally {
     if (previous === undefined) delete process.env.CODEFLOW_OPEN_EDITION;
     else process.env.CODEFLOW_OPEN_EDITION = previous;
@@ -292,7 +288,7 @@ test("SdkRunHandle: exact git push creates a pre-action approval and leaves remo
   assert.equal(await git(repo, ["ls-remote", "origin", "refs/heads/main"]), "");
 });
 
-test("SdkRunHandle: force git push requests formal governance approval without creating an unusable operation approval", async () => {
+test("SdkRunHandle: force git push is absolutely prohibited and creates no unusable approval", async () => {
   const { repo } = await createPushFixture();
   const run = {
     id: "run-native-force-push-gate",
@@ -319,15 +315,15 @@ test("SdkRunHandle: force git push requests formal governance approval without c
   });
   const settled = await handle.whenSettled();
   assert.equal(settled.status, "finished");
-  assert.equal(settled.failure_code, "APPROVAL_REQUIRED");
+  assert.equal(settled.failure_code, "ABSOLUTELY_PROHIBITED");
   assert.equal(
     (settled as typeof settled & { operation_classification?: string })
       .operation_classification,
-    "approval_required",
+    "absolutely_prohibited",
   );
   assert.equal(
     (settled as typeof settled & { retry_policy?: string }).retry_policy,
-    "manual",
+    "none",
   );
   assert.equal(new OperationApprovalService({ projectRoot: repo }).list().length, 0);
 });

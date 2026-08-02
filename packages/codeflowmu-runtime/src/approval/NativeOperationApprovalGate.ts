@@ -15,6 +15,7 @@ import {
   buildFilesystemCleanupApprovalInput,
 } from "./FilesystemCleanupApproval.ts";
 import { validateWindowsShellCommand } from "./WindowsShellDialect.ts";
+import { evaluateUnifiedOperationPolicy } from "./UnifiedOperationPolicy.ts";
 
 export const OPERATION_APPROVAL_REQUIRED = "OPERATION_APPROVAL_REQUIRED";
 export const OPERATION_BOUNDARY_DENIED = "OPERATION_BOUNDARY_DENIED";
@@ -53,13 +54,17 @@ function governanceAuthorizationReference(
   const value = raw as Record<string, unknown>;
   const reference = {
     governance_id: String(value["governance_id"] ?? "").trim(),
+    revision: Number(value["revision"] ?? 0),
     approval_id: String(value["approval_id"] ?? "").trim(),
     decision_id: String(value["decision_id"] ?? "").trim(),
     scope_digest: String(value["scope_digest"] ?? "").trim(),
     content_hash: String(value["content_hash"] ?? "").trim(),
+    lease_id: String(value["lease_id"] ?? "").trim(),
     idempotency_key: String(value["idempotency_key"] ?? "").trim(),
   };
-  return Object.values(reference).every(Boolean) ? reference : null;
+  return Object.values(reference).every(Boolean) && Number.isSafeInteger(reference.revision)
+    ? reference
+    : null;
 }
 
 function evaluateGovernanceAuthorization(input: {
@@ -154,17 +159,6 @@ function extractTargetPath(args: Record<string, unknown>): string {
     }
   }
   return "";
-}
-
-function isGovernanceBoundarySource(target: string): boolean {
-  if (!target || /(?:^|\/)__tests__(?:\/|$)|\.test\.[cm]?[jt]sx?$/.test(target)) return false;
-  return [
-    "/src/approval/",
-    "/registry/roletoolpolicy.ts",
-    "/session/sdkrunhandle.ts",
-    "/native-operation-confirm.ts",
-    "/git-operation-approval.ts",
-  ].some((marker) => target.includes(marker));
 }
 
 function normalizedToolName(toolName: string): string {
@@ -295,13 +289,6 @@ export async function evaluateNativeOperationBoundary(input: {
     }
   }
 
-  if (isGovernanceBoundarySource(target) && !readOnly && !runtimeProtocolWrite) {
-    return {
-      decision: "DENY",
-      code: "ABSOLUTELY_PROHIBITED",
-      reason: "governance_boundary_adapter_not_registered",
-    };
-  }
   if (isGovernanceStorageTarget(target)) {
     if (readOnly || runtimeProtocolWrite) return { decision: "ALLOW" };
     if (directMutation || command) {
@@ -321,6 +308,7 @@ export async function evaluateNativeOperationBoundary(input: {
       reason: "governance_storage_boundary_violation",
     };
   }
+  if (runtimeProtocolWrite) return { decision: "ALLOW" };
   const tool = normalizedToolName(input.toolName);
   if (
     /^(?:filesystem_cleanup|cleanup|delete|delete_file|remove|remove_file)$/.test(
@@ -369,16 +357,6 @@ export async function evaluateNativeOperationBoundary(input: {
         },
       };
     }
-    const governedCleanup = evaluateGovernanceAuthorization({
-      args: input.args,
-      projectRoot: input.projectRoot,
-      projectId: input.projectId,
-      taskId: input.taskId,
-      action: "filesystem.cleanup",
-      targets: assessment.resolved_targets,
-      toolName: input.toolName,
-    });
-    if (governedCleanup) return governedCleanup;
     try {
       return {
         decision: "REQUIRE_APPROVAL",
@@ -421,25 +399,37 @@ export async function evaluateNativeOperationBoundary(input: {
         reason: unsupportedReason,
       };
     }
-    const governedShell = evaluateGovernanceAuthorization({
-      args: input.args,
-      projectRoot: input.projectRoot,
-      projectId: input.projectId,
-      taskId: input.taskId,
-      action: "shell.execute",
-      targets: [command],
-      toolName: input.toolName,
-    });
-    if (governedShell) return governedShell;
     return {
       decision: "DENY",
-      code: "APPROVAL_REQUIRED",
+      code: "APPROVAL_ADAPTER_REQUIRED",
       reason: unsupportedReason,
-      next_safe_action: "ask_PM_to_request_formal_governance_approval",
+      next_safe_action: "use_a_registered_structured_executor_or_add_a_reviewed_adapter",
     };
   }
   if (!command || !/\bgit(?:\.exe)?\s+push\b/i.test(command)) {
-    return { decision: "ALLOW" };
+    if (directMutation && target) {
+      const governedLocalWrite = evaluateGovernanceAuthorization({
+        args: input.args,
+        projectRoot: input.projectRoot,
+        projectId: input.projectId,
+        taskId: input.taskId,
+        action: "workspace.fs.write",
+        targets: [target],
+        toolName: input.toolName,
+      });
+      if (governedLocalWrite) return governedLocalWrite;
+    }
+    const unified = evaluateUnifiedOperationPolicy(input);
+    if (unified.decision === "ALLOW") return { decision: "ALLOW" };
+    if (unified.decision === "REQUIRE_APPROVAL") {
+      return { decision: "REQUIRE_APPROVAL", input: unified.input };
+    }
+    return {
+      decision: "DENY",
+      code: unified.code,
+      reason: unified.reason,
+      next_safe_action: unified.next_safe_action,
+    };
   }
 
   if (containsShellComposition(command)) {
@@ -448,9 +438,9 @@ export async function evaluateNativeOperationBoundary(input: {
   if (/\s(?:--force(?:-with-lease)?|-f)(?:\s|$)/i.test(command)) {
     return {
       decision: "DENY",
-      code: "APPROVAL_REQUIRED",
+      code: "ABSOLUTELY_PROHIBITED",
       reason: "git_push_force_update_not_supported",
-      next_safe_action: "ask_PM_to_request_formal_governance_approval",
+      next_safe_action: "use_a_non_force_push_after_reconciling_the_remote_branch",
     };
   }
 
@@ -474,16 +464,6 @@ export async function evaluateNativeOperationBoundary(input: {
     ...(input.sessionId ? { session_id: input.sessionId } : {}),
     ...(input.taskId ? { task_id: input.taskId } : {}),
   };
-  const governedPush = evaluateGovernanceAuthorization({
-    args: input.args,
-    projectRoot: input.projectRoot,
-    projectId: input.projectId,
-    taskId: input.taskId,
-    action: "git.remote.push",
-    targets: [`origin/${match[1]!}`],
-    toolName: input.toolName,
-  });
-  if (governedPush) return governedPush;
   try {
     return {
       decision: "REQUIRE_APPROVAL",

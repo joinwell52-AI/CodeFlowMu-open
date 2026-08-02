@@ -22,6 +22,11 @@ export const PM_RUNTIME_CONTROL_TOOL_NAMES = [
   "pm.request_authorization",
   "pm.reference_effective_governance",
   "pm.capture_evidence",
+  "workspace.scratch.create",
+  "workspace.scratch.write",
+  "workspace.scratch.read",
+  "workspace.scratch.list",
+  "workspace.scratch.cleanup",
   "software.inventory",
   "software.search",
   "software.request_install",
@@ -397,20 +402,24 @@ export const PM_RUNTIME_CONTROL_TOOL_DEFINITIONS: readonly PmRuntimeControlToolD
       type: "object",
       properties: {
         governance_id: stringProp("治理记录 id"),
+        revision: { type: "integer", minimum: 1 },
         approval_id: stringProp("审批 id"),
         decision_id: stringProp("不可变 ADMIN 决定 id"),
         scope_digest: stringProp("获批范围摘要"),
         content_hash: stringProp("获批内容哈希"),
+        lease_id: stringProp("正式 ADMIN 决定签发的 capability lease id"),
         idempotency_key: stringProp("后续消费幂等键"),
         project_id: stringProp("当前项目 id"),
         target_task_id: stringProp("当前 TASK id"),
       },
       required: [
         "governance_id",
+        "revision",
         "approval_id",
         "decision_id",
         "scope_digest",
         "content_hash",
+        "lease_id",
         "idempotency_key",
         "project_id",
         "target_task_id",
@@ -434,6 +443,56 @@ export const PM_RUNTIME_CONTROL_TOOL_DEFINITIONS: readonly PmRuntimeControlToolD
         metadata: { type: "object" },
       },
       required: ["task_id", "evidence_type", "summary", "source"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "workspace.scratch.create",
+    description: "Create a task-bound local scratch directory. This does not modify product or governance fact sources.",
+    inputSchema: {
+      type: "object",
+      properties: { task_id: stringProp("Current TASK id"), path: stringProp("Relative scratch directory") },
+      required: ["task_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "workspace.scratch.write",
+    description: "Atomically write a UTF-8 file inside the current task scratch area.",
+    inputSchema: {
+      type: "object",
+      properties: { task_id: stringProp("Current TASK id"), path: stringProp("Relative scratch file"), content: stringProp("UTF-8 content") },
+      required: ["task_id", "path", "content"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "workspace.scratch.read",
+    description: "Read a UTF-8 file from the current task scratch area.",
+    inputSchema: {
+      type: "object",
+      properties: { task_id: stringProp("Current TASK id"), path: stringProp("Relative scratch file") },
+      required: ["task_id", "path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "workspace.scratch.list",
+    description: "List bounded files and directories in the current task scratch area.",
+    inputSchema: {
+      type: "object",
+      properties: { task_id: stringProp("Current TASK id"), path: stringProp("Optional relative scratch directory") },
+      required: ["task_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "workspace.scratch.cleanup",
+    description: "Remove only the current task scratch area.",
+    inputSchema: {
+      type: "object",
+      properties: { task_id: stringProp("Current TASK id") },
+      required: ["task_id"],
       additionalProperties: false,
     },
   },
@@ -748,10 +807,12 @@ export async function invokePmRuntimeControlTool(input: {
       body = {
         reference: {
           governance_id: requiredString(input.args, "governance_id"),
+          revision: Number(input.args["revision"] ?? 0),
           approval_id: requiredString(input.args, "approval_id"),
           decision_id: requiredString(input.args, "decision_id"),
           scope_digest: requiredString(input.args, "scope_digest"),
           content_hash: requiredString(input.args, "content_hash"),
+          lease_id: requiredString(input.args, "lease_id"),
           idempotency_key: requiredString(input.args, "idempotency_key"),
         },
         expected: {
@@ -770,6 +831,21 @@ export async function invokePmRuntimeControlTool(input: {
         actor: agentId,
         session_id: input.sessionId,
         current_task_id: input.currentTaskId,
+      };
+      break;
+    case "workspace.scratch.create":
+    case "workspace.scratch.write":
+    case "workspace.scratch.read":
+    case "workspace.scratch.list":
+    case "workspace.scratch.cleanup":
+      method = "POST";
+      path = "/api/v2/workspace/scratch";
+      body = {
+        ...input.args,
+        operation: input.toolName.slice("workspace.scratch.".length),
+        current_task_id: input.currentTaskId,
+        actor: agentId,
+        session_id: input.sessionId,
       };
       break;
     case "software.inventory":

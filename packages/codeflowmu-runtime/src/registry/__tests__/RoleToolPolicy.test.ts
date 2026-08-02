@@ -13,7 +13,7 @@ import {
   recordRoleToolBlocked,
 } from "../RoleToolPolicy.ts";
 
-test("PM edit on product path is blocked", () => {
+test("PM structured product edit is projected as approval-required by the legacy adapter", () => {
   const gate = evaluateRoleToolCall({
     agentId: "PM-01",
     toolName: "edit",
@@ -21,8 +21,8 @@ test("PM edit on product path is blocked", () => {
     projectRoot: "D:/codeflowmu",
   });
   assert.equal(gate.allow, false);
-  assert.equal(gate.severity, "block");
-  assert.match(gate.reason ?? "", /dispatch implementation work/i);
+  assert.equal(gate.severity, "warn");
+  assert.match(gate.reason ?? "", /OPERATION_APPROVAL_REQUIRED/i);
 });
 
 test("PM Set-Content shell write is blocked", () => {
@@ -208,7 +208,7 @@ print(p.check(lang='zh'))
     protectedRoots: ["D:/CodeFlowMu-open"],
   });
   assert.equal(gate.allow, true);
-  assert.equal(gate.severity, "warn");
+  assert.equal(gate.severity, undefined);
 });
 
 test("PM FCoP one-shot read-only patrol shell is allowed", () => {
@@ -549,7 +549,7 @@ test("Open edition blocks PM project-local implementation writes", () => {
   }
 });
 
-test("PM implementation override is path-, task-, reason-, and time-scoped", () => {
+test("caller-supplied PM implementation override cannot self-attest ADMIN approval", () => {
   const allowed = evaluateRoleToolCall({
     agentId: "PM-01",
     toolName: "edit",
@@ -564,7 +564,8 @@ test("PM implementation override is path-, task-, reason-, and time-scoped", () 
     },
     projectRoot: "D:/projects/demo",
   });
-  assert.equal(allowed.allow, true);
+  assert.equal(allowed.allow, false);
+  assert.match(allowed.reason ?? "", /ABSOLUTELY_PROHIBITED/i);
 
   const wrongPath = evaluateRoleToolCall({
     agentId: "PM-01",
@@ -583,7 +584,7 @@ test("PM implementation override is path-, task-, reason-, and time-scoped", () 
   assert.equal(wrongPath.allow, false);
 });
 
-test("Open edition runtime fcop directory write is not blocked by install boundary", () => {
+test("Open edition cannot write a different project's formal FCoP fact source", () => {
   const gate = evaluateRoleToolCall({
     agentId: "OPS-01",
     toolName: "edit",
@@ -591,10 +592,11 @@ test("Open edition runtime fcop directory write is not blocked by install bounda
     projectRoot: "D:/CodeFlowMu-open/workspace/newproject",
     protectedRoots: ["D:/CodeFlowMu-open"],
   });
-  assert.equal(gate.allow, true);
+  assert.equal(gate.allow, false);
+  assert.match(gate.reason ?? "", /ABSOLUTELY_PROHIBITED/i);
 });
 
-test("Open edition runtime workspace directory write is not blocked by install boundary", () => {
+test("Open edition cannot directly edit the active project's formal FCoP fact source", () => {
   const gate = evaluateRoleToolCall({
     agentId: "DEV-01",
     toolName: "edit",
@@ -602,7 +604,8 @@ test("Open edition runtime workspace directory write is not blocked by install b
     projectRoot: "D:/CodeFlowMu-open/workspace/newproject",
     protectedRoots: ["D:/CodeFlowMu-open"],
   });
-  assert.equal(gate.allow, true);
+  assert.equal(gate.allow, false);
+  assert.match(gate.reason ?? "", /ABSOLUTELY_PROHIBITED/i);
 });
 
 test("Open edition active project write is not blocked by install boundary", () => {
@@ -625,7 +628,7 @@ test("Open edition active-project boundary blocks a worker write to the mother r
     enforceProjectWriteBoundary: true,
   });
   assert.equal(gate.allow, false);
-  assert.match(gate.reason ?? "", /active project root/i);
+  assert.match(gate.reason ?? "", /ABSOLUTELY_PROHIBITED.*cross-project/i);
 });
 
 test("Open edition active-project boundary allows a worker write inside active root", () => {
@@ -651,7 +654,7 @@ test("Open edition shell boundary blocks an absolute root-outside write", () => 
     enforceProjectWriteBoundary: true,
   });
   assert.equal(gate.allow, false);
-  assert.match(gate.reason ?? "", /shell writes cannot escape/i);
+  assert.match(gate.reason ?? "", /ABSOLUTELY_PROHIBITED.*cross-project/i);
 });
 
 test("A to B project switch immediately revokes writes to project A", () => {

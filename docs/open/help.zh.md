@@ -2,8 +2,8 @@
 
 [English Manual](help.md) · [返回中文 README](../../README.zh.md)
 
-> 适用版本：V1.2.7-open
-> 更新日期：2026-08-02
+> 适用版本：V1.2.8-open
+> 更新日期：2026-08-03
 > 界面截图：CodeFlowMu PC Panel V1.2.5、V1.2.6-open
 > PWA 截图：CodeFlowMu PWA V1.0.58、V1.0.59
 

@@ -6,10 +6,11 @@
   "use strict";
 
   /** 本机当前运行的 PWA 包版本（发版时与 version.json / index.html ?v= 对齐） */
-  var BUNDLE_VERSION = "V1.0.59";
-  var PWA_CACHE_BUST = "1.0.59";
+  var BUNDLE_VERSION = "V1.0.60";
+  var PWA_CACHE_BUST = "1.0.60";
   var PWA_VERSION_STORAGE_KEY = "cfm_pwa_installed_version";
   var PWA_LEGACY_CACHE_NAMES = [
+    "codeflowmu-pwa-v1.0.59",
     "codeflowmu-pwa-v1.0.58",
     "codeflowmu-pwa-v1.0.57",
     "codeflowmu-pwa-v1.0.56",

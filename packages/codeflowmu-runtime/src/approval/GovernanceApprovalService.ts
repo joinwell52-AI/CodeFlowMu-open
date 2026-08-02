@@ -160,6 +160,7 @@ export interface GovernanceDecisionRecord {
   version: 1;
   type: "APPROVAL_DECISION";
   decision_id: string;
+  lease_id: string | null;
   approval_id: string;
   governance_id: string;
   governance_revision: number;
@@ -177,10 +178,12 @@ export interface GovernanceDecisionRecord {
 
 export interface GovernanceAuthorizationReference {
   governance_id: string;
+  revision: number;
   approval_id: string;
   decision_id: string;
   scope_digest: string;
   content_hash: string;
+  lease_id: string;
   idempotency_key: string;
 }
 
@@ -744,12 +747,20 @@ export class GovernanceApprovalService {
       }
       this.assertHashes(governance);
       const decisionId = sanitizeId(this.decisionIdFactory());
+      const leaseId = input.decision === "approved"
+        ? `LEASE-${digest({
+            governance_id: governance.governance_id,
+            revision: governance.revision,
+            decision_id: decisionId,
+          }).slice("sha256:".length, "sha256:".length + 24)}`
+        : null;
       const createdAt = this.now().toISOString();
       const decisionFm: Record<string, unknown> = {
         protocol: "fcop",
         version: 1,
         type: "APPROVAL_DECISION",
         decision_id: decisionId,
+        lease_id: leaseId,
         approval_id: governance.approval_id,
         governance_id: governance.governance_id,
         governance_revision: governance.revision,
@@ -786,6 +797,7 @@ export class GovernanceApprovalService {
         "",
         `Approved content hash: ${governance.content_hash}`,
         `Approved scope digest: ${governance.scope_digest}`,
+        ...(leaseId ? [`Capability lease: ${leaseId}`] : []),
         "",
       ].join("\n");
       this.writeCreateOnly(
@@ -810,6 +822,7 @@ export class GovernanceApprovalService {
         ...parsed.frontmatter,
         status: nextStatus,
         decision_id: decisionId,
+        ...(leaseId ? { lease_id: leaseId } : {}),
         decided_at: createdAt,
       };
       const destination = this.recordPath(
@@ -887,6 +900,7 @@ export class GovernanceApprovalService {
         version: 1,
         type: "APPROVAL_DECISION",
         decision_id: decisionId,
+        lease_id: null,
         approval_id: governance.approval_id,
         governance_id: governance.governance_id,
         governance_revision: governance.revision,
@@ -984,6 +998,12 @@ export class GovernanceApprovalService {
         `governance authorization is ${refreshed.status}`,
       );
     }
+    if (governance.revision !== reference.revision) {
+      throw new GovernanceApprovalError(
+        "APPROVAL_SCOPE_MISMATCH",
+        "governance revision does not match the capability lease",
+      );
+    }
     this.assertHashes(refreshed);
     if (
       refreshed.project_id !== expected.project_id ||
@@ -1009,6 +1029,8 @@ export class GovernanceApprovalService {
       decision.decision !== "approved" ||
       decision.approval_id !== reference.approval_id ||
       decision.governance_id !== reference.governance_id ||
+      decision.governance_revision !== reference.revision ||
+      decision.lease_id !== reference.lease_id ||
       decision.scope_digest !== reference.scope_digest ||
       decision.content_hash !== reference.content_hash
     ) {
@@ -1534,6 +1556,7 @@ export class GovernanceApprovalService {
       version: 1,
       type: "APPROVAL_DECISION",
       decision_id: normalizeText(fm["decision_id"]),
+      lease_id: normalizeText(fm["lease_id"]) || null,
       approval_id: normalizeText(fm["approval_id"]),
       governance_id: normalizeText(fm["governance_id"]),
       governance_revision: Number(fm["governance_revision"]),

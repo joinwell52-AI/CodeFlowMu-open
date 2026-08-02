@@ -2,7 +2,7 @@
 
 [Chinese Manual](help.zh.md) · [Back to English README](../../README.md)
 
-> Application: V1.2.7-open
+> Application: V1.2.8-open
 >
 > PC screenshots: real CodeFlowMu Open V1.2.6 runtime
 >
@@ -50,7 +50,7 @@ http://127.0.0.1:18765/
 Before publishing work, confirm all four items:
 
 - the header shows Connected;
-- the version is `V1.2.7-open`;
+- the version is `V1.2.8-open`;
 - the selected project is the intended business project;
 - no blocking runtime alert is active.
 

@@ -233,6 +233,7 @@ test("TM-05/TM-06: new sessions use effective model while running session stays 
     });
     assert.equal((await second.snapshot()).runtime_effective_model_id, "claude-sonnet-5");
     assert.equal(sdk.calls.send[1]?.spec.modelId, "claude-sonnet-5");
+    await manager.awaitSettled(second.session_id);
     unsubscribe();
   });
 });

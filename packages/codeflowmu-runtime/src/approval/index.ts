@@ -1,4 +1,11 @@
 export {
+  CONTROLLED_EXECUTOR_NAMES,
+  ControlledExecutorRegistry,
+  type ControlledExecutionResult,
+  type ControlledExecutorAdapter,
+  type ControlledExecutorName,
+} from "./ControlledExecutorRegistry.ts";
+export {
   OPERATION_APPROVAL_KINDS,
   OperationApprovalError,
   OperationApprovalService,
@@ -30,6 +37,20 @@ export {
   OPERATION_BOUNDARY_DENIED,
   type NativeOperationBoundaryDecision,
 } from "./NativeOperationApprovalGate.ts";
+export {
+  ABSOLUTELY_PROHIBITED,
+  APPROVAL_ADAPTER_REQUIRED,
+  UNIFIED_OPERATION_POLICY_FEATURE_FLAG,
+  evaluateUnifiedOperationPolicy,
+  type UnifiedOperationInput,
+  type UnifiedPolicyDecision,
+} from "./UnifiedOperationPolicy.ts";
+export {
+  buildWorkspaceOperationApprovalInput,
+  workspaceOperationInputFromRecord,
+  type WorkspaceExecutorName,
+  type WorkspaceOperationApprovalInput,
+} from "./WorkspaceOperationApproval.ts";
 export {
   identifyWindowsShellDialect,
   validateWindowsShellCommand,

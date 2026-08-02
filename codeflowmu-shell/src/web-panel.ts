@@ -111,6 +111,15 @@ import {
   type PmHeartbeatConfig,
 } from "./pm-heartbeat-config.ts";
 import {
+  clearPmHeartbeatTaskFuses,
+  evaluatePmHeartbeatFuse,
+  newPmHeartbeatWakeId,
+  readPmHeartbeatState,
+  registerAcceptedPmHeartbeatWake,
+  settlePmHeartbeatWake,
+  writePmHeartbeatState,
+} from "./pm-heartbeat-state.ts";
+import {
   formatAdoptedRuntimeEffectiveWakeSection,
   loadAdoptedPendingReport,
 } from "./fcop-adopted-pending.ts";
@@ -379,10 +388,13 @@ import {
   buildFilesystemCleanupApprovalInput,
   executeFilesystemCleanupApproval,
   type CapabilityRequest,
+  type OperationApprovalRecord,
   type OperationApprovalStatus,
 } from "@codeflowmu/runtime";
 import { buildGitPushApprovalInput, executeGitPushApproval } from "./git-operation-approval.ts";
 import { registerGovernanceApprovalRoutes } from "./governance-approval-routes.ts";
+import { createControlledExecutorRegistry } from "./controlled-executor-registry.ts";
+import { executeWorkspaceScratch, type WorkspaceScratchOperation } from "./workspace-scratch.ts";
 import { buildProjectGraphProjection } from "./project-graph-projection.ts";
 import { confirmOperationDecisionNative, confirmOperationImpactNative } from "./native-operation-confirm.ts";
 import { RuntimeEventFileLogger, RUNTIME_EVENT_TYPES } from "./runtime-event-logger.ts";
@@ -4116,8 +4128,6 @@ export function buildWebPanelApp(
   /** Downstream active-timeout auto-nudge poller. */
   let downstreamAutoNudgeRef: DownstreamAutoNudge | null = null;
   let pmHeartbeatIntervalRef: ReturnType<typeof setInterval> | null = null;
-  let pmHeartbeatLastRunAt = 0;
-  let pmHeartbeatLastDigest = "";
   let autoArchiveStartupTimer: ReturnType<typeof setTimeout> | null = null;
   let autoArchiveDailyTimer: ReturnType<typeof setInterval> | null = null;
   let zombieStartupTimer: ReturnType<typeof setTimeout> | null = null;
@@ -8426,6 +8436,48 @@ export function buildWebPanelApp(
     }
   });
 
+  app.post("/api/v2/workspace/scratch", async (req: Request, res: Response) => {
+    try {
+      const actor = String(req.body?.actor ?? "").trim();
+      const sessionId = String(req.body?.session_id ?? "").trim();
+      const taskId = String(req.body?.task_id ?? "").trim();
+      const currentTaskId = String(req.body?.current_task_id ?? "").trim();
+      const operation = String(req.body?.operation ?? "").trim() as WorkspaceScratchOperation;
+      if (!/^PM(?:[-.]|$)/i.test(actor) || !sessionId || !taskId || !currentTaskId) {
+        sendError(res, 403, "SCRATCH_SESSION_BINDING_REQUIRED", "an active PM session and current TASK binding are required");
+        return;
+      }
+      if (!["create", "write", "read", "list", "cleanup"].includes(operation)) {
+        sendError(res, 400, "SCRATCH_OPERATION_INVALID", "unsupported scratch operation");
+        return;
+      }
+      const active = await runtime.sessionManager.listActive();
+      const bound = active.find((session) =>
+        session.protocol.session_id === sessionId &&
+        String(session.protocol.agent_id ?? "").toUpperCase() === actor.toUpperCase() &&
+        String(session.protocol.task_id ?? "").toUpperCase() === currentTaskId.toUpperCase(),
+      );
+      if (!bound || currentTaskId.toUpperCase() !== taskId.toUpperCase()) {
+        sendError(res, 403, "SCRATCH_TASK_SCOPE_MISMATCH", "scratch access is limited to the active session TASK");
+        return;
+      }
+      res.json(executeWorkspaceScratch({
+        projectRoot: projectRoot(),
+        operation,
+        taskId,
+        currentTaskId,
+        path: req.body?.path,
+        content: req.body?.content,
+        actor,
+        sessionId,
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const code = message.split(":", 1)[0] || "SCRATCH_OPERATION_FAILED";
+      sendError(res, code.includes("NOT_FOUND") ? 404 : 400, code, message);
+    }
+  });
+
   async function softwareRuntimeInventory(): Promise<Array<Record<string, unknown>>> {
     const commands = [
       { id: "node", command: process.execPath, args: ["--version"] },
@@ -9266,6 +9318,81 @@ export function buildWebPanelApp(
     return new OperationApprovalService({ projectRoot: projectRoot() });
   }
 
+  function controlledExecutorRegistry() {
+    return createControlledExecutorRegistry({
+      projectRoot,
+      gitRoot: resolveGitRoot,
+      buildReviewPolicyInput: async (updates) =>
+        buildReviewPolicyApprovalInput(
+          projectRoot(),
+          updates as ReviewPolicyUpdates,
+        ),
+      saveReviewPolicy: async (updates) =>
+        saveReviewDecisionPolicy({
+          projectRoot: projectRoot(),
+          updates: updates as ReviewPolicyUpdates,
+        }) as unknown as Promise<Record<string, unknown>>,
+    });
+  }
+
+  function resumeAfterOperationDecision(
+    row: OperationApprovalRecord,
+    outcome: "succeeded" | "rejected" | "expired" | "stale" | "failed",
+  ): void {
+    if (process.env["CODEFLOWMU_OPERATION_APPROVAL_RECOVERY_ENABLED"] === "0") return;
+    const taskId = String(row.task_id ?? row.request.subject.task_id ?? "").trim();
+    const agentId = String(row.agent_id ?? row.request.subject.agent_id ?? "").trim();
+    if (!taskId || !agentId) return;
+    const root = projectRoot();
+    const taskHit = findTaskFileByIdPrefix(root, taskId);
+    let alreadyRecovered = false;
+    if (taskHit?.path) {
+      try {
+        const raw = readFileSync(taskHit.path, "utf8");
+        const fm = parseMarkdownFrontmatter(raw) as Record<string, unknown>;
+        alreadyRecovered = String(fm["approval_id"] ?? "") === row.approval_id &&
+          String(fm["approval_outcome"] ?? "") === outcome;
+        if (alreadyRecovered) return;
+        const priorState = String(fm["prior_state"] ?? "active").trim() || "active";
+        writeFileSync(taskHit.path, _wpPatchFmFields(raw, {
+          state: outcome === "succeeded" ? priorState : "needs_replan",
+          dispatch_state: outcome === "succeeded" ? "ready" : "blocked",
+          approval_id: row.approval_id,
+          approval_outcome: outcome,
+          failure_code: outcome === "succeeded" ? "none" : `APPROVAL_${outcome.toUpperCase()}`,
+          retry_policy: "none",
+          resume_strategy: outcome === "succeeded"
+            ? "continue_after_controlled_execution"
+            : "replan_without_replaying_operation",
+        }), "utf8");
+      } catch (error) {
+        console.warn("[operation-approval] failed to persist task recovery:", error);
+      }
+    }
+    if (!taskHit?.path || alreadyRecovered) return;
+    const heartbeatState = readPmHeartbeatState(root);
+    clearPmHeartbeatTaskFuses(heartbeatState, taskId);
+    writePmHeartbeatState(root, heartbeatState);
+    const wakeId = newPmHeartbeatWakeId();
+    setTimeout(() => {
+      void fetch(`${panelUrl}/api/v2/agents/${encodeURIComponent(agentId)}/wake`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          wake_id: wakeId,
+          message: outcome === "succeeded"
+            ? `Approved operation ${row.approval_id} completed through its controlled executor. Continue from the next safe step; do not replay the original raw command.`
+            : `Operation approval ${row.approval_id} ended as ${outcome}. Replan from the recorded safe next step; do not replay the rejected operation.`,
+          intent: "wake",
+          operator_role: "ADMIN",
+          task_id: taskId,
+        }),
+      }).catch((error: unknown) => {
+        console.warn("[operation-approval] deterministic recovery wake failed:", error);
+      });
+    }, 0);
+  }
+
   function governanceApprovalService(): GovernanceApprovalService {
     return new GovernanceApprovalService({ projectRoot: projectRoot() });
   }
@@ -9310,6 +9437,7 @@ export function buildWebPanelApp(
 
   function operationApprovalPanelRow(row: ReturnType<OperationApprovalService["get"]>): Record<string, unknown> {
     const snapshot = row.request.snapshot;
+    const approvalScope = row.request.resource.scope ?? {};
     const cleanupDiff =
       row.request.action.executor === "filesystem.cleanup"
         ? [
@@ -9332,6 +9460,18 @@ export function buildWebPanelApp(
             ` operation_digest: ${row.operation_digest}`,
           ].join("\n")
         : "";
+    const genericDiff = [
+      "--- operation request",
+      "+++ controlled execution plan",
+      `@@ ${row.request.action.executor} @@`,
+      ` rules: ${JSON.stringify(approvalScope["policy_rule_ids"] ?? [])}`,
+      ` effects: ${JSON.stringify(row.effects)}`,
+      ` non_effects: ${JSON.stringify(row.non_effects)}`,
+      ` recovery: ${row.recovery}`,
+      ` snapshot: ${JSON.stringify(snapshot)}`,
+      ...row.request.resource.targets.map((target) => `+ target: ${target}`),
+      ` operation_digest: ${row.operation_digest}`,
+    ].join("\n");
     return {
       ...row,
       id: row.approval_id,
@@ -9346,7 +9486,10 @@ export function buildWebPanelApp(
       admin_question: `是否${row.reason}？`,
       can_approve: row.status === "pending_approval",
       gate_status: row.status === "pending_approval" ? "valid" : row.status,
-      ...(cleanupDiff ? { diff: cleanupDiff } : {}),
+      executor: row.request.action.executor,
+      policy_rule_ids: approvalScope["policy_rule_ids"] ?? [],
+      preview: snapshot,
+      ...(cleanupDiff ? { diff: cleanupDiff } : { diff: genericDiff }),
     };
   }
 
@@ -9438,19 +9581,24 @@ export function buildWebPanelApp(
   app.get("/api/v2/operation-approvals", (req: Request, res: Response) => {
     try {
       const status = String(req.query["status"] ?? "").trim() as OperationApprovalStatus;
-      res.json(operationApprovalService().list({ ...(status ? { status } : {}), limit: Number(req.query["limit"] ?? 200) }));
+      const rows = operationApprovalService().list({ ...(status ? { status } : {}), limit: Number(req.query["limit"] ?? 200) });
+      for (const row of rows) {
+        if (row.status === "expired") resumeAfterOperationDecision(row, "expired");
+      }
+      res.json(rows);
     } catch (err) { sendOperationApprovalError(res, err); }
   });
 
   app.post("/api/v2/operation-approvals/prepare", async (req: Request, res: Response) => {
     try {
       const executor = String(req.body?.executor ?? "").trim();
-      if (!["git.push", "filesystem.cleanup"].includes(executor)) {
+      const registry = controlledExecutorRegistry();
+      if (!registry.canPrepare(executor)) {
         sendError(
           res,
           400,
           "EXECUTOR_NOT_REGISTERED",
-          "prepare accepts controlled git.push and filesystem.cleanup executors",
+          `operation approval executor is not registered: ${executor}`,
         );
         return;
       }
@@ -9462,35 +9610,33 @@ export function buildWebPanelApp(
         ...(req.body?.subject?.session_id ? { session_id: String(req.body.subject.session_id) } : {}),
         ...(req.body?.subject?.task_id ? { task_id: String(req.body.subject.task_id) } : {}),
       };
-      const preparedInput =
-        executor === "git.push"
-          ? await (async () => {
-              const cwd = resolveGitRoot();
-              const branch = String(
-                req.body?.input?.branch ?? (await wpReadGitBranch(cwd)),
-              ).trim();
-              return buildGitPushApprovalInput({ cwd, branch, subject });
-            })()
-          : buildFilesystemCleanupApprovalInput({
-              projectRoot: projectRoot(),
-              targets: Array.isArray(req.body?.input?.targets)
-                ? req.body.input.targets.map(String)
-                : [],
-              subject,
-              mode:
-                String(req.body?.input?.mode ?? "quarantine") === "permanent_delete"
-                  ? "permanent_delete"
-                  : "quarantine",
-              retentionDays: Number(req.body?.input?.retention_days ?? 14),
-              reason: String(req.body?.reason ?? "").trim() || undefined,
-            });
-      const prepared = operationApprovalService().prepare(await preparedInput);
+      const input = {
+        ...(req.body?.input && typeof req.body.input === "object"
+          ? req.body.input
+          : {}),
+        subject,
+        reason: String(req.body?.reason ?? "").trim() || undefined,
+        ...(executor === "git.push"
+          ? {
+              branch: String(
+                req.body?.input?.branch ??
+                  (await wpReadGitBranch(resolveGitRoot())),
+              ).trim(),
+            }
+          : {}),
+      };
+      const preparedInput = await registry.prepare(executor, input);
+      const prepared = operationApprovalService().prepare(preparedInput);
       res.status(prepared.decision === "REQUIRE_APPROVAL" ? 202 : 200).json({ ok: true, ...prepared });
     } catch (err) { sendOperationApprovalError(res, err); }
   });
 
   app.get("/api/v2/operation-approvals/:approvalId", (req: Request, res: Response) => {
-    try { res.json(operationApprovalService().get(String(req.params["approvalId"] ?? ""))); }
+    try {
+      const row = operationApprovalService().get(String(req.params["approvalId"] ?? ""));
+      if (row.status === "expired") resumeAfterOperationDecision(row, "expired");
+      res.json(row);
+    }
     catch (err) { sendOperationApprovalError(res, err); }
   });
 
@@ -9525,7 +9671,9 @@ export function buildWebPanelApp(
         sendError(res, 409, "HUMAN_CONFIRMATION_CANCELLED", "ADMIN cancelled the native confirmation");
         return;
       }
-      res.json({ ok: true, approval: service.reject(id, "ADMIN", reason) });
+      const rejected = service.reject(id, "ADMIN", reason);
+      res.json({ ok: true, approval: rejected });
+      resumeAfterOperationDecision(rejected, "rejected");
     } catch (err) { sendOperationApprovalError(res, err); }
   });
 
@@ -9534,7 +9682,9 @@ export function buildWebPanelApp(
       const service = operationApprovalService();
       const id = String(req.params["approvalId"] ?? "");
       const row = service.get(id);
-      res.json({ ok: true, approval: service.cancel(id, row.requested_by, String(req.body?.reason ?? "")) });
+      const cancelled = service.cancel(id, row.requested_by, String(req.body?.reason ?? ""));
+      res.json({ ok: true, approval: cancelled });
+      resumeAfterOperationDecision(cancelled, "failed");
     } catch (err) { sendOperationApprovalError(res, err); }
   });
 
@@ -9544,51 +9694,31 @@ export function buildWebPanelApp(
       const id = String(req.params["approvalId"] ?? "");
       const token = String(req.body?.execution_token ?? "");
       const row = service.get(id);
-      if (
-        row.request.action.executor !== "git.push" &&
-        row.request.action.executor !== "review.policy.save" &&
-        row.request.action.executor !== "filesystem.cleanup"
-      ) {
+      const registry = controlledExecutorRegistry();
+      if (!registry.canExecute(row.request.action.executor)) {
         sendError(res, 501, "EXECUTOR_NOT_REGISTERED", `executor ${row.request.action.executor} is not registered`);
         return;
       }
-      const scope = row.request.resource.scope ?? {};
-      let completed;
-      if (row.request.action.executor === "git.push") {
-        const current = await buildGitPushApprovalInput({
-          cwd: String(scope["cwd"] ?? ""),
-          branch: String(scope["branch"] ?? ""),
-          subject: row.request.subject,
-        });
-        completed = await service.execute(id, token, current.request, executeGitPushApproval);
-      } else if (row.request.action.executor === "review.policy.save") {
-        const updates = (scope["updates"] ?? {}) as ReviewPolicyUpdates;
-        const current = await buildReviewPolicyApprovalInput(projectRoot(), updates);
-        completed = await service.execute(id, token, current.request, async () => {
-          const policy = await saveReviewDecisionPolicy({ projectRoot: projectRoot(), updates });
-          return { evidence: [{ executor: "review.policy.save", policy }] };
-        });
-      } else {
-        const current = buildFilesystemCleanupApprovalInput({
-          projectRoot: row.project_root,
-          targets: row.request.resource.targets,
-          subject: row.request.subject,
-          mode:
-            String(scope["mode"] ?? "quarantine") === "permanent_delete"
-              ? "permanent_delete"
-              : "quarantine",
-          retentionDays: Number(scope["retention_days"] ?? 14),
-          reason: row.reason,
-        });
-        completed = await service.execute(
-          id,
-          token,
-          current.request,
-          executeFilesystemCleanupApproval,
-        );
-      }
+      const currentRequest = await registry.recomputeRequest(row);
+      const completed = await service.execute(
+        id,
+        token,
+        currentRequest,
+        (approval) => registry.execute(approval),
+      );
       res.status(completed.status === "failed" ? 500 : 200).json({ ok: completed.status === "succeeded", approval: completed });
-    } catch (err) { sendOperationApprovalError(res, err); }
+      resumeAfterOperationDecision(completed, completed.status === "succeeded" ? "succeeded" : "failed");
+    } catch (err) {
+      if (err instanceof OperationApprovalError && err.code === "APPROVAL_STALE") {
+        try {
+          resumeAfterOperationDecision(
+            operationApprovalService().get(String(req.params["approvalId"] ?? "")),
+            "stale",
+          );
+        } catch { /* original approval error remains authoritative */ }
+      }
+      sendOperationApprovalError(res, err);
+    }
   });
 
   /**
@@ -11005,6 +11135,7 @@ export function buildWebPanelApp(
       uiLang?: UiLang;
       source?: string;
       client?: string;
+      wakeId?: string;
     },
   ): Promise<void> {
     const { agentId, message, intent, operatorRole, taskId, threadKey } = params;
@@ -11187,6 +11318,7 @@ export function buildWebPanelApp(
           uiLang,
           context: {
             trigger_chat_id: triggerChatId,
+            ...(params.wakeId ? { wake_id: params.wakeId } : {}),
             ...(boundTaskId ? { task_id: boundTaskId } : {}),
             ...(boundThreadKey ? { thread_key: boundThreadKey } : {}),
           },
@@ -11232,6 +11364,7 @@ export function buildWebPanelApp(
         session_id: handle.session_id,
         ts: userMsg.ts,
         intent,
+        ...(params.wakeId ? { wake_id: params.wakeId } : {}),
       });
     } catch (err: unknown) {
       const code =
@@ -11283,6 +11416,7 @@ export function buildWebPanelApp(
       status?: string;
       task_id?: string;
       thread_key?: string;
+      wake_id?: string;
       attachments?: unknown;
     };
     const attachments = normalizeAndEnrichAttachments(
@@ -11711,6 +11845,7 @@ export function buildWebPanelApp(
       thread_key?: string;
       attachments?: unknown;
       ui_lang?: unknown;
+      wake_id?: string;
     };
     const message = String(body.message ?? "").trim();
     if (!message) {
@@ -11750,6 +11885,7 @@ export function buildWebPanelApp(
       thread_key?: string;
       attachments?: unknown;
       ui_lang?: unknown;
+      wake_id?: string;
     };
     const message = String(wb.message ?? "开工").trim() || "开工";
     const intentRaw = String(wb.intent ?? "wake").toLowerCase();
@@ -11765,6 +11901,7 @@ export function buildWebPanelApp(
       threadKey: wb.thread_key,
       attachments: normalizeAndEnrichAttachments(getProjectRoot(), wb.attachments),
       uiLang: normalizeUiLang(wb.ui_lang),
+      wakeId: String(wb.wake_id ?? "").trim() || undefined,
     });
   });
 
@@ -17538,6 +17675,8 @@ export function buildWebPanelApp(
   async function maybeRunPmHeartbeat(): Promise<void> {
     const cfg = currentPmHeartbeatConfig();
     if (!cfg.enabled) return;
+    const root = resolveProjectRoot();
+    const heartbeatState = readPmHeartbeatState(root);
     const activeSessions = await runtime.sessionManager.listActive();
     if (
       activeSessions.some(
@@ -17553,15 +17692,79 @@ export function buildWebPanelApp(
     }
     const snap = await buildPmHeartbeatSnapshot().catch(() => null);
     if (!snap || snap.activeRoots.length === 0) {
-      pmHeartbeatLastDigest = "";
+      heartbeatState.last_digest = "";
+      writePmHeartbeatState(root, heartbeatState);
       return;
     }
+    let stateChanged = false;
+    for (const wake of heartbeatState.wakes.filter((row) => !row.ended_at)) {
+      const session = await runtime.sessionManager.getSession(wake.session_id).catch(() => null);
+      if (!session || session.protocol.status === "running") continue;
+      const run = session.protocol.runs.at(-1) as (Record<string, unknown> | undefined);
+      const rawError = String(run?.["error"] ?? run?.["sdk_error"] ?? "");
+      let approvalId = "";
+      try { approvalId = String((JSON.parse(rawError) as Record<string, unknown>)["approval_id"] ?? ""); }
+      catch { approvalId = rawError.match(/"approval_id"\s*:\s*"([^"]+)"/)?.[1] ?? ""; }
+      const settlement = settlePmHeartbeatWake({
+        state: heartbeatState,
+        wakeId: wake.wake_id,
+        endedAt: String(session.protocol.ended_at ?? new Date().toISOString()),
+        sessionOutcome: String(run?.["status"] ?? session.protocol.status),
+        failureCode: String(run?.["failure_code"] ?? "") || undefined,
+        approvalId: approvalId || undefined,
+        operationFingerprint: String(run?.["operation_fingerprint"] ?? "") || undefined,
+        businessProgressDigestAfter: snap.digest,
+      });
+      stateChanged = stateChanged || settlement.settled;
+      if (settlement.alertRequired) {
+        const taskHit = findTaskFileByIdPrefix(root, wake.task_id);
+        if (taskHit?.path) {
+          try {
+            const raw = readFileSync(taskHit.path, "utf8");
+            writeFileSync(taskHit.path, _wpPatchFmFields(raw, {
+              state: "needs_replan",
+              dispatch_state: "blocked",
+              failure_code: "PM_HEARTBEAT_NO_PROGRESS",
+              failure_category: "governance",
+              retry_policy: "none",
+            }), "utf8");
+          } catch (error) {
+            console.warn("[pm-heartbeat] failed to persist no-progress fuse:", error);
+          }
+        }
+        sseEmit("codeflowmu.failure", {
+          code: "PM_HEARTBEAT_NO_PROGRESS",
+          task_id: wake.task_id,
+          wake_id: wake.wake_id,
+          operation_fingerprint: wake.operation_fingerprint,
+          deduplicated: true,
+        });
+      }
+    }
+    if (stateChanged) writePmHeartbeatState(root, heartbeatState);
     const now = Date.now();
+    const focusTaskId = rowText(snap.focusTask ?? {}, "task_id");
+    const focusThreadKey = rowText(snap.focusTask ?? {}, "thread_key");
+    const focusState = rowText(snap.focusTask ?? {}, "state").toLowerCase();
+    const focusFailureCode = rowText(snap.focusTask ?? {}, "failure_code").toUpperCase();
+    if (focusState === "waiting_approval" || focusFailureCode === "OPERATION_APPROVAL_REQUIRED") {
+      return;
+    }
+    const fuse = evaluatePmHeartbeatFuse({
+      state: heartbeatState,
+      taskId: focusTaskId,
+      inputDigest: snap.digest,
+      nowMs: now,
+    });
+    if (!fuse.allow) {
+      writePmHeartbeatState(root, heartbeatState);
+      return;
+    }
     const decision = decidePmHeartbeatPolicy({
       config: cfg,
       nowMs: now,
-      lastRunAtMs: pmHeartbeatLastRunAt,
-      lastDigest: pmHeartbeatLastDigest,
+      lastRunAtMs: heartbeatState.last_run_at_ms,
+      lastDigest: heartbeatState.last_digest,
       pmBusy: pmQueue.pm_busy || pmQueue.in_flight,
       activeRootCount: snap.activeRoots.length,
       lastDispatchAtMs: snap.lastDispatchAt,
@@ -17569,10 +17772,7 @@ export function buildWebPanelApp(
       digest: snap.digest,
     });
     if (!decision.shouldRun) return;
-    pmHeartbeatLastRunAt = now;
-    pmHeartbeatLastDigest = snap.digest;
-    const focusTaskId = rowText(snap.focusTask ?? {}, "task_id");
-    const focusThreadKey = rowText(snap.focusTask ?? {}, "thread_key");
+    const wakeId = newPmHeartbeatWakeId(new Date(now));
     const focusTitle =
       rowText(snap.focusTask ?? {}, "subject") ||
       rowText(snap.focusTask ?? {}, "title");
@@ -17583,10 +17783,11 @@ export function buildWebPanelApp(
       "如果下游已回执，请完成 review_check / 汇总报告 / 提交 ADMIN 验收；如果超过阈值无回执，请自动催办下游。",
       "请用中文简短汇报变化；没有变化时只说明当前等待点。自动巡检结论由 Runtime 写入治理日志，禁止为巡检、等待或重复催办调用 write_report。只有正式下游回执、明确终态阻塞升级或 PM 最终汇总才生成 REPORT。",
     ].join("\n");
-    await fetch(`${panelUrl}/api/v2/agents/PM-01/wake`, {
+    const response = await fetch(`${panelUrl}/api/v2/agents/PM-01/wake`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        wake_id: wakeId,
         message,
         intent: "patrol",
         operator_role: "ADMIN",
@@ -17600,7 +17801,23 @@ export function buildWebPanelApp(
         "[pm-heartbeat] wake failed:",
         err instanceof Error ? err.message : String(err),
       );
+      return null;
     });
+    if (!response?.ok) return;
+    const accepted = await response.json().catch(() => null) as Record<string, unknown> | null;
+    const sessionId = String(accepted?.["session_id"] ?? "").trim();
+    if (accepted?.["ok"] !== true || !sessionId) return;
+    registerAcceptedPmHeartbeatWake(heartbeatState, {
+      wake_id: wakeId,
+      task_id: focusTaskId,
+      ...(focusThreadKey ? { thread_key: focusThreadKey } : {}),
+      trigger_reason: decision.reason,
+      input_digest: snap.digest,
+      session_id: sessionId,
+      started_at: new Date(now).toISOString(),
+      business_progress_digest_before: snap.digest,
+    });
+    writePmHeartbeatState(root, heartbeatState);
   }
 
   function restartPmHeartbeatScheduler(): void {

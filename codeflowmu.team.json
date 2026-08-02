@@ -21,6 +21,11 @@
     "mustNotShareRuntimeState": true,
     "mustNotShareWorkspaceState": true
   },
+  "runtime_instance": {
+    "role": "stable",
+    "isolation": "user",
+    "gateway": true
+  },
   "members": [
     {
       "agent_id": "PM-01",
