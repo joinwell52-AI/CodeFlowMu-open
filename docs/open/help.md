@@ -1,187 +1,220 @@
-# CodeFlowMu Open PC 与 PWA 帮助手册
+# CodeFlowMu Open PC & PWA Operations Manual
 
-> 适用版本：V1.2.5-open
-> 更新日期：2026-08-02
-> 界面截图：CodeFlowMu PC Panel V1.2.5
-> PWA 截图：CodeFlowMu PWA V1.0.58、V1.0.59
+[Chinese Manual](help.zh.md) · [Back to English README](../../README.md)
 
-本手册面向首次安装和日常使用 CodeFlowMu Open Dev Team Edition 的用户。Open 版默认在本机运行，团队角色为 PM、DEV、OPS、QA，EVAL 作为独立观察角色。
+> Application: V1.2.7-open
+>
+> PC screenshots: real CodeFlowMu Open V1.2.6 runtime
+>
+> PWA screenshots: real CodeFlowMu PWA V1.0.58 and V1.0.59
 
-## 1. 启动与确认连接
+This manual covers the first installation, the first complete task cycle, daily PC operation, and mobile PWA access. CodeFlowMu Open runs locally and organizes PM, DEV, OPS, and QA as a coordinated development team. EVAL observes quality and risk independently.
 
-完成安装后，在仓库根目录运行 `npm start`，然后打开启动日志给出的 Panel 地址。顶部绿色「已连接」表示浏览器已连接 Shell；版本徽标、当前项目、实例类型和端口用于确认当前运行环境。
+## 0. Complete the first task in five minutes
 
-![PC 仪表盘](../images/pc/V1.2.5/pc-dashboard-V1.2.5.png)
+| Step | Where | Action | Success signal |
+|---|---|---|---|
+| 1 | Launcher | Run `START-CODEFLOWMU-OPEN.bat` | `http://127.0.0.1:18765/` opens |
+| 2 | Settings > General | Enter, save, and verify the Cursor API Key | Verification is green and models load |
+| 3 | Settings > Projects | Use the default project, create a project, or register an existing source directory; make it current | Header project and project root match |
+| 4 | Environment Preflight | Initialize or repair FCoP only when prompted | No blocking item remains |
+| 5 | Tasks > Submission Review | Enter a task or upload a Markdown task specification, review it, and publish | A formal TASK appears |
+| 6 | Dashboard / Tasks | Watch PM dispatch DEV, OPS, and QA work | Child tasks start moving and activity appears |
+| 7 | Reports | Read delivery results, test output, and evidence | REPORT files appear for the responsible roles |
+| 8 | Approvals | Approve only an explicitly requested high-risk action | The authorization record shows the decision |
+| 9 | Mobile, optional | Open the binding entry and bind the phone | PWA shows a healthy PC connection |
 
-仪表盘集中显示任务、报告、运行中事项、待审批、团队状态和 Runtime 告警。首次使用时先确认：
+The shortest business loop is:
 
-- 顶部为绿色「已连接」；
-- 当前项目是准备工作的项目根；
-- 团队角色已经显示；
-- 运行时告警没有阻断项。
+```text
+Publish TASK -> PM plans and dispatches -> DEV / OPS / QA execute
+-> read REPORT evidence -> PM accepts or requests rework
+```
 
-## 2. 创建和查看任务
+## 1. Start the application and confirm the runtime
 
-左侧进入「任务」。顶部「正式任务」查看已经进入生命周期的 TASK；「投递审查」用于在正式 TASK 生成前检查任务书。
+From the repository root, run:
 
-![PC 任务页面](../images/pc/V1.2.5/pc-tasks-V1.2.5.png)
+```bat
+START-CODEFLOWMU-OPEN.bat
+```
 
-任务书首次检查发现问题时：在线下修改 Markdown，点击「继续编辑」，在新的任务书写入页重新上传修改后的文件，覆盖旧草稿后再次检查。不要直接重跑未修改的旧文件，也不需要先创建重复 TASK。
+The launcher checks Node.js and npm, creates `.venv` when needed, installs public dependencies, and starts the local Panel. The supported Open address is:
 
-任务列表可按主线、关键词和进行中/已归档筛选；「列表」「看板」「任务线」分别适合逐项查看、按状态查看和查看父子关系。
+```text
+http://127.0.0.1:18765/
+```
 
-## 3. 管理多个项目
+![PC dashboard](../images/pc/V1.2.6/en/pc-dashboard-V1.2.6-en.png)
 
-进入「设置 → 项目」可新建独立项目、添加已有项目或将某个项目设为当前。顶部项目下拉与该列表同步。
+Before publishing work, confirm all four items:
 
-![PC 项目与版本页面](../images/pc/V1.2.5/pc-projects-and-version-V1.2.5.png)
+- the header shows Connected;
+- the version is `V1.2.7-open`;
+- the selected project is the intended business project;
+- no blocking runtime alert is active.
 
-「设为当前」会让 Runtime、MCP、Watcher 和 Agent 工作目录一起切换到 active project。Shell 安装根不会因此改变。切换后请检查顶部当前项目和页面中的项目根一致；若启动一致性诊断报错，应先修复根绑定，不能继续项目写入。
+The dashboard summarizes tasks, reports, running work, completed work, pending approvals, agent state, runtime alerts, and live activity. It is the best first stop when checking whether the team is really working.
 
-同一页面下方的「版本更新日志」展示每个版本的具体功能、修复、关联任务和影响范围，可使用搜索框按版本或更新内容检索。
+## 2. Configure the model channel
 
-## 4. 操作审批
+Open Settings > General.
 
-左侧「审批」只处理动作发生前的一次性高风险操作授权，例如破坏性操作、外部写入、发布、凭据或 Runtime 治理边界变更。
+1. Select the supported provider.
+2. Enter the Cursor API Key.
+3. Save settings.
+4. Run verification.
+5. Confirm that the model list is available.
 
-![PC 审批页面](../images/pc/V1.2.5/pc-approvals-V1.2.5.png)
+A saved key is local configuration and must never be copied into TASK files, REPORT files, screenshots, or Git commits. A new model selection affects later sessions; an already running session keeps the model captured when it started.
 
-TASK、REPORT、REVIEW、事实核查和 EVAL 不进入全局操作审批；它们继续使用任务生命周期。审批通过只表示允许尝试执行，不等于执行已经成功，最终结果仍应查看验证状态和审计记录。
+## 3. Create or register a business project
 
-## 5. 设置中心
+Open Settings > Projects.
 
-「设置」集中承载运行参数、版本信息、项目管理、发布、Git、数据工具和自动化能力。每个标签都是独立页面，不需要离开 Panel。
+![Project and version management](../images/pc/V1.2.6/en/pc-projects-V1.2.6-en.png)
 
-### 5.1 常规、通知与关于
+You can:
 
-![PC 常规设置](../images/pc/V1.2.5/pc-settings-general-V1.2.5.png)
+- use the initialized `projects/newproject` project;
+- create an independent project below `projects/`;
+- register an existing source directory elsewhere on the computer;
+- switch the current project from the project list or the header selector.
 
-![PC 通知设置](../images/pc/V1.2.5/pc-settings-notifications-V1.2.5.png)
+After switching, verify that the header and the Projects page show the same root. Runtime, MCP, watchers, and agent working directories should move together.
 
-![PC 关于与版本日志](../images/pc/V1.2.5/pc-settings-about-V1.2.5.png)
+> The `CodeFlowMu-open` repository root is the protected tool installation. Business source, TASK files, REPORT files, evidence, and the FCoP ledger belong in the active project, not in the tool root.
 
-常规设置用于确认项目根、界面语言、主题和 API 接入通道；通知设置管理桌面提醒；关于页展示母版、Shell、PWA 与协议版本以及具体更新日志。
+## 4. Publish and track a task
 
-### 5.2 项目与 PWA 项目
+Open Tasks.
 
-![PC 项目设置](../images/pc/V1.2.5/pc-settings-projects-V1.2.5.png)
+![Task center](../images/pc/V1.2.6/en/pc-tasks-V1.2.6-en.png)
 
-![PC PWA 项目设置](../images/pc/V1.2.5/pc-settings-pwa-projects-V1.2.5.png)
+Use Submission Review for a new requirement. You may enter the task in the Panel or upload a Markdown task specification. Review the subject, scope, acceptance criteria, priority, and target project before publishing.
 
-项目设置管理本机 active project；PWA 项目设置管理独立 Web 项目的注册、版本和发布入口。二者都不会把 `host_root` 错当成当前业务项目根。
+If the first review reports a problem:
 
-## 6. Git 状态与数据工具
+1. choose Continue Editing;
+2. correct the local Markdown file;
+3. upload the corrected file and replace the draft;
+4. run review again.
 
-「设置 → Git 状态」区分产品文件和非母版变更：
+Do not repeatedly submit an unchanged rejected draft, and do not create duplicate TASK files to bypass review.
 
-- 产品文件未提交会阻止发版；
-- 项目工作区与 FCoP/运行配置只显示数量，默认不参与母版提交；
-- 提交前应核对分支、远端同步状态和本次变更范围。
+Use the three views for different questions:
 
-![PC Git 状态](../images/pc/V1.2.5/pc-settings-git-status-V1.2.5.png)
+- List: inspect individual files and states;
+- Board: compare lifecycle stages;
+- Timeline: follow parent-child task relationships.
 
-不要为了让工作区显示干净而把真实项目、任务、报告、运行日志或本地配置加入产品提交。
+A normal task progresses through TASK, active execution, REPORT evidence, review, completion, and archive. A blocked task must state the concrete blocker and the required next action.
 
-「数据导出」用于生成可迁移的数据包；「任务模板」用于维护常用任务书结构。
+## 5. Read reports and handle approvals
 
-![PC 数据导出](../images/pc/V1.2.5/pc-settings-data-export-V1.2.5.png)
+Reports are the delivery record. Check the result, changed files, commands or tests performed, evidence, limitations, and follow-up work. A green agent status alone is not proof of completion.
 
-![PC 任务模板](../images/pc/V1.2.5/pc-settings-task-templates-V1.2.5.png)
+Open Approvals only when CodeFlowMu asks for human authorization.
 
-## 7. Windows Use 与 Browser Use
+![Operation approval queue](../images/pc/V1.2.6/en/pc-approvals-V1.2.6-en.png)
 
-Windows Use 面向获准的本机 Windows 应用；Browser Use 面向获准的浏览器目标。两项能力默认关闭，必须先登记目标、说明用途，再显式启用。
+Typical approval-bound actions include destructive operations, external writes, releases, credentials, and governance-boundary changes. Review each request individually. Approval means the runtime may attempt the action; it does not mean the action succeeded. Return to Reports and the verification record for the final result.
 
-![PC Windows Use](../images/pc/V1.2.5/pc-settings-windows-use-V1.2.5.png)
+## 6. Inspect Agent Playbooks
 
-![PC Browser Use](../images/pc/V1.2.5/pc-settings-browser-use-V1.2.5.png)
+Open Skills.
 
-受保护应用、未登记目标和超出授权范围的操作不会因为启用了能力而自动放行。账号与密码仅保存在项目根的本地环境文件，不进入 Git、任务正文或截图。
+![Agent Playbook library](../images/pc/V1.2.6/en/pc-skills-V1.2.6-en.png)
 
-## 8. 团队、问题与运行观察
+The library shows the public skill manifest, package path, role mapping, and integration state. The manifest is an index: Runtime matches the role, task text, and lifecycle signal, then injects only the relevant Playbooks.
 
-### 8.1 团队配置
+If a card reports Package missing, confirm that its public `SKILL.md` package is included in the Open release source. Do not solve a missing public package by pointing the Open edition at private mother-edition files.
 
-团队配置用于设置角色模型、团队身份、审批模式和运行参数。修改模型后只影响后续会话，已经运行的会话继续使用启动时捕获的模型。
+## 7. Use Git, files, logs, and environment preflight
 
-![PC 团队配置](../images/pc/V1.2.5/pc-team-config-V1.2.5.png)
+Use these pages as supporting evidence:
 
-### 8.2 问题与门铃
+- Files: read the active project structure and FCoP artifacts;
+- Log Center: diagnose service and agent events;
+- Environment Preflight: initialize or repair the active project only when prompted;
+- Project Git: review product changes separately from local runtime and project state;
+- Data Export: produce a portable data package;
+- Templates: maintain repeatable task-specification structures;
+- Windows Use / Browser Use: register explicit local targets before enabling operation.
 
-「问题」用于查看结构化 ISSUE；「门铃」显示 MCP 工具调用、系统事件和故障记录，适合判断 Agent 是否真正开始工作。
+Never add real tasks, reports, chats, customer data, local environment files, tokens, or runtime history merely to make Git appear clean.
 
-![PC 问题页面](../images/pc/V1.2.5/pc-issues-V1.2.5.png)
+## 8. Bind and use the mobile PWA
 
-![PC 门铃事件](../images/pc/V1.2.5/pc-doorbell-events-V1.2.5.png)
+Open Mobile in the PC Panel. Use the LAN binding entry when the phone and PC are on the same network, or the approved Gateway entry when Gateway access is available. Do not publish screenshots containing a QR code, binding link, or token.
 
-### 8.3 EVAL、技能库与文件浏览
+On the phone:
 
-EVAL 是独立观察层，不代替 PM、QA 或 ADMIN 验收。技能库展示 Runtime 可匹配的技能包及接入状态；文件浏览用于只读查看 FCoP、文档和项目文件结构。
+1. open the PWA;
+2. open Me;
+3. choose Scan to bind or paste the binding link;
+4. wait for the PC state to become healthy;
+5. use Me > English to switch the PWA language when needed.
 
-![PC EVAL 评估](../images/pc/V1.2.5/pc-evaluation-V1.2.5.png)
+The real phone captures below use the Chinese UI; the English UI has the same navigation and is available from Me > English. Thumbnails are intentionally small. Click one to open the original image.
 
-![PC 技能库](../images/pc/V1.2.5/pc-skills-library-V1.2.5.png)
+<p align="center">
+  <a href="../images/pwa/V1.0.58/pwa-dashboard-V1.0.58.png"><img src="../images/pwa/V1.0.58/pwa-dashboard-V1.0.58.png" width="180" alt="PWA dashboard"></a>
+  &nbsp;
+  <a href="../images/pwa/V1.0.58/pwa-tasks-timeline-V1.0.58.png"><img src="../images/pwa/V1.0.58/pwa-tasks-timeline-V1.0.58.png" width="180" alt="PWA task timeline"></a>
+  &nbsp;
+  <a href="../images/pwa/V1.0.58/pwa-reports-V1.0.58.png"><img src="../images/pwa/V1.0.58/pwa-reports-V1.0.58.png" width="180" alt="PWA reports"></a>
+</p>
 
-![PC 文件浏览](../images/pc/V1.2.5/pc-file-browser-V1.2.5.png)
+### Publish and follow work
 
-## 9. 开源版本发版台
+The Home page shows the team, daily counts, task list, and quick task form. Tasks provides list and timeline views. Reports exposes delivery evidence. Approvals handles only explicit authorization requests.
 
-维护者可在「设置 → 开源版本发版」查看版本号、允许同步的产品变更组、构建状态、类型契约检查和发版记录。
+<p align="center">
+  <a href="../images/pwa/V1.0.58/pwa-publish-task-V1.0.58.png"><img src="../images/pwa/V1.0.58/pwa-publish-task-V1.0.58.png" width="180" alt="Publish a task in the PWA"></a>
+  &nbsp;
+  <a href="../images/pwa/V1.0.58/pwa-approvals-V1.0.58.png"><img src="../images/pwa/V1.0.58/pwa-approvals-V1.0.58.png" width="180" alt="PWA approvals"></a>
+  &nbsp;
+  <a href="../images/pwa/V1.0.58/pwa-activity-V1.0.58.png"><img src="../images/pwa/V1.0.58/pwa-activity-V1.0.58.png" width="180" alt="PWA activity"></a>
+</p>
 
-![PC 开源版本发版台](../images/pc/V1.2.5/pc-open-release-V1.2.5.png)
+### Chat and device settings
 
-![PC 开源发版设置](../images/pc/V1.2.5/pc-settings-open-release-V1.2.5.png)
+Chat sends a message to the responsible role. Me shows bind status, PWA version, language, release notes, cache reload, and re-binding actions.
 
-发布前必须先提交母版产品代码，并填写用户可理解的版本名称与具体更新内容。系统随后依次执行版本预审、Open 构建、完整性验证、发行树依赖安装与 TypeScript 契约检查、安全同步、提交和推送。任一步失败都应先修复依赖闭包或审批范围，不能跳过门禁。
+<p align="center">
+  <a href="../images/pwa/V1.0.58/pwa-chat-V1.0.58.png"><img src="../images/pwa/V1.0.58/pwa-chat-V1.0.58.png" width="180" alt="PWA team chat"></a>
+  &nbsp;
+  <a href="../images/pwa/V1.0.58/pwa-my-settings-V1.0.58.png"><img src="../images/pwa/V1.0.58/pwa-my-settings-V1.0.58.png" width="180" alt="PWA device settings"></a>
+  &nbsp;
+  <a href="../images/pwa/V1.0.59/pwa-release-notes-V1.0.59.png"><img src="../images/pwa/V1.0.59/pwa-release-notes-V1.0.59.png" width="180" alt="PWA release notes"></a>
+</p>
 
-## 10. PWA 手机端
+## 9. Common problems
 
-PWA 用于在手机上查看团队状态、任务、报告、审批与动态，并可向角色发送消息。首次使用先从 PC Panel 获取绑定入口，在 PWA「我的」中完成设备绑定；状态栏的 PC 与 Gateway 均为绿色后再进行业务操作。
-
-当前 PWA V1.0.59 在「我的」页新增常驻的「本版更新」卡片，直接展示版本名称和具体更新内容；完成更新后仍可随时查看，不再只依赖一次性的升级提示条。下列功能截图拍摄于 V1.0.58，界面主体与 V1.0.59 一致。
-
-![PWA V1.0.59 本版更新](../images/pwa/V1.0.59/pwa-release-notes-V1.0.59.png)
-
-### 10.1 首页与任务
-
-![PWA 首页与团队概览](../images/pwa/V1.0.58/pwa-dashboard-V1.0.58.png)
-
-![PWA 任务线](../images/pwa/V1.0.58/pwa-tasks-timeline-V1.0.58.png)
-
-任务页支持正式任务、投递审查、列表与任务线视图。发布任务时可手工填写标题和详情，也可导入修改后的 Markdown 任务书；首次检查未通过时，应修改文件后重新上传覆盖旧草稿。
-
-![PWA 发布任务](../images/pwa/V1.0.58/pwa-publish-task-V1.0.58.png)
-
-### 10.2 报告、审批与动态
-
-![PWA 报告](../images/pwa/V1.0.58/pwa-reports-V1.0.58.png)
-
-![PWA 审批](../images/pwa/V1.0.58/pwa-approvals-V1.0.58.png)
-
-![PWA 动态](../images/pwa/V1.0.58/pwa-activity-V1.0.58.png)
-
-报告页按主任务、子任务和记录筛选；审批页只处理需要明确授权的操作；动态页用于查看角色活动与系统事件。审批通过不等于执行完成，仍应回到报告或任务状态确认结果。
-
-### 10.3 聊天与设备绑定
-
-![PWA 聊天](../images/pwa/V1.0.58/pwa-chat-V1.0.58.png)
-
-![PWA 我的与设备绑定](../images/pwa/V1.0.58/pwa-my-settings-V1.0.58.png)
-
-「我的」显示当前 PWA 版本、语言与绑定状态，并提供重新绑定、清缓存和重新加载。公开文档截图不得包含二维码、绑定链接或访问令牌。
-
-## 11. 常见问题
-
-| 现象 | 处理 |
+| Symptom | Action |
 |---|---|
-| Panel 当前项目正确，但 TASK 查询返回不存在 | 检查 Runtime、MCP 和 Watcher 是否都绑定同一 active project；重启后仍不一致时停止写入并查看启动诊断 |
-| `Runtime writer lock is already owned` | 已有实例占用同一 Writer Lock；不要再启动第二个相同实例，回到已有 Panel 或先按受控流程停止原实例 |
-| 任务书修复检查仍使用旧内容 | 点击「继续编辑」，重新上传线下修改后的 Markdown，保存覆盖旧草稿后再检查 |
-| 开源构建提示相对 import 缺失或 TypeScript 名称缺失 | 将调用方、实现、类型定义和必要测试作为完整 change group 纳入发布，再重新构建 |
-| 图片在公开仓库缺失 | 截图必须位于 `docs/images/` 且加入 Open include 清单；帮助文档使用相对路径引用 |
+| Panel project is correct but a TASK cannot be found | Confirm Runtime, MCP, and watchers are bound to the same active project. Stop project writes if startup diagnostics still disagree. |
+| `Runtime writer lock is already owned` | Another instance owns the same writer lock. Return to the existing Panel or stop that instance through the controlled shutdown flow. |
+| Submission Review still shows old content | Continue editing, upload the corrected Markdown file, replace the draft, and review again. |
+| A public build reports a missing import or type | Release the caller, implementation, type definition, and required tests as one complete change group. |
+| Images are missing on GitHub | Keep screenshots under `docs/images/`, include them in the Open release source, and use repository-relative links. |
+| PWA cannot connect over LAN | Put phone and PC on the same network, confirm port 18765 is reachable, and allow the Open port through Windows Firewall when required. |
+| Gateway is offline | Local PC operation can continue. Retry Gateway only after its public configuration and network path are available. |
 
-更多资料：
+## 10. Safe operating boundary
 
-- [快速开始](getting-started.md)
-- [版本边界](edition-boundary.md)
-- [贡献指南](contributing.md)
+- Keep the installation root separate from business projects.
+- Store secrets only in local environment configuration.
+- Approve high-risk actions only after reading the exact target and scope.
+- Treat REPORT evidence and verification as the completion signal.
+- Keep public screenshots free of QR codes, binding links, tokens, customer data, and private runtime information.
+- Stop the existing service before updating or starting another instance with the same identity.
+
+Related documents:
+
+- [Installation Guide](../../INSTALL.md)
+- [Getting Started](getting-started.md)
+- [Edition Boundary](edition-boundary.md)
+- [Gateway Policy](gateway-demo.md)
+- [Contributing](contributing.md)

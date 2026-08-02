@@ -1,6 +1,6 @@
 {
   "name": "codeflowmu",
-  "version": "1.2.6-open",
+  "version": "1.2.7-open",
   "private": false,
   "description": "CodeFlowMu - AI-powered collaborative workflow system",
   "scripts": {

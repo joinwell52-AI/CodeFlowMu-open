@@ -1,13 +1,13 @@
 {
   "name": "codeflowmu-shell",
-  "version": "1.2.6-open",
+  "version": "1.2.7-open",
   "private": false,
   "description": "codeflowmu Shell CLI for running the local codeflowmu runtime, web panel, and collaboration bridge.",
   "type": "module",
   "main": "src/main.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "start": "tsx src/open-start.ts",
+    "start": "node scripts/runtime-preflight.cjs --open",
     "start:daemon": "node scripts/runtime-preflight.cjs --no-panel",
     "start:no-ui": "node scripts/runtime-preflight.cjs --no-panel",
     "test": "node --import tsx --test --test-concurrency=1 \"src/__tests__/*.test.ts\"",

@@ -1,82 +1,154 @@
 # CodeFlowMu Open Dev Team Edition
 
-## PM planning and product design
-
-The development-team edition uses Level 0-3 PM planning. Queries and inspections need no brief; small fixes use lightweight analysis; ordinary features use a standard plan; complex products use a full Product Brief with verifiable skill evidence. Dispatch order is planning, Runtime validation, downstream task creation, then explicit PM wake. See `docs/skills/pm-planning-governance.md`.
-
-This is a CodeFlowMu development-team workflow above FCoP, not an FCoP core-protocol requirement.
-
 <p align="center">
-  <img src="docs/images/product-1.png" alt="CodeFlowMu - Commands Flow, Intelligence Follows" width="720">
+  <img src="docs/images/hero-banner.png" alt="CodeFlowMu — Commands Flow, Intelligence Follows" width="960">
 </p>
 
 <p align="center">
-  <strong>码流 CodeFlowMu：把 AI Agent 组织成一个本地开发团队。</strong><br>
-  <strong>CodeFlowMu turns local AI agents into a coordinated development team.</strong>
+  <strong>Turn local AI agents into a visible, auditable, and coordinated development team.</strong>
 </p>
 
 <p align="center">
-  <a href="#中文">中文</a> ·
-  <a href="README.zh.md">完整中文介绍</a> ·
-  <a href="#english">English</a> ·
-  <a href="INSTALL.md">Install</a> ·
-  <a href="docs/open/getting-started.md">Getting Started</a>
+  <code>V1.2.7-open</code> · <code>Windows 10/11</code> · <code>Node.js 22+</code> · <code>Python 3.10+</code> · <code>Cursor SDK</code>
+</p>
+
+<p align="center">
+  <a href="README.zh.md">Simplified Chinese README</a> ·
+  <a href="#quick-install">Quick Install</a> ·
+  <a href="#real-product-screens">Product Screens</a> ·
+  <a href="INSTALL.md">Installation Guide</a> ·
+  <a href="docs/open/help.md">Illustrated PC & PWA Manual</a>
 </p>
 
 ---
 
-## 中文
+CodeFlowMu Open is a local-first multi-agent development team application. You submit a requirement; PM analyzes and dispatches it, DEV implements it, OPS handles runtime and delivery, and QA verifies it. Tasks, reports, evidence, approvals, and project state are visible in the PC Panel and available from the Mobile PWA.
 
-CodeFlowMu Open Dev Team Edition 是 FCoP 协议治理下、通过 Cursor SDK 接口驱动的多 Agent 开发团队应用，面向本地安装、体验、二次开发和贡献。
+It is not another chat window. It gives multiple agents one traceable delivery lifecycle:
 
-当前开源版本：`V1.2.6-open`
+```text
+Requirement → PM Plan → TASK → DEV / OPS / QA → REPORT → REVIEW / APPROVAL → Done
+```
 
-它不是母体私有仓库的完整镜像，也不是用来开发 CodeFlowMu 自身的目录。开发执行团队固定为 PM / DEV / OPS / QA；EVAL 作为独立观察者评估质量、风险与交付信号，不属于开发执行团队。
+## Core Capabilities
 
-- 固定开发团队：`PM / DEV / OPS / QA`
-- 独立观察者：`EVAL`
-- 固定接入：`Cursor SDK only`
-- 默认本地运行：`http://127.0.0.1:18765/`
-- 单实例安装：每台电脑当前只支持一个标准安装，Windows 默认 `D:\CodeFlowMu-open`
-- 默认连接官方演示 / 受限 Gateway，不连接私有 Gateway
-- 受保护工具根：`CodeFlowMu-open` 自身不能作为任务开发目标
-- 保留 Git 状态、任务、报告、审批、聊天、项目配置、数据导出和任务模板
-- 不包含母体真实运行记录、私有日志、私有 Gateway 凭据、内部评估/观察流和公司私有发布能力
+| Capability | What it provides |
+|---|---|
+| Multi-agent development team | A fixed execution team of `PM / DEV / OPS / QA`, with `EVAL` observing quality and risk independently |
+| File-based collaboration | TASK, REPORT, REVIEW, ISSUE, and evidence artifacts are persisted for audit and handoff |
+| PC control panel | Dashboard, tasks, reports, approvals, chat, skills, files, logs, projects, and team settings |
+| Mobile PWA | View team state, tasks, reports, approvals, and activity; publish tasks and message roles from a phone |
+| Project isolation | The protected installation root is separate from business projects; every installation owns an isolated Runtime identity |
+| Human approval gates | Destructive actions, external writes, and authority-boundary changes require approval before execution |
+| Windows and Browser Use | Agents can operate only the applications and browser targets explicitly approved by the user |
+| Public Agent Playbooks | Skills are loaded from the public manifest, with project-local packages taking precedence over installation packages |
 
-如果你见过旧的 `joinwell52-AI/codehouse` / CodeFlow 仓库，可以把它理解成上一代产品叙事与实验现场。CodeFlowMu Open 是新的公开入口：保留“指令成流、文件协作、多 Agent 团队”的核心思想，但以干净的公开发行包、固定开发团队、可重复初始化和可贡献的源码结构重新组织。
+## Real Product Screens
 
-### 一句话
+Every image below is captured from the real product, not a concept mockup. The current application version is `V1.2.7-open`; the English PC screenshots were captured from the running `V1.2.6-open` application. The phone screenshots are real PWA captures from V1.0.58, with the release-notes view from V1.0.59.
 
-把需求、任务、代码、报告和验收放进同一个本地协作面板里，让 PM、DEV、OPS、QA 四个 Agent 以文件协议协同工作。
-
-### 本地团队
+### PC Panel: the complete team at a glance
 
 <p align="center">
-  <img src="docs/images/product.png" alt="CodeFlowMu product view" width="680">
+  <img src="docs/images/pc/V1.2.6/en/pc-dashboard-V1.2.6-en.png" alt="CodeFlowMu PC dashboard with team, tasks, reports, approvals, and runtime state" width="960">
 </p>
+
+The dashboard brings the active project, PM/DEV/OPS/QA state, task and report totals, runtime alerts, approval queues, and live activity into one view. Project and instance information at the top helps confirm that agents are working in the intended business directory.
+
+### From task dispatch to controlled approval
+
+<p align="center">
+  <img src="docs/images/pc/V1.2.6/en/pc-tasks-V1.2.6-en.png" alt="CodeFlowMu PC task center" width="960">
+</p>
+<p align="center"><sub>Task center: formal tasks, submission review, lists, boards, and timelines</sub></p>
+
+<p align="center">
+  <img src="docs/images/pc/V1.2.6/en/pc-approvals-V1.2.6-en.png" alt="CodeFlowMu PC operation approvals" width="960">
+</p>
+<p align="center"><sub>Operation approvals: human authorization before high-risk actions</sub></p>
+
+The task center supports formal tasks, pre-publication review, list, board, and timeline views. The approval center is reserved for actions that genuinely require human authorization. Approval allows an execution attempt; REPORT evidence still determines whether the work succeeded.
+
+### Visible skills and project boundaries
+
+<p align="center">
+  <img src="docs/images/pc/V1.2.6/en/pc-skills-V1.2.6-en.png" alt="CodeFlowMu Agent Playbook skill library" width="960">
+</p>
+<p align="center"><sub>Agent Playbook library: packages, role mappings, and load state</sub></p>
+
+<p align="center">
+  <img src="docs/images/pc/V1.2.6/en/pc-projects-V1.2.6-en.png" alt="CodeFlowMu project and version management" width="960">
+</p>
+<p align="center"><sub>Projects and versions: business roots, active-project switching, and release history</sub></p>
+
+The skill library exposes Playbook package and mapping state. Project management creates, registers, and switches business projects while rebinding Runtime, MCP, watchers, and agent working directories together.
+
+### Mobile PWA: stay connected away from the PC
+
+<p align="center">
+  <a href="docs/images/pwa/V1.0.58/pwa-dashboard-V1.0.58.png"><img src="docs/images/pwa/V1.0.58/pwa-dashboard-V1.0.58.png" alt="CodeFlowMu PWA dashboard" width="150"></a>
+  &nbsp;
+  <a href="docs/images/pwa/V1.0.58/pwa-tasks-timeline-V1.0.58.png"><img src="docs/images/pwa/V1.0.58/pwa-tasks-timeline-V1.0.58.png" alt="CodeFlowMu PWA task timeline" width="150"></a>
+  &nbsp;
+  <a href="docs/images/pwa/V1.0.58/pwa-reports-V1.0.58.png"><img src="docs/images/pwa/V1.0.58/pwa-reports-V1.0.58.png" alt="CodeFlowMu PWA reports" width="150"></a>
+  &nbsp;
+  <a href="docs/images/pwa/V1.0.58/pwa-chat-V1.0.58.png"><img src="docs/images/pwa/V1.0.58/pwa-chat-V1.0.58.png" alt="CodeFlowMu PWA chat" width="150"></a>
+</p>
+<p align="center"><sub>Dashboard · Task timeline · Reports · Team chat — click a thumbnail to open the full image</sub></p>
+
+The PWA provides dashboards, tasks, reports, approvals, activity, chat, and device status. Timelines make parent-child task relationships visible, reports expose delivery evidence, and chat reaches the responsible role directly.
+
+> Continue with the [illustrated PC & PWA manual](docs/open/help.md). The [Chinese manual](docs/open/help.zh.md) is available separately.
+
+## Team Workflow
 
 ```mermaid
 flowchart LR
-  Human["Human / 你"] --> PM["PM<br/>拆解需求 / 验收调度"]
-  PM --> DEV["DEV<br/>代码实现"]
-  PM --> OPS["OPS<br/>运行环境 / 打包发布"]
-  PM --> QA["QA<br/>测试验证"]
-  DEV --> Report["REPORT<br/>交付证据"]
-  OPS --> Report
-  QA --> Report
-  Report --> PM
-  PM --> Git["Git 状态 / 公开贡献"]
+  Human["Human / ADMIN"] --> PM["PM<br/>Analyze, plan, dispatch"]
+  PM --> TASK["TASK<br/>Scope and acceptance"]
+  TASK --> DEV["DEV<br/>Implement and refactor"]
+  TASK --> OPS["OPS<br/>Run, build, deliver"]
+  TASK --> QA["QA<br/>Verify and regress"]
+  DEV --> REPORT["REPORT<br/>Results and evidence"]
+  OPS --> REPORT
+  QA --> REPORT
+  REPORT --> PM
+  PM --> REVIEW["REVIEW / APPROVAL<br/>Accept and archive"]
+  EVAL["EVAL<br/>Independent observation"] -.->|Quality and risk| REVIEW
 ```
 
-### 快速开始
+Complex product work passes through PM Level 0–3 planning before downstream tasks are created. See the [PM planning and product-design policy](docs/skills/pm-planning-governance.md).
 
-Windows 推荐：
+## Quick Install
+
+### Requirements
+
+- Windows 10/11 (recommended; includes the launcher)
+- Node.js 22+
+- Python 3.10+
+- Git
+- Cursor SDK access and an API Key
+
+### Recommended Windows installation
+
+Run in Command Prompt:
 
 ```bat
+cd /d D:\
+git clone https://github.com/joinwell52-AI/CodeFlowMu-open.git
+cd CodeFlowMu-open
 START-CODEFLOWMU-OPEN.bat
 ```
 
-手动方式：
+The launcher checks Node.js and npm, creates `.venv`, installs Python `fcop` and Node dependencies, and starts the local panel at:
+
+```text
+http://127.0.0.1:18765/
+```
+
+The official launcher is `START-CODEFLOWMU-OPEN.bat`. See [INSTALL.md](INSTALL.md) for the complete installation guide.
+
+### Manual startup
 
 ```bash
 git clone https://github.com/joinwell52-AI/CodeFlowMu-open.git
@@ -85,237 +157,95 @@ npm install
 npm start
 ```
 
-打开：
+## First Run
+
+1. Open **Settings → General**, enter the Cursor API Key, and verify it.
+2. Open **Settings → Projects** and use `projects/newproject`, create an independent project, or register an existing source directory.
+3. Set the intended directory as the active project and wait for Runtime adaptation to complete.
+4. Run the environment preflight; initialize or repair FCoP only when the panel reports that it is required.
+5. Publish the first TASK and follow execution through Tasks, Reports, and Live Activity.
+
+> `CodeFlowMu-open` is the protected tool installation root, not a business project for agents to edit. Source changes, TASK files, REPORT files, attachments, and the FCoP ledger belong in the active project root.
+
+## How to Complete the First Task Cycle
+
+| Step | PC Panel location | Action | Success signal |
+|---|---|---|---|
+| 1. Confirm the service | Header / Dashboard | Open `127.0.0.1:18765` | The header shows a green connected state |
+| 2. Configure the model | Settings → General | Enter and verify the Cursor API Key | Verification is green and models are loaded |
+| 3. Select a project | Settings → Projects | Use the default project, create one, or register existing source; set it active | Header project and project root match |
+| 4. Check the environment | Environment Preflight | Initialize or repair FCoP only when prompted | No blocker remains; Runtime is bound to the project |
+| 5. Publish work | Tasks → Submission Review | Enter a task or upload a Markdown task specification; review and publish | A formal TASK appears in the task list |
+| 6. Follow execution | Dashboard / Tasks / Live Activity | Watch PM dispatch DEV, OPS, and QA work | Child tasks move through the lifecycle and REPORT files appear |
+| 7. Accept the result | Reports / Approvals | Read results and evidence; approve only requested high-risk actions | PM accepts the result or starts a rework cycle |
+| 8. Add mobile access | Mobile / PWA Settings | Obtain the binding entry from the PC and bind the phone | PC and Gateway states are healthy in the PWA |
+
+> **Illustrated manual:** open the [CodeFlowMu Open PC & PWA Help Manual](docs/open/help.md) for step-by-step coverage of projects, tasks, approvals, skills, Git, data tools, and mobile operation.
+
+## Installation Root and Business Projects
 
 ```text
-http://127.0.0.1:18765/
+D:\CodeFlowMu-open\                 # Protected tool installation root
+├─ projects\newproject\             # Default business project
+├─ projects\<your-project>\         # Independent projects created in the panel
+└─ ...                               # Panel / Shell / Runtime / docs
+
+D:\YourExistingProject\             # Existing external projects can also be registered
+└─ fcop\                             # Project-owned task and collaboration ledger
 ```
 
-首次启动会进入干净初始化状态：清理公开版运行缓存，保留源码、Git 历史、`node_modules` 和 `.venv`。
+Every installation creates its own `.codeflowmu/instance.json`. Agent and Session Runtime state lives under `%USERPROFILE%\.codeflowmu\instances\<instance_id>\`, so copied installations and same-named projects do not share Runtime identities.
 
-启动后请先在「设置 → 项目」添加你的产品/代码目录，并切换为当前项目。任务、报告、FCoP 初始化、附件和 Agent 会话都会写入这个外部项目根；公开版不会更新自己的 `CodeFlowMu-open` 源码目录。
+## Update
 
-### 安装与更新
+Stop the current service, then run:
 
-公开仓库面向下载、安装、介绍和贡献。一个全新发版会由母版构建为完整开源版本包，包含源码、面板、Shell、公开文档、公开初始化源、启动器、`VERSION.json`、`RELEASES.md` 和 `UPDATE.md`。
-
-更新策略采用全量更新：应用文件整体替换，保留 `.git/`、`node_modules/`、`.venv/`、本机 `.env`、不进入 Git 的 `.codeflowmu/mobile-gateway.json`、`projects/`、旧版 `workspace/` 和外部项目根；仓库只发布 `.codeflowmu/mobile-gateway.example.json`。
-
-用户侧更新：
-
-```bash
-cd CodeFlowMu-open
-git pull
+```bat
+cd /d D:\CodeFlowMu-open
+git pull --ff-only
 npm install
 START-CODEFLOWMU-OPEN.bat
 ```
 
-### 开源版包含什么
+An update replaces application source, Panel assets, Shell/Runtime source, documentation, and public templates. It preserves `.git/`, `.venv/`, `node_modules/`, local `.env` files, `projects/`, legacy `workspace/`, and external business projects.
 
-<p align="center">
-  <img src="docs/images/product-2.png" alt="CodeFlowMu open edition overview" width="680">
-</p>
+## Open Edition Boundary
 
-| 模块 | 开源版状态 |
-|---|---|
-| PC Panel | 可用 |
-| Mobile PWA | 本地局域网体验 |
-| PM / DEV / OPS / QA | 固定开发团队 |
-| EVAL | PM 最终 REPORT 后自动生成旁路观察；按钮用于重试/刷新 |
-| 当前项目 | 默认 `projects/newproject` 可直接使用；旧 `workspace/<项目>` 继续兼容 |
-| CodeFlowMu-open 自身 | 工具根，受保护，不作为任务目标 |
-| Git 状态 | 可用 |
-| 技能库 | 公开 manifest 与 playbook |
-| Gateway | 官方演示只读连接；可比较线上 PWA 版本，不能从 Open 发布或覆盖线上资源 |
-| Provider | Cursor SDK only |
+### Included
 
-### 界面一览
+- PC Panel and local Mobile PWA
+- PM / DEV / OPS / QA development team
+- Independent EVAL quality and risk observation
+- FCoP collaboration protocol and public Agent Playbooks
+- Cursor SDK integration
+- Explicitly authorized Windows Use and Browser Use
+- Git status, task templates, data export, and project management
 
-<p align="center">
-  <img src="docs/images/pc/V1.2.5/pc-dashboard-V1.2.5.png" width="420" alt="CodeFlowMu Open home workbench">
-  <img src="docs/images/pc/V1.2.5/pc-tasks-V1.2.5.png" width="420" alt="CodeFlowMu Open tasks">
-</p>
-<p align="center">
-  <img src="docs/images/pwa/V1.0.58/pwa-tasks-timeline-V1.0.58.png" width="420" alt="CodeFlowMu Open task timeline">
-  <img src="docs/images/pwa/V1.0.58/pwa-chat-V1.0.58.png" width="420" alt="CodeFlowMu Open chat">
-</p>
-<p align="center">
-  <img src="docs/images/pc/V1.2.5/pc-settings-general-V1.2.5.png" width="420" alt="CodeFlowMu Open settings">
-</p>
+### Excluded
 
-### 初始化源
+- Private Gateway credentials and company-only release infrastructure
+- Real mother-edition tasks, reports, logs, chats, or customer data
+- `.env`, tokens, API keys, and other secrets
+- Private multi-provider switching for Google Gen AI, Claude Code, or OpenRouter
+- Internal governance experiments and private runtime history
 
-公开包带有可公开初始化源：
+The Open and mother editions use different ports, instance identities, and runtime state. The default Open address is `127.0.0.1:18765`.
 
-```text
-adoptedSource/fcop/
-adoptedSource/pending/
-docs/skills/
-docs/open/
-```
+## Documentation
 
-不会带入：
+- [Installation](INSTALL.md)
+- [Getting Started](docs/open/getting-started.md)
+- [Illustrated PC & PWA Manual](docs/open/help.md)
+- [Chinese PC & PWA Manual](docs/open/help.zh.md)
+- [Edition Boundary](docs/open/edition-boundary.md)
+- [Gateway Policy](docs/open/gateway-demo.md)
+- [Directory Guide](docs/articles/open-edition-directory-manual.md)
+- [Contributing](docs/open/contributing.md)
 
-```text
-adoptedSource/gateway/
-private/
-.env
-真实任务、报告、日志、聊天历史
-```
+## Contributing
 
-### 仓库关系
-
-```text
-私有母体仓库：
-joinwell52-AI/codeflowmu
-
-公开开源仓库：
-joinwell52-AI/CodeFlowMu-open
-```
-
-母体负责版本选择、构建、同步、清理运行态和发布；公开仓库负责下载、安装、介绍、体验和贡献入口。
-
-GitHub 仓库 About / topics 建议见 [docs/open/github-repo-about.md](docs/open/github-repo-about.md)。
+Contributions are welcome in installation experience, cross-platform support, Panel/PWA usability, task workflows, documentation, tests, and local Runtime stability. Before submitting, make sure the change contains no real tasks, reports, logs, customer data, secrets, or private Gateway configuration.
 
 ---
 
-## English
-
-CodeFlowMu Open Dev Team Edition is an FCoP-governed multi-agent development team application driven through Cursor SDK interfaces. It is the public open-source edition for local installation, hands-on evaluation, development, and contribution.
-
-Current open edition version: `V1.2.6-open`
-
-It is not a full mirror of the private mother repository, and it is not meant to develop CodeFlowMu itself. The execution team is fixed to PM / DEV / OPS / QA. EVAL is an independent observer for quality, risk, and delivery signals, not a member of the development execution chain.
-
-- Fixed development team: `PM / DEV / OPS / QA`
-- Independent observer: `EVAL`
-- Fixed provider: `Cursor SDK only`
-- Local default: `http://127.0.0.1:18765/`
-- Single install: one standard CodeFlowMu Open install per computer; Windows default is `D:\CodeFlowMu-open`
-- Private Gateway auto-connect is disabled by default
-- Protected tool root: `CodeFlowMu-open` itself is not a development target
-- Git status, tasks, reports, approvals, chat, project settings, data export, and task templates are available
-- Private runtime history, private logs, Gateway credentials, internal observation/evaluation flows, and company release tooling are excluded
-
-If you have seen the old `joinwell52-AI/codehouse` / CodeFlow repository, treat it as the previous product narrative and experiment ground. CodeFlowMu Open is the new public entry point: the same core idea of command flow, file-based collaboration, and multi-agent teams, reorganized as a clean public distribution with a fixed dev team, repeatable first-run initialization, and a contribution-ready source layout.
-
-### What It Does
-
-CodeFlowMu gives local AI agents a shared collaboration surface: requirements become tasks, tasks produce reports, reports carry evidence, PM/DEV/OPS/QA move work through a visible workflow, and EVAL observes independently.
-
-### Quick Start
-
-Recommended on Windows:
-
-```bat
-START-CODEFLOWMU-OPEN.bat
-```
-
-Manual:
-
-```bash
-git clone https://github.com/joinwell52-AI/CodeFlowMu-open.git
-cd CodeFlowMu-open
-npm install
-npm start
-```
-
-Open:
-
-```text
-http://127.0.0.1:18765/
-```
-
-The first launch initializes a clean open-edition runtime state. It removes generated public runtime caches while keeping source files, Git history, `node_modules`, and `.venv`.
-
-First launch creates and initializes `projects/newproject` as the active project. `projects/` contains multiple independent CodeFlowMu team projects; each project owns its `fcop/` ledger and may use an internal `workspace/<product>` only in multi-product mode. Registered legacy `workspace/<project>` roots continue to run in place and are never moved automatically. Each installation owns an untracked `.codeflowmu/instance.json`, while Runtime state lives under `%USERPROFILE%\.codeflowmu\instances\<instance_id>\`.
-
-`CodeFlowMu-open` is the protected tool-install root. Agents retain full capability inside the active business project, while the install-integrity shell restores protected application code to its startup baseline. If no Cursor API Key is configured, formal TASK files remain in inbox instead of being consumed by the in-memory test adapter. A PM final REPORT automatically produces the EVAL closeout observation; the EVAL button is retained for retry or refresh.
-
-### Install And Update
-
-The public repository is for download, installation, introduction, and contribution. Each fresh release is built by the mother repository as a complete open-edition package with source, panel assets, Shell, public docs, public initialization sources, launcher, `VERSION.json`, `RELEASES.md`, and `UPDATE.md`.
-
-Updates use a full replacement strategy: application files are replaced as a whole, while `.git/`, `node_modules/`, `.venv/`, local `.env`, the untracked `.codeflowmu/mobile-gateway.json`, `projects/`, legacy `workspace/`, and external project roots are preserved. Only `.codeflowmu/mobile-gateway.example.json` is published.
-
-User update flow:
-
-```bash
-cd CodeFlowMu-open
-git pull
-npm install
-START-CODEFLOWMU-OPEN.bat
-```
-
-### Edition Boundary
-
-| Area | Open Edition |
-|---|---|
-| PC Panel | Available |
-| Mobile PWA | Local LAN experience |
-| PM / DEV / OPS / QA | Fixed development team |
-| EVAL | Closeout observation is automatic after PM final REPORT; button retries or refreshes |
-| Active project | Default `projects/newproject` works immediately; registered legacy `workspace/<project>` roots remain compatible |
-| CodeFlowMu-open itself | Protected tool root, not a task target |
-| Git Status | Available |
-| Skills | Public manifest and playbooks |
-| Gateway | Official demo is read-only; version comparison is available, remote publish is disabled |
-| Provider | Cursor SDK only |
-
-### Screenshots
-
-<p align="center">
-  <img src="docs/images/pc/V1.2.5/pc-dashboard-V1.2.5.png" width="420" alt="CodeFlowMu Open home workbench">
-  <img src="docs/images/pc/V1.2.5/pc-tasks-V1.2.5.png" width="420" alt="CodeFlowMu Open tasks">
-</p>
-<p align="center">
-  <img src="docs/images/pwa/V1.0.58/pwa-tasks-timeline-V1.0.58.png" width="420" alt="CodeFlowMu Open task timeline">
-  <img src="docs/images/pwa/V1.0.58/pwa-chat-V1.0.58.png" width="420" alt="CodeFlowMu Open chat">
-</p>
-<p align="center">
-  <img src="docs/images/pc/V1.2.5/pc-settings-general-V1.2.5.png" width="420" alt="CodeFlowMu Open settings">
-</p>
-
-### Public Initialization Sources
-
-Included:
-
-```text
-adoptedSource/fcop/
-adoptedSource/pending/
-docs/skills/
-docs/open/
-```
-
-Excluded:
-
-```text
-adoptedSource/gateway/
-private/
-.env
-real tasks, reports, logs, and chat history
-```
-
-### Contributing
-
-Good first contribution areas:
-
-- Windows/macOS/Linux install flow
-- Four-role development workflow plus an independent EVAL observer
-- Git status and project configuration UX
-- Public docs, templates, and examples
-- Panel usability and local runtime stability
-
-See also:
-
-- [Install](INSTALL.md)
-- [Getting Started](docs/open/getting-started.md)
-- [PC Help Manual (Chinese, with screenshots)](docs/open/help.md)
-- [Edition Boundary](docs/open/edition-boundary.md)
-- [Gateway Policy](docs/open/gateway-demo.md)
-- [GitHub Repository About](docs/open/github-repo-about.md)
-- [Open Edition Articles](docs/articles/README.md)
-- [Open Edition Scope](docs/articles/open-edition-scope.md)
-- [Open Edition Directory Manual](docs/articles/open-edition-directory-manual.md)
-- [Release Content Boundary](docs/articles/release-content-boundary.md)
-- [Contributing](docs/open/contributing.md)
+<p align="center"><strong>Commands Flow, Intelligence Follows.</strong></p>
