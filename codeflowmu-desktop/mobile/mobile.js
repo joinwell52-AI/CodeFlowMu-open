@@ -6,10 +6,11 @@
   "use strict";
 
   /** 本机当前运行的 PWA 包版本（发版时与 version.json / index.html ?v= 对齐） */
-  var BUNDLE_VERSION = "V1.0.60";
-  var PWA_CACHE_BUST = "1.0.60";
+  var BUNDLE_VERSION = "V1.0.61";
+  var PWA_CACHE_BUST = "1.0.61";
   var PWA_VERSION_STORAGE_KEY = "cfm_pwa_installed_version";
   var PWA_LEGACY_CACHE_NAMES = [
+    "codeflowmu-pwa-v1.0.60",
     "codeflowmu-pwa-v1.0.59",
     "codeflowmu-pwa-v1.0.58",
     "codeflowmu-pwa-v1.0.57",
@@ -3441,6 +3442,18 @@
       } else {
         alert.classList.add("hidden");
       }
+      var dispatch = extras.dispatch_state || null;
+      if (dispatch && ((dispatch.attempts || []).length || dispatch.active_lease)) {
+        var attempts = dispatch.attempts || [];
+        var latest = attempts.length ? attempts[attempts.length - 1] : null;
+        alert.classList.remove("hidden");
+        alert.className = "detail-alert";
+        alert.textContent = [
+          latest ? "attempt=" + latest.attempt_id : "",
+          latest ? "state=" + latest.status : "",
+          dispatch.active_lease ? "lease=" + dispatch.active_lease.lease_id : "",
+        ].filter(Boolean).join(" · ");
+      }
     }
 
     renderFlowOverview(extras.flow_overview || []);
@@ -3588,6 +3601,7 @@
             child_tasks: data.child_tasks || [],
             flow_overview: data.flow_overview || [],
             available_actions: data.available_actions || [],
+            dispatch_state: data.dispatch_state || null,
           },
         );
         clearApiError("tasks");

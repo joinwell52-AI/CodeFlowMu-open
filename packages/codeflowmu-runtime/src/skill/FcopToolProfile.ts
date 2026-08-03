@@ -30,11 +30,14 @@ import type { AgentLayer } from "@codeflowmu/protocol";
 
 /**
  * 执行层工具集 (DEV / QA / OPS)。
- * 只包含 task-report 热路径：TASK 已由 Runtime 注入，完成时写 REPORT。
- * 禁止 `claim_task` / `read_task` / `finish_task` 进入执行层工具白名单。
- * 3 工具 ≈ 1,500 tokens。
+ * 同时支持推送热路径与轨道机恢复路径：自主发现、读取、认领 TASK 后写 REPORT。
+ * `finish_task` 仍不进入执行层工具白名单。
+ * 6 工具。
  */
 export const EXECUTOR_TOOLS = [
+  "list_my_tasks",
+  "read_my_task",
+  "claim_task",
   "write_report", // 完成回执（fcop/reports/）
   "write_issue", // 上报阻塞/问题
   "drop_suggestion", // FCoP 协议反馈通道
@@ -45,8 +48,6 @@ export const EXECUTOR_TOOLS = [
  * TASK 由 Runtime 注入；`_lifecycle` 迁移由 LifecycleGovernor 异步 rename。
  */
 export const RUNTIME_HOT_PATH_BLOCKED_TOOLS = [
-  "claim_task",
-  "read_task",
   "inspect_task",
   "finish_task",
 ] as const;
@@ -89,7 +90,9 @@ export const PM_RUNTIME_CONTROL_TOOLS = [
   "pm.detect_thread_stall",
   "pm.close_admin_task",
   "pm.wake_downstream",
+  "pm.redispatch_task",
   "pm.review_check",
+  "pm.validate_long_horizon_plan",
   "pm.write_planning_artifact",
   "pm.record_planning_skill_evidence",
   "pm.inspect_task_spec",
@@ -179,8 +182,7 @@ export const LEADER_TOOLS = [
   // PM 必须能用受控 MCP 创建/检查业务工作区；禁止退回 shell mkdir。
   "new_workspace",
   "list_workspaces",
-  // 可选治理（异步；CodeFlowMu Runtime 用本地 fs rename，勿在开工前同步 claim）
-  "claim_task",
+  // claim_task is inherited from EXECUTOR_TOOLS; keep the allowlist unique.
   // finish_task 仅 admin 层 legacy；leader 走 submit_task → approve_task → archive_task
 ] as const;
 

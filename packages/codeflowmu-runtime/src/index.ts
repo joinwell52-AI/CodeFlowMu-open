@@ -104,6 +104,7 @@ export {
   StateHistoryWriter,
   type StateHistoryEntry,
   TaskDispatcher,
+  type DispatchTaskStateView,
   type TaskDispatcherLogger,
   type TaskDispatcherOpts,
   type AdHocPriority,
@@ -533,7 +534,30 @@ export {
   writePlanningArtifact,
   recordPlanningLevelOverride,
   PRODUCT_DESIGN_REQUIRED_SKILLS,
+  LONG_HORIZON_SKILL_ID,
+  classifyLongHorizonPlanning,
+  validateLongHorizonPlan,
+  persistPlanningValidation,
+  readPlanningValidation,
+  planningValidationPath,
+  sha256Digest,
+  PLANNING_GATE_DECISIONS,
+  planningGateHistoryPath,
+  submitPlanningGate,
+  decidePlanningGate,
+  recordPlanningGateDelivery,
+  readPlanningGateHistory,
+  currentPlanningGateState,
   type PmPlanningLevel,
+  type PlanningArtifactStatus,
+  type LongHorizonClassification,
+  type PlanningFinding,
+  type PlanningValidationResult,
+  type ValidateLongHorizonPlanInput,
+  type PlanningGateDecisionValue,
+  type PlanningGateSubmission,
+  type PlanningGateDecision,
+  type PlanningGateRecord,
   readRecentPmGovernanceCycles,
   formatPmGovernanceCycleBlock,
   flattenRecentPmGovernanceDecisions,
@@ -943,4 +967,34 @@ export {
   isDoneReportStatus,
   isUpstreamWorkerSettled,
 } from "./pm/taskDispatchGate.ts";
+
+export {
+  DispatchAttemptStore,
+  type DispatchAttempt,
+  type DispatchAttemptStatus,
+  type ExecutionLease,
+  type ClaimExecutionLeaseResult,
+} from "./scheduler/DispatchAttemptStore.ts";
+
+export {
+  classifyTaskDispatchStall,
+  type TaskDispatchStallClassification,
+  type TaskDispatchStallInput,
+  type TaskDispatchStallState,
+} from "./scheduler/TaskDispatchStall.ts";
+
+export {
+  RUNTIME_TASK_CONTROL_TOOL_NAMES,
+  RUNTIME_TASK_CONTROL_TOOL_DEFINITIONS,
+  isRuntimeTaskControlTool,
+  invokeRuntimeTaskControlTool,
+  type RuntimeTaskControlToolName,
+  type RuntimeTaskControlToolDefinition,
+} from "./scheduler/RuntimeTaskControlTools.ts";
+
+export {
+  resolveProjectRoot,
+  sameProjectRoot,
+  type ProjectRootResolution,
+} from "./project/ProjectRootResolver.ts";
 

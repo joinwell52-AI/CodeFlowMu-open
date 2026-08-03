@@ -3,20 +3,18 @@ import { resolve } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-test("PM wake directly starts the AI and does not run task gates first", () => {
+test("PM wake routes canonical TASK work through TaskDispatcher and reserves direct session for pure chat", () => {
   const source = readFileSync(resolve(import.meta.dirname, "..", "web-panel.ts"), "utf8");
-  const start = source.indexOf("if (useDirectAiWake())");
-  const end = source.indexOf("/* Legacy dispatch-aware wake path", start);
-  assert.ok(start >= 0 && end > start, "direct wake block missing");
-  const direct = source.slice(start, end);
-  assert.match(direct, /sessionManager\.startSession/);
-  assert.doesNotMatch(direct, /evaluateSequentialDispatchGuard/);
-  assert.doesNotMatch(direct, /evaluateDependencyGate/);
-  assert.doesNotMatch(direct, /taskDispatcher\.dispatch/);
-  assert.doesNotMatch(direct, /report_missing/);
+  const action = source.indexOf("const executePmWakeDownstreamRaw");
+  const direct = source.indexOf("if (!canonicalTaskPath)", action);
+  const dispatch = source.indexOf("runtime.dispatcher.dispatchTaskFromControlPlane", direct);
+  assert.ok(action >= 0 && direct > action && dispatch > direct);
+  assert.match(source.slice(direct, dispatch), /sessionManager\.startSession/);
+  assert.match(source.slice(dispatch, dispatch + 900), /pm_wake/);
+  assert.doesNotMatch(source.slice(action, dispatch + 900), /useDirectAiWake/);
 });
 
-test("governance planner executes the AI wake before report and cooldown policy", () => {
+test("governance planner no longer hard-codes task-bound direct wake", () => {
   const source = readFileSync(
     resolve(
       import.meta.dirname,
@@ -32,14 +30,10 @@ test("governance planner executes the AI wake before report and cooldown policy"
     "utf8",
   );
   const action = source.indexOf('case "pm.wake_downstream"');
-  const direct = source.indexOf("if (useDirectAiWake())", action);
+  const direct = source.indexOf("const pureChatWake = !plan.task_id", action);
   const reportPolicy = source.indexOf("const hasReport =", action);
-  assert.ok(action >= 0 && direct > action, "direct governance wake missing");
-  assert.ok(reportPolicy < 0 || direct < reportPolicy, "report policy ran before AI wake");
-  const block = source.slice(direct, reportPolicy > direct ? reportPolicy : direct + 2200);
-  assert.match(block, /await executor\(wakeReq\)/);
-  assert.doesNotMatch(block, /evaluateWakeAllowance/);
-  assert.doesNotMatch(block, /reviewCheck/);
+  assert.ok(action >= 0 && direct > action && reportPolicy > direct);
+  assert.doesNotMatch(source.slice(action, reportPolicy), /useDirectAiWake/);
 });
 
 test("ADMIN task list renders ADMIN-to-PM follow-ups under their root", () => {
@@ -85,4 +79,23 @@ test("formal blocked report exposes a real settle action instead of clear-failur
   assert.match(html, /id="tdp-receipt-resolve-btn"/);
   assert.match(html, /resolve-blocked-report/);
   assert.match(html, /解除阻塞（确认收口）/);
+});
+
+test("Panel and Mobile expose the shared attempt, lease and same-TASK recovery API", () => {
+  const html = readFileSync(
+    resolve(import.meta.dirname, "..", "..", "..", "codeflowmu-desktop", "panel", "index.html"),
+    "utf8",
+  );
+  const mobile = readFileSync(
+    resolve(import.meta.dirname, "..", "..", "..", "codeflowmu-desktop", "mobile", "mobile.js"),
+    "utf8",
+  );
+  const routes = readFileSync(resolve(import.meta.dirname, "..", "mobile", "mobileRoutes.ts"), "utf8");
+  assert.match(html, /id="tdp-dispatch-state"/);
+  assert.match(html, /\/dispatch-state/);
+  assert.match(html, /repair_retry/);
+  assert.match(mobile, /active_lease/);
+  assert.match(mobile, /attempt_id/);
+  assert.match(routes, /\/redispatch/);
+  assert.match(routes, /\/dispatch-state/);
 });

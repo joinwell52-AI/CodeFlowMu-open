@@ -63,8 +63,15 @@ export class LifecycleKernel {
     });
   }
 
-  async runtimeDispatchInboxToActive(taskFilePath: string): Promise<void> {
-    return this.#sm.runtimeDispatchInboxToActive(taskFilePath);
+  async runtimeDispatchInboxToActive(
+    taskFilePath: string,
+    claim?: { attemptId?: string; leaseId?: string; agentId?: string },
+  ): Promise<void> {
+    return this.#sm.runtimeDispatchInboxToActive(taskFilePath, claim);
+  }
+
+  async runtimeRepairInboxSplit(taskFilePath: string, reason?: string): Promise<void> {
+    return this.#sm.runtimeRepairInboxSplit(taskFilePath, reason);
   }
 
   async runtimeRestoreActiveToInbox(

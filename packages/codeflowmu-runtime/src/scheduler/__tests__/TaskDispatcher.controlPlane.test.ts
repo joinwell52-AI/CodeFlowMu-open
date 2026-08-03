@@ -208,7 +208,7 @@ describe("dispatch control plane single entry", () => {
         await pipeline.dispatcher.releasePendingDependencyTasks();
 
         const qaState = await readFile(qaPath, "utf-8");
-        assert.match(qaState, /^state:\s*dispatched/m);
+        assert.match(qaState, /^state:\s*inbox/m);
 
         const cycleRaw = await readFile(
           pmGovernanceCycleJournalPath(rootDir),

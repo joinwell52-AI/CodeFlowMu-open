@@ -3329,6 +3329,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
           <button class="hbtn" id="tdp-resume-btn" style="display:none;font-size:14px;color:#60a5fa;border-color:rgba(96,165,250,.4)" onclick="tdpResumeTask(false)" data-i18n="task.act.resume">▶ 恢复执行</button>
           <button class="hbtn" id="tdp-resume-priority-btn" style="display:none;font-size:14px;color:#fbbf24;border-color:rgba(251,191,36,.4)" onclick="tdpResumeTask(true)" data-i18n="task.act.resumePriority">⏫ 恢复并优先</button>
           <button class="hbtn hbtn-force-archive" id="tdp-force-archive-btn" style="display:none;font-size:14px" onclick="tdpForceArchiveClick(event)" data-i18n-title="tdp.forceArchiveTitle"><span aria-hidden="true">🗑</span><span class="force-archive-label">强行归档</span></button>
+          <button class="hbtn" id="tdp-redispatch-btn" style="font-size:14px" onclick="tdpRedispatchClick(event)">重新派发</button>
         </div>
         <div id="tdp-alerts-fold" class="tdp-alerts-fold">
           <button type="button" id="tdp-alerts-toggle" class="tdp-alerts-toggle" onclick="tdpToggleAlertsFold()">
@@ -3345,6 +3346,10 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
             <button type="button" class="hbtn" id="tdp-dispatch-retry-admin-btn" onclick="tdpDispatchRetryAdminRetry()">重试</button>
             <button type="button" class="hbtn hbtn-force-archive" id="tdp-dispatch-retry-archive-btn" onclick="tdpDispatchRetryForceArchive()">强制归档</button>
           </div>
+        </div>
+        <div id="tdp-dispatch-state" class="tdp-dispatch-retry tdp-dispatch-retry--auto" style="display:none">
+          <div class="tdp-dispatch-retry-title">任务执行状态</div>
+          <div id="tdp-dispatch-state-meta" class="tdp-dispatch-retry-meta"></div>
         </div>
         <div id="tdp-receipt-summary" class="tdp-dispatch-retry tdp-dispatch-retry--waiting" style="display:none">
           <div id="tdp-receipt-summary-title" class="tdp-dispatch-retry-title"></div>
@@ -16176,6 +16181,7 @@ function planningStatusLabel(value){
   return labels[String(value||'')]||String(value||'—');
 }
 const _pmPlanningGateCache=new Map();
+const _pmFormalPlanningGateCache=new Map();
 async function getPmPlanningGate(taskId,refresh){
   const id=String(taskId||'').trim();
   if(!id)return null;
@@ -16221,6 +16227,13 @@ function renderTaskPlanningGate(data){
   if(!data||data.error){el.style.display='none';body.innerHTML='';tdpRefreshAlertsFold();return;}
   const level=Number(data.planning_level||0);
   const rows=[['规划等级','Level '+level],['分类依据',data.classification_reason||'—'],['规划状态',planningStatusLabel(data.planning_status)]];
+  if(data.long_horizon_required){
+    rows.push(['长期规划','已触发 · '+(data.long_horizon_reason||'long_horizon')]);
+    rows.push(['Artifact',data.artifact_status||'missing']);
+    rows.push(['语义校验',data.validation_status||'missing']);
+    rows.push(['Planning Gate',data.planning_gate_status||'not_submitted']);
+    rows.push(['派发范围',data.dispatch_scope||'closed']);
+  }
   if(data.planning_artifact_path)rows.push([level===3?'Product Brief':'规划产物',(data.planning_artifact_revision?'revision '+data.planning_artifact_revision+' · ':'')+data.planning_artifact_path]);
   rows.push(['必需技能',data.pm_product_skills||'0/0']);
   if((data.missing_skills||[]).length)rows.push(['缺失技能',data.missing_skills.join('、')]);
@@ -16232,15 +16245,46 @@ function renderTaskPlanningGate(data){
   }
   rows.push(['下游派单',data.dispatch_open?'已开放':'未开放']);
   if(data.next_action)rows.push(['PM 下一步',data.next_action]);
+  const formal=data.formal_planning_gate||null;
+  const validation=formal&&formal.validation;
+  if(data.long_horizon_required&&validation){
+    rows.push(['源任务书 SHA',validation.source_digest||'—']);
+    rows.push(['正文 revision/digest',(formal.revision?'r'+formal.revision+' · ':'')+(formal.body_digest||'—')]);
+    rows.push(['覆盖率',String(Math.round(Number(validation.hard_requirement_coverage||0)*100))+'% · '+String(validation.requirement_count||0)+' REQ']);
+    rows.push(['预算/关键路径',String(validation.budget_low||0)+'–'+String(validation.budget_high||0)+' AI 日 · CP '+String(validation.critical_path_days||0)]);
+    rows.push(['Findings',String((validation.blocking_findings||[]).length)+' blocking · '+String((validation.warnings||[]).length)+' warning']);
+    rows.push(['事实快照',validation.fact_snapshot_at||'—']);
+    rows.push(['决定投递',formal.decision?String(formal.decision.notice_status||'pending')+' / wake '+String(formal.decision.wake_status||'pending'):'尚无决定']);
+    rows.push(['历史',String(formal.history_count||0)+' 条 append-only 记录']);
+  }
   const safeTaskId=esc(String(data.task_id||'')).replace(/'/g,"\\'");
   const briefButton=data.planning_artifact_path
     ?`<button type="button" class="hbtn" onclick="openPmPlanningBrief('${safeTaskId}')">${esc(t('task.pmPlanningBriefView'))}</button>`
     :'';
+  const decisions=data.long_horizon_required&&formal&&formal.status==='pending'
+    ?['approve_wp00','request_plan_change','pause','replan','terminate'].map(value=>`<button type="button" class="hbtn${value==='approve_wp00'?' blue':''}" onclick="decideFormalPlanningGate('${safeTaskId}','${value}')">${esc(value)}</button>`).join('')
+    :'';
   body.innerHTML=rows.map(([k,v])=>`<div class="tdp-execution-gate-row"><span class="tdp-execution-gate-k">${esc(k)}</span><span class="tdp-execution-gate-v">${esc(String(v))}</span></div>`).join('')+
-    `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${briefButton}<button type="button" class="hbtn" onclick="adjustPmPlanningLevel('${safeTaskId}',${level})">ADMIN 调整规划等级</button></div>`;
+    `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${briefButton}<button type="button" class="hbtn" onclick="adjustPmPlanningLevel('${safeTaskId}',${level})">ADMIN 调整规划等级</button>${decisions}</div>`;
   el.classList.toggle('tdp-planning-gate--blocked',data.dispatch_open===false);
   el.style.display='flex';
   tdpRefreshAlertsFold();
+}
+async function decideFormalPlanningGate(taskId,decision){
+  const state=_pmFormalPlanningGateCache.get(String(taskId||''));
+  if(!state||!state.revision||!state.body_digest||!state.validation_digest){showToast('Planning Gate 当前 revision/digest 不完整','err');return;}
+  const reason=window.prompt('请输入 ADMIN Planning Gate 决定理由（必填）','');
+  if(!reason||!reason.trim())return;
+  try{
+    const res=await fetch('/api/v2/pm/governance/planning-gate/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      task_id:taskId,thread_key:state.submission&&state.submission.thread_key,revision:state.revision,
+      body_digest:state.body_digest,validation_digest:state.validation_digest,decision,reason:reason.trim()
+    })});
+    const data=await res.json();
+    if(!res.ok||data.error)throw new Error(data.message||data.error||'决定失败');
+    showToast('Planning Gate 已记录：'+decision,data.delivered?'ok':'#fbbf24');
+    if(_tdpFile)void refreshTaskPlanningGate(_tdpFile);
+  }catch(err){showToast('Planning Gate 决定失败：'+String(err&&err.message||err),'err');}
 }
 async function adjustPmPlanningLevel(taskId,currentLevel){
   const raw=window.prompt('输入规划等级 0、1、2 或 3',String(currentLevel));
@@ -16262,8 +16306,13 @@ async function refreshTaskPlanningGate(f){
   if(!taskId){renderTaskPlanningGate(null);return;}
   const requestedFile=String((f&&f.filename)||'');
   try{
-    const res=await fetch('/api/v2/pm/governance/product-gate?task_id='+encodeURIComponent(taskId));
+    const [res,formalRes]=await Promise.all([
+      fetch('/api/v2/pm/governance/product-gate?task_id='+encodeURIComponent(taskId)),
+      fetch('/api/v2/pm/governance/planning-gate?task_id='+encodeURIComponent(taskId))
+    ]);
     const data=await res.json();
+    const formal=await formalRes.json().catch(()=>null);
+    if(formalRes.ok&&formal&&!formal.error){data.formal_planning_gate=formal;_pmFormalPlanningGateCache.set(taskId,formal);}else{_pmFormalPlanningGateCache.delete(taskId);}
     if(!_tdpFile||String(_tdpFile.filename||'')!==requestedFile)return;
     renderTaskPlanningGate(data);
   }catch(_){if(_tdpFile&&String(_tdpFile.filename||'')===requestedFile)renderTaskPlanningGate(null);}
@@ -16885,6 +16934,7 @@ function openTaskDetail(f){
   if(chronicleEl)chronicleEl.style.display='none';
   if(chronicleLabel)chronicleLabel.style.display='none';
   void refreshTdpDispatchRetry(f);
+  void refreshTdpDispatchState(f);
   void refreshTdpReceiptSummary(f);
   tdpRefreshAlertsFold();
 }
@@ -17395,19 +17445,71 @@ async function panelDispatchRetryAdminRetry(taskId){
   const tid=String(taskId||'').trim();
   if(!tid){showToast('无法解析 task_id','#fca5a5');return;}
   try{
-    const res=await fetch('/api/v2/runtime/dispatch-retry/admin-retry',{
+    const res=await fetch('/api/v2/runtime/tasks/'+encodeURIComponent(tid)+'/redispatch',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({task_id:tid,reason:'Panel ADMIN 重试'}),
+      body:JSON.stringify({mode:'repair_retry',idempotency_key:'panel-redispatch:'+tid+':'+Date.now()}),
     });
     const d=await res.json();
     if(!res.ok)throw new Error(d.message||d.code||res.status);
     showToast('已触发 ADMIN 重试，重新进入 dispatch','#4ade80');
     await refreshPanelAfterTaskMutation();
     await loadDispatchRetryRecords();
-    if(_tdpFile&&tdpDispatchRetryTaskId(_tdpFile)===tid)void refreshTdpDispatchRetry(_tdpFile);
+    if(_tdpFile&&tdpDispatchRetryTaskId(_tdpFile)===tid){
+      void refreshTdpDispatchRetry(_tdpFile);
+      void refreshTdpDispatchState(_tdpFile);
+    }
   }catch(e){
     showToast('重试失败: '+(e.message||e),'#fca5a5');
+  }
+}
+
+async function tdpRedispatchClick(event){
+  if(event)event.stopPropagation();
+  if(!_tdpFile)return;
+  const taskId=tdpDispatchRetryTaskId(_tdpFile);
+  if(!taskId){showToast('无法解析 task_id','#fca5a5');return;}
+  const btn=document.getElementById('tdp-redispatch-btn');
+  if(btn)btn.disabled=true;
+  try{
+    await panelDispatchRetryAdminRetry(taskId);
+  }finally{
+    if(btn)btn.disabled=false;
+  }
+}
+
+async function refreshTdpDispatchState(f){
+  const taskId=tdpDispatchRetryTaskId(f);
+  const host=document.getElementById('tdp-dispatch-state');
+  const meta=document.getElementById('tdp-dispatch-state-meta');
+  if(!taskId||!host||!meta)return;
+  try{
+    const res=await fetch('/api/v2/runtime/tasks/'+encodeURIComponent(taskId)+'/dispatch-state');
+    const state=await res.json();
+    if(!res.ok)throw new Error(state.message||state.code||res.status);
+    const latest=Array.isArray(state.attempts)&&state.attempts.length?state.attempts[state.attempts.length-1]:null;
+    const cls=state.classification||{};
+    const rows=[
+      'bucket: '+String(state.lifecycle_bucket||'—'),
+      'state: '+String(state.fm_state||'—'),
+      'dispatch: '+String(cls.state||'—'),
+      latest?'attempt: '+String(latest.attempt_id)+' · '+String(latest.status||''):null,
+      state.active_lease?'lease: '+String(state.active_lease.lease_id)+' · agent='+String(state.active_lease.agent_id||''):null,
+      state.live_session?'session: active':null,
+      cls.recommended_action&&cls.recommended_action!=='none'?'建议: '+String(cls.recommended_action):null,
+    ].filter(Boolean);
+    meta.textContent=rows.join('\n');
+    host.className='tdp-dispatch-retry '+(cls.actionable?'tdp-dispatch-retry--waiting':'tdp-dispatch-retry--auto');
+    host.style.display='block';
+    const redispatch=document.getElementById('tdp-redispatch-btn');
+    if(redispatch){
+      redispatch.style.display=cls.actionable&&['repair_retry','restart_session'].includes(cls.recommended_action)?'':'none';
+      redispatch.textContent=cls.recommended_action==='restart_session'?'重启 Session':'修复并重新派发';
+    }
+    tdpRefreshAlertsFold();
+  }catch(e){
+    host.style.display='none';
+    console.warn('refreshTdpDispatchState failed',e);
   }
 }
 

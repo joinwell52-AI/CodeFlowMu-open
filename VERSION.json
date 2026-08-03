@@ -3,16 +3,16 @@
   "productName": "CodeFlowMu Open Dev Team Edition",
   "positioning": "A multi-agent development team application governed by the FCoP protocol and driven through Cursor SDK interfaces.",
   "edition": "open-dev-team",
-  "version": "V1.2.12-open",
-  "npmVersion": "1.2.12-open",
+  "version": "V1.2.13-open",
+  "npmVersion": "1.2.13-open",
   "releaseChannel": "open",
   "status": "public-open",
   "sourceRepository": "joinwell52-AI/codeflowmu",
   "targetRepository": "joinwell52-AI/CodeFlowMu-open",
-  "builtAt": "2026-08-03T08:12:28.176Z",
-  "sourceGitCommit": "d6b98b276d1bb6e5d6d114c40ad0c9649ad57ded",
+  "builtAt": "2026-08-03T15:23:04.348Z",
+  "sourceGitCommit": "c6416ca28abb4c67d2120ad061b1afd2fc9572ea",
   "sourceDirty": false,
-  "motherVersion": "V1.2.12",
+  "motherVersion": "V1.2.13",
   "features": [
     {
       "id": "fcop-development-team",
@@ -58,6 +58,18 @@
       "name": "Independent EVAL observer",
       "status": "public",
       "executionTeamMember": false
+    },
+    {
+      "id": "task-claim-redispatch-recovery",
+      "name": "Agent self-claim and durable task redispatch recovery",
+      "status": "public",
+      "publicSince": "V1.2.13-open"
+    },
+    {
+      "id": "pm-long-horizon-planning",
+      "name": "PM long-horizon planning and ADMIN Planning Gate",
+      "status": "public",
+      "publicSince": "V1.2.13-open"
     }
   ],
   "boundary": {
@@ -163,7 +175,7 @@
   "releaseApproval": {
     "policy": "deny_unregistered_mother_changes",
     "approvedBy": "ADMIN",
-    "taskId": "TASK-20260727-005",
+    "taskId": "TASK-20260803-001",
     "approvedFeatureIds": [
       "project-root-hot-switch",
       "open-install-integrity",
@@ -172,6 +184,8 @@
       "agent-playbook-packages",
       "qa-rework-dependency-gate",
       "product-delivery-governance-gate",
+      "task-claim-redispatch-recovery",
+      "pm-long-horizon-planning",
       "pre-action-approval-gate",
       "runtime-governance-remediation",
       "team-model-runtime-persistence"
@@ -492,6 +506,40 @@
           "packages/codeflowmu-runtime/src/session/SessionManager.ts",
           "packages/codeflowmu-runtime/src/session/__tests__/SessionManager.test.ts",
           "packages/codeflowmu-runtime/src/types/state.ts"
+        ]
+      },
+      {
+        "id": "task-claim-redispatch-recovery",
+        "productPolicy": "open-core",
+        "description": "以正式 TASK 为任务分配权威，提供 Agent 自主认领、持久化 dispatch attempt、同 TASK 重派、Session 重启恢复和轨道机降级闭环。",
+        "paths": [
+          "codeflowmu-shell/src/__tests__/pm-direct-wake-and-admin-child-ui.test.ts",
+          "packages/codeflowmu-runtime/src/project/**",
+          "packages/codeflowmu-runtime/src/scheduler/DispatchAttemptStore.ts",
+          "packages/codeflowmu-runtime/src/scheduler/LifecycleGovernor.ts",
+          "packages/codeflowmu-runtime/src/scheduler/RuntimeTaskControlTools.ts",
+          "packages/codeflowmu-runtime/src/scheduler/TaskDispatchStall.ts",
+          "packages/codeflowmu-runtime/src/scheduler/__tests__/DispatchAttemptStore.test.ts",
+          "packages/codeflowmu-runtime/src/scheduler/__tests__/RuntimeTaskControlTools.test.ts",
+          "packages/codeflowmu-runtime/src/scheduler/__tests__/TaskDispatchStall.test.ts"
+        ]
+      },
+      {
+        "id": "pm-long-horizon-planning",
+        "productPolicy": "open-core",
+        "description": "提供长期复杂任务的任务书审计、Product Brief、WP/DAG/预算/绝对日程、来源校验、原子规划版本和五态 ADMIN Planning Gate；批准后仅开放 WP-00。",
+        "paths": [
+          ".codeflowmu/agent-skills.manifest.json",
+          ".codeflowmu/pm-skills.manifest.json",
+          "docs/skills/agent-skills.manifest.json",
+          "docs/skills/pm-planning-governance.md",
+          "docs/skills/pm-skills-mapping.md",
+          "packages/codeflowmu-runtime/src/pm/LongHorizonPlanning.ts",
+          "packages/codeflowmu-runtime/src/pm/PlanningGateStore.ts",
+          "packages/codeflowmu-runtime/src/pm/__tests__/LongHorizonPlanning.test.ts",
+          "skills/README.md",
+          "skills/README.zh.md",
+          "skills/pm-long-horizon-planning/**"
         ]
       },
       {

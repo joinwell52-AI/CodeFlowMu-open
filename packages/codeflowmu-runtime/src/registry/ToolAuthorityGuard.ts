@@ -128,6 +128,7 @@ const PM_ALLOW = uniqueTools(
     "pm.close_admin_task",
     "pm.wake_downstream",
     "pm.review_check",
+    "pm.validate_long_horizon_plan",
     "pm.write_planning_artifact",
     "pm.record_planning_skill_evidence",
     "pm.inspect_task_spec",

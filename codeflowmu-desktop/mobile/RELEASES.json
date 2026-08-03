@@ -2,6 +2,17 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "V1.0.61",
+      "resource_version": "1.0.61",
+      "released_at": "2026-08-03T15:06:08Z",
+      "name": "任务自主认领与长期规划",
+      "changes": [
+        "任务页新增 Agent 自主认领、同 TASK 重派与恢复状态展示",
+        "长期复杂规划增加 Product Brief、WP 依赖图、预算日程和 Planning Gate 展示",
+        "审批后仅开放 WP-00，并保留规划版本历史与来源校验信息"
+      ]
+    },
+    {
       "version": "V1.0.60",
       "resource_version": "1.0.60",
       "released_at": "2026-08-02T17:48:59Z",

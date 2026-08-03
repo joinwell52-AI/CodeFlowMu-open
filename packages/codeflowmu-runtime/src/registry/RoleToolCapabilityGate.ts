@@ -14,6 +14,7 @@ const SDK_TOOL_IDS = new Set([
 
 const FCOP_READ = [
   "read_task", "read_report", "list_tasks", "list_reports", "list_issues",
+  "list_my_tasks", "read_my_task",
   "fcop_report", "fcop_check", "fcop_audit", "get_team_status", "inspect_task",
 ] as const;
 const FCOP_EXECUTOR = ["write_report", "write_issue", "drop_suggestion", "submit_task", "claim_task"] as const;
@@ -22,7 +23,8 @@ const FCOP_GOVERNANCE = ["approve_task", "reject_task", "archive_task", "finish_
 const FCOP_REVIEW = ["write_review", "submit_review", "review_task", "approve_review", "reject_review", "mark_human_approved"] as const;
 const PM_RUNTIME = [
   "pm.summarize_thread", "pm.detect_thread_stall", "pm.close_admin_task",
-  "pm.wake_downstream", "pm.review_check", "pm.write_planning_artifact",
+  "pm.wake_downstream", "pm.review_check", "pm.validate_long_horizon_plan", "pm.write_planning_artifact",
+  "pm.redispatch_task",
   "pm.record_planning_skill_evidence", "pm.inspect_task_spec",
   "pm.inspect_capability_matrix", "pm.inspect_project_baseline",
   "pm.inspect_runtime_topology", "pm.create_child_task",
@@ -54,6 +56,8 @@ function formalToolId(id: string): string {
 }
 
 function callToolId(toolName: string, args: Record<string, unknown>): string {
+  const raw = String(toolName ?? "").trim().toLowerCase();
+  if (raw.startsWith("pm.")) return raw;
   const base = canonicalToolId(toolName);
   if (base !== "mcp") return base;
   const provider = String(args["providerIdentifier"] ?? args["provider"] ?? "").trim().toLowerCase();

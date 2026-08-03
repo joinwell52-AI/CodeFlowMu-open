@@ -51,6 +51,10 @@ import {
   PM_RUNTIME_CONTROL_TOOL_DEFINITIONS,
   invokePmRuntimeControlTool,
   isPmRuntimeControlTool,
+  resolveProjectRoot,
+  RUNTIME_TASK_CONTROL_TOOL_DEFINITIONS,
+  invokeRuntimeTaskControlTool,
+  isRuntimeTaskControlTool,
 } from "@codeflowmu/runtime";
 
 // ─── 配置读取 ─────────────────────────────────────────────────────────────────
@@ -77,12 +81,13 @@ const pythonBin =
 
 const configuredProjectRoot = process.env["FCOP_PROJECT_DIR"]?.trim();
 const launchCwd = path.resolve(process.cwd());
-const projectRoot = path.resolve(configuredProjectRoot || launchCwd);
+const projectRoot = resolveProjectRoot(configuredProjectRoot || launchCwd).projectRoot;
 const pathIdentity = (value: string): string =>
   process.platform === "win32" ? value.toLowerCase() : value;
 if (
   configuredProjectRoot &&
-  pathIdentity(projectRoot) !== pathIdentity(launchCwd)
+  pathIdentity(projectRoot) !==
+    pathIdentity(resolveProjectRoot(launchCwd).projectRoot)
 ) {
   process.stderr.write(
     `[fcop-mcp-filter] ACTIVE_PROJECT_BINDING_MISMATCH: ` +
@@ -170,6 +175,21 @@ function injectPmRuntimeControlTools(
     if (!allowedTools.has(tool.name) || names.has(tool.name)) continue;
     out.push({ ...tool });
     names.add(tool.name);
+  }
+  return out;
+}
+
+function injectRuntimeTaskControlTools(
+  tools: Array<{ name: string; description?: string; inputSchema?: unknown }>,
+): Array<{ name: string; description?: string; inputSchema?: unknown }> {
+  const definitions = new Map(
+    RUNTIME_TASK_CONTROL_TOOL_DEFINITIONS.map((tool) => [tool.name, tool]),
+  );
+  const out = tools
+    .filter((tool) => !definitions.has(tool.name as never))
+    .map((tool) => ({ ...tool }));
+  for (const tool of RUNTIME_TASK_CONTROL_TOOL_DEFINITIONS) {
+    if (allowedTools.has(tool.name)) out.push({ ...tool });
   }
   return out;
 }
@@ -406,6 +426,37 @@ parentRl.on("line", (line) => {
     const rawName =
       typeof params?.["name"] === "string" ? (params["name"] as string) : "";
     if (rawName) {
+      if (isRuntimeTaskControlTool(rawName) && allowedTools.has(rawName)) {
+        const args =
+          params?.["arguments"] && typeof params["arguments"] === "object"
+            ? (params["arguments"] as Record<string, unknown>)
+            : {};
+        void invokeRuntimeTaskControlTool({
+          toolName: rawName,
+          args,
+          agentId: runtimeAgentId,
+          sessionId: runtimeSessionId,
+        }).then((result) => {
+          writeJsonRpcLine({
+            jsonrpc: "2.0",
+            id: msg["id"],
+            result: {
+              content: [{ type: "text", text: JSON.stringify(result) }],
+              isError: result["ok"] !== true,
+            },
+          });
+        }).catch((error) => {
+          writeJsonRpcLine({
+            jsonrpc: "2.0",
+            id: msg["id"],
+            result: {
+              content: [{ type: "text", text: JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }) }],
+              isError: true,
+            },
+          });
+        });
+        return;
+      }
       if (isPmRuntimeControlTool(rawName)) {
         const args =
           params?.["arguments"] && typeof params["arguments"] === "object"
@@ -552,9 +603,11 @@ rl.on("line", (line: string) => {
     result["tools"] = (
       result["tools"] as Array<{ name: string }>
     ).filter((t) => isLifecycleToolAllowed(t.name, allowedTools));
-    result["tools"] = injectPmRuntimeControlTools(normalizeToolDefinitions(
-      injectLifecycleToolAliases(
-        result["tools"] as Array<{ name: string; description?: string }>,
+    result["tools"] = injectPmRuntimeControlTools(injectRuntimeTaskControlTools(
+      normalizeToolDefinitions(
+        injectLifecycleToolAliases(
+          result["tools"] as Array<{ name: string; description?: string }>,
+        ),
       ),
     ));
     const after = (result["tools"] as Array<{ name: string }>).length;

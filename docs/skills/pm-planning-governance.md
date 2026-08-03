@@ -12,7 +12,7 @@
 
 | 等级 | 适用范围 | 派单前最低产物 |
 |---|---|---|
-| Level 3 | 新产品、新应用、复杂功能、UI/UX 改版、移动端/PWA、架构调整、大版本升级、跨模块复杂改造 | 完整 Product Brief；产品、范围、流程、交互、视觉、技术、数据、测试与交付计划齐全；按任务要求执行 PM/UI 技能，复杂产品默认校验 8 项 |
+| Level 3 | 新产品、新应用、复杂功能、UI/UX 改版、移动端/PWA、架构调整、大版本升级、跨模块复杂改造 | 完整 Product Brief；产品、范围、流程、交互、视觉、技术、数据、测试与交付计划齐全；按任务要求执行 PM/UI 技能；符合长期触发条件时额外执行 `pm-long-horizon-planning` |
 | Level 2 | 普通新功能、中等模块修改、API/数据结构调整、有明确影响面的工程改造 | 目标、范围、技术方案、影响面、验收标准、测试数据、交付顺序 |
 | Level 1 | 明确小 Bug、小范围文案/样式、单点兼容、配置调整 | 问题现象、根因或待验证假设、修改范围、风险、回归测试 |
 | Level 0 | 查询、状态检查、巡检、报告汇总、只读、无实现协调、紧急止损 | 无 Product Brief/PLAN 门禁 |
@@ -26,6 +26,14 @@ ADMIN 可在任务 frontmatter 中用 `planning_level: 0..3`、`override_by: ADM
 - frontmatter 至少包含 `task_id`、`status: ready`、`revision`。
 
 Level 3 至少包含：产品目标、目标用户、问题与价值、功能范围、明确不做什么、用户流程、信息架构、交互规则、视觉与响应式、技术候选方案比较、数据方案、测试数据、QA 验收方法、风险与依赖、DEV/QA/OPS 交付计划、验收标准。
+
+## 长期复杂规划
+
+`planning_method: long_horizon`、ADMIN 明确要求长期总体规划/任务书转计划、Level 3 正文超过 12,000 字符或 200 行，或 Level 3 同时命中至少三类 WP/Gate/跨模块/多 Runtime/恢复/实验/预算信号时，Runtime 条件要求 `pm-long-horizon-planning`。Level 0、小 Bug、单文件调整、普通 UI Level 3，以及已批准且未 reopened 的长期规划不触发。ADMIN 可用非空 `override_reason` 显式覆盖。
+
+长期规划必须完整读取源任务书并记录 SHA/行数/版本，建立 Requirement Ledger 与 100% 硬要求覆盖，冻结带时间戳的现场事实，自底向上求解 WP 预算、DAG、关键路径和绝对日程。`pm.validate_long_horizon_plan` 把 source/body/validation digest 与 task/thread/session 绑定；blocking finding 只能写 `needs_admin_decision`，通过后写 `ready_for_review`。
+
+长期状态拆分为 `artifact_status`、`validation_status`、`planning_gate_status`、`dispatch_scope`。Runtime 原子写 current canonical，并把上一 revision 追加保存为 `superseded/non-authoritative`。Planning Gate 仅接受 `approve_wp00`、`request_plan_change`、`pause`、`replan`、`terminate`；决定绑定当前 revision/body/validation digest，写入独立 append-only 历史并唤醒原 PM。只有匹配的 `approve_wp00` 可打开 WP-00，Planning Gate 不进入 operation approval。
 
 ## 派单与唤醒
 

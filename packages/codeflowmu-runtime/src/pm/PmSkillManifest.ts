@@ -14,6 +14,7 @@ export type PmBuiltinSkillId =
   | "pm.wake_downstream"
   | "pm.detect_thread_stall"
   | "pm.review_check"
+  | "pm.validate_long_horizon_plan"
   | "pm.write_planning_artifact"
   | "pm.record_planning_skill_evidence";
 
@@ -110,6 +111,25 @@ export const PM_BUILTIN_SKILLS: readonly PmBuiltinSkillDefinition[] = [
     api: "POST /api/v2/pm/governance/wake-downstream",
   },
   {
+    skill_id: "pm.validate_long_horizon_plan",
+    display_name: "长期规划语义校验",
+    description: "校验长期 Planning IR 的来源、覆盖、预算、DAG、事实时效与正文摘要，并生成绑定 digest。",
+    available_to_roles: ["PM"],
+    inputs: {
+      task_id: { required: true, description: "ADMIN→PM 根任务 id" },
+      thread_key: { required: true, description: "根任务 thread_key" },
+      source_digest: { required: true, description: "源任务书 SHA-256" },
+      body_markdown: { required: true, description: "完整 Product Brief 正文" },
+      planning_ir: { required: true, description: "任务 scratch 中的 Planning IR" },
+      fact_snapshot_at: { required: true, description: "事实快照时间" },
+    },
+    outputs: "PlanningValidationResult（含 body/source/validation digest 与 findings）",
+    tools: ["pm.validate_long_horizon_plan"],
+    restrictions: ["默认只读", "不替代语义分类", "blocking finding 禁止 ready_for_review"],
+    cli: "Runtime tool: pm.validate_long_horizon_plan",
+    api: "POST /api/v2/pm/governance/planning-validation",
+  },
+  {
     skill_id: "pm.write_planning_artifact",
     display_name: "受控写入规划产物",
     description: "由 Runtime 按任务规划等级写入唯一合法的 PLAN/Product Brief 路径。",
@@ -117,8 +137,10 @@ export const PM_BUILTIN_SKILLS: readonly PmBuiltinSkillDefinition[] = [
     inputs: {
       task_id: { required: true, description: "ADMIN→PM 主任务 id" },
       body_markdown: { required: true, description: "无 YAML frontmatter 的完整规划正文" },
-      status: { description: "draft 或 ready，默认 ready" },
+      status: { description: "长期规划使用 needs_admin_decision/ready_for_review；普通规划兼容 draft/ready" },
       thread_key: { description: "可选 FCoP thread_key" },
+      source_digest: { description: "长期规划源 SHA-256" },
+      validation_digest: { description: "当前正文绑定的 validation digest" },
     },
     outputs: "规划产物路径、修订号与实时规划门禁结果",
     tools: ["pm.write_planning_artifact"],
@@ -192,7 +214,7 @@ export function formatPmBuiltinSkillsPlaybookBlock(): string {
 |----------|------|------|
 ${rows}
 
-**Cold Path 派单后固定节奏**：\`write_task\` → \`pm.wake_downstream\` → 盯 REPORT → \`pm.review_check\` → \`pm.close_admin_task\` + MCP \`write_report\`。**只有当前 TASK 分支的新下游任务已有有效 REPORT 时，才可跳过 wake，直接 review_check / 汇总关单**；同一 thread 的旧父任务、兄弟任务及其 REPORT 仅作历史背景，不能满足当前 TASK，也不得被当前 TASK 重新 wake。不得对已完成任务重复催办。
+**Cold Path 派单后固定节奏**：\`write_task\` → 任务绑定的 \`pm.wake_downstream\`（统一进入 TaskDispatcher）→ Agent claim → 盯 REPORT → \`pm.review_check\` → \`pm.close_admin_task\` + MCP \`write_report\`。卡住时先区分依赖等待、未认领、生命周期分裂、Session 失联和等待 ADMIN；需要恢复时用 \`pm.redispatch_task\` 对**同一 task_id** 执行 retry / repair_retry / restart_session，不复制 TASK。**只有当前 TASK 分支的新下游任务已有有效 REPORT 时，才可跳过 wake，直接 review_check / 汇总关单**；同一 thread 的旧父任务、兄弟任务及其 REPORT 仅作历史背景，不能满足当前 TASK，也不得被当前 TASK 重新 wake。不得对已完成任务重复催办。
 
 **下游 inbox/active/review/tasks 无 REPORT 超过约 5 分钟**：PM **必须**调用 \`pm.wake_downstream\`（禁止只让 ADMIN 点 Panel 开工）；Runtime 也会 \`DOWNSTREAM_AUTO_NUDGE\`。先自动催办，失败再请 ADMIN；回复 ADMIN 须写清催办角色、子 task_id、session_id/wake 结果、下一步等待什么。**等待 REPORT 时禁止 shell 轮询本地 HTTP**——读 ledger cache、\`.codeflowmu/events/runtime-events.jsonl\`、\`cycle.jsonl\`。诊断辅助：\`pm.detect_thread_stall\` / \`pm.summarize_thread\`。`;
 }

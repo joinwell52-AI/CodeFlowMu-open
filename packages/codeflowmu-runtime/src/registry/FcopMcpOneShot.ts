@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { LEADER_TOOLS } from "../skill/FcopToolProfile.ts";
+import { resolveProjectRoot } from "../project/ProjectRootResolver.ts";
 
 const ONCE_SCRIPT = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -118,13 +119,27 @@ const FCOP_STATIC_TOOL_SCHEMAS: Record<string, GoogleToolParameters> = {
     },
     required: ["skill_id", "task_id", "input_context", "output_summary", "brief_section", "product_decisions"],
   },
+  "pm.validate_long_horizon_plan": {
+    type: "OBJECT",
+    properties: {
+      task_id: { ...STRING_PROP, description: "ADMIN to PM root task id." },
+      thread_key: { ...STRING_PROP, description: "Required FCoP thread_key." },
+      source_digest: { ...STRING_PROP, description: "Complete taskbook SHA-256 digest." },
+      body_markdown: { ...STRING_PROP, description: "Complete self-contained Product Brief body." },
+      planning_ir: { type: "OBJECT", description: "Non-authoritative Planning IR." },
+      fact_snapshot_at: { ...STRING_PROP, description: "Fact snapshot ISO-8601 timestamp." },
+    },
+    required: ["task_id", "thread_key", "source_digest", "body_markdown", "planning_ir", "fact_snapshot_at"],
+  },
   "pm.write_planning_artifact": {
     type: "OBJECT",
     properties: {
       task_id: { ...STRING_PROP, description: "ADMIN to PM root task id." },
       body_markdown: { ...STRING_PROP, description: "Complete planning Markdown without YAML frontmatter." },
-      status: { type: "STRING", enum: ["draft", "ready"], description: "Planning artifact status." },
+      status: { type: "STRING", enum: ["draft", "needs_admin_decision", "ready_for_review", "ready", "paused", "terminated"], description: "Planning artifact status." },
       thread_key: { ...STRING_PROP, description: "Optional FCoP thread_key." },
+      source_digest: { ...STRING_PROP, description: "Long-horizon source SHA-256." },
+      validation_digest: { ...STRING_PROP, description: "Matching validation digest." },
     },
     required: ["task_id", "body_markdown"],
   },
@@ -369,6 +384,28 @@ const FCOP_STATIC_TOOL_SCHEMAS: Record<string, GoogleToolParameters> = {
       actor: { ...STRING_PROP, description: "Acting role code." },
     },
     required: ["task_id"],
+  },
+  list_my_tasks: {
+    type: "OBJECT",
+    properties: {},
+  },
+  read_my_task: {
+    type: "OBJECT",
+    properties: {
+      task_id: { ...STRING_PROP, description: "Assigned canonical task id." },
+    },
+    required: ["task_id"],
+  },
+  "pm.redispatch_task": {
+    type: "OBJECT",
+    properties: {
+      task_id: { ...STRING_PROP, description: "Existing canonical TASK id." },
+      mode: { type: "STRING", enum: ["retry", "repair_retry", "restart_session", "reassign"] },
+      role: { ...STRING_PROP, description: "Optional target role." },
+      agent_id: { ...STRING_PROP, description: "Optional registered target agent." },
+      idempotency_key: { ...STRING_PROP, description: "Required idempotency key." },
+    },
+    required: ["task_id", "mode", "idempotency_key"],
   },
   finish_task: {
     type: "OBJECT",
@@ -624,9 +661,10 @@ export function invokeFcopToolOnce(
   args: Record<string, unknown>,
   timeoutMs = 60_000,
 ): Promise<string> {
+  const resolvedProjectRoot = resolveProjectRoot(projectRoot).projectRoot;
   const scriptPath = existsSync(ONCE_SCRIPT)
     ? ONCE_SCRIPT
-    : path.join(projectRoot, "packages", "codeflowmu-runtime", "scripts", "fcop_invoke_once.py");
+    : path.join(resolvedProjectRoot, "packages", "codeflowmu-runtime", "scripts", "fcop_invoke_once.py");
 
   const payload = JSON.stringify({ tool, arguments: args });
   const py = resolvePythonBin(pythonBin);
@@ -634,9 +672,9 @@ export function invokeFcopToolOnce(
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PYTHONUNBUFFERED: "1",
-    FCOP_PROJECT_DIR: projectRoot,
+    FCOP_PROJECT_DIR: resolvedProjectRoot,
   };
-  const repoRoot = resolveRepoRootWithFcopSdk(projectRoot);
+  const repoRoot = resolveRepoRootWithFcopSdk(resolvedProjectRoot);
   if (repoRoot) {
     prependPythonPath(env, repoRoot);
   }
@@ -644,9 +682,9 @@ export function invokeFcopToolOnce(
   return new Promise((resolve, reject) => {
     execFile(
       py,
-      ["-u", scriptPath, projectRoot, payload],
+      ["-u", scriptPath, resolvedProjectRoot, payload],
       {
-        cwd: projectRoot,
+        cwd: resolvedProjectRoot,
         encoding: "utf8",
         maxBuffer: 16 * 1024 * 1024,
         timeout: timeoutMs,

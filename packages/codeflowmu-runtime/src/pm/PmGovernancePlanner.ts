@@ -1013,8 +1013,8 @@ async function executeJudgmentCore(
         // that decision; it must not replace it with report, lifecycle,
         // cooldown or dependency policy. The woken AI inspects current state
         // and decides what work (if any) remains.
-        const useDirectAiWake = (): boolean => true;
-        if (useDirectAiWake()) {
+        const pureChatWake = !plan.task_id;
+        if (pureChatWake) {
           const wakeReq = buildWakeDownstreamRequest({
             task_id: plan.task_id,
             role,

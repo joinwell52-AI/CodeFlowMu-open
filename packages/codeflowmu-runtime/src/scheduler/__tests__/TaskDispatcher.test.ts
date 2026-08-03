@@ -294,7 +294,7 @@ describe("TaskDispatcher", () => {
         );
         assert.equal(
           frontmatterState(await readFile(filepath, "utf-8")),
-          "dispatched",
+          "inbox",
         );
       } finally {
         await pipeline.shutdown();
@@ -475,8 +475,12 @@ describe("TaskDispatcher", () => {
         );
 
         assert.equal(outcome.kind, "rejected_busy");
-        assert.equal(lifecycleRestoreCalls, 0);
-        assert.equal(frontmatterState(await readFile(filepath, "utf-8")), "inbox");
+        assert.equal(lifecycleRestoreCalls, 1);
+        assert.ok(
+          [undefined, "inbox"].includes(
+            frontmatterState(await readFile(filepath, "utf-8")),
+          ),
+        );
         await pipeline.sessionManager.cancelSession(running.session_id, "cleanup");
       } finally {
         await pipeline.shutdown();
@@ -543,7 +547,7 @@ describe("TaskDispatcher", () => {
               const text = await readFile(filepath, "utf-8");
               // History append precedes _restoreDispatchedToInbox — wait for both.
               return text.includes("agent_not_found") &&
-                frontmatterState(text) === "inbox"
+                (frontmatterState(text) === undefined || frontmatterState(text) === "inbox")
                 ? text
                 : null;
             } catch {
@@ -560,7 +564,7 @@ describe("TaskDispatcher", () => {
           fileText,
           /by `runtime` \| `inbox` → `agent_not_found` recipient=DEV/,
         );
-        assert.equal(frontmatterState(fileText), "inbox");
+        assert.ok([undefined, "inbox"].includes(frontmatterState(fileText)));
         // No SessionManager events should have been emitted (no session started).
         const startedEvents = pipeline.events.filter(
           (e) => e.event_type === "runtime.session_started",
@@ -694,7 +698,7 @@ describe("TaskDispatcher", () => {
             try {
               const text = await readFile(secondPath, "utf-8");
               return text.includes("rejected_busy") &&
-                frontmatterState(text) === "inbox"
+                (frontmatterState(text) === undefined || frontmatterState(text) === "inbox")
                 ? text
                 : null;
             } catch {
@@ -707,7 +711,7 @@ describe("TaskDispatcher", () => {
           fileText,
           /by `runtime` \| `inbox` → `rejected_busy` recipient=DEV, agent_status=running/,
         );
-        assert.equal(frontmatterState(fileText), "inbox");
+        assert.equal(frontmatterState(fileText), undefined);
 
         // Best-effort cleanup: cancel any active sessions to free the watcher.
         await pipeline.sessionManager
@@ -853,7 +857,7 @@ describe("TaskDispatcher", () => {
             try {
               const text = await readFile(filepath, "utf-8");
               return text.includes("restored after session failed") &&
-                frontmatterState(text) === "inbox"
+                (frontmatterState(text) === undefined || frontmatterState(text) === "inbox")
                 ? text
                 : null;
             } catch {
@@ -868,7 +872,7 @@ describe("TaskDispatcher", () => {
 
         assert.match(fileText, /`dispatched` → `inbox`/);
         assert.match(fileText, /restored after session failed/);
-        assert.equal(frontmatterState(fileText), "inbox");
+        assert.ok([undefined, "inbox"].includes(frontmatterState(fileText)));
       } finally {
         await pipeline.shutdown();
       }
@@ -1256,6 +1260,149 @@ Stop and wait for approval, while continuing to dispatch downstream tasks.
               `${taskId}.json`,
             ),
           ),
+        );
+      } finally {
+        await pipeline.shutdown();
+      }
+    });
+  });
+
+  it("allows one Agent to autonomously claim its inbox TASK and makes repeat claim idempotent", async () => {
+    await withTempScheduler(async ({ rootDir, stateDir }) => {
+      const lifecycleRoot = join(rootDir, "fcop", "_lifecycle");
+      const inboxDir = join(lifecycleRoot, "inbox");
+      await mkdir(join(lifecycleRoot, "active"), { recursive: true });
+      await mkdir(inboxDir, { recursive: true });
+      const lifecycleGovernor = new LifecycleGovernor({
+        lifecycleRoot,
+        projectRoot: rootDir,
+        logger: quietLogger(),
+      });
+      const pipeline = await buildPipeline({
+        inboxDir,
+        stateDir,
+        projectRoot: rootDir,
+        lifecycleGovernor,
+      });
+      try {
+        await pipeline.registry.register(makeAgentSpec());
+        pipeline.sdk.sendHandleFactory = (spec) =>
+          new InMemoryRunHandle({
+            sessionId: spec.sessionId,
+            agentId: spec.agentId,
+            manualSettle: true,
+          });
+        const orbit = await pipeline.sessionManager.startSession(
+          "DEV-01",
+          "agent-orbit",
+          { text: "poll my assigned tasks" },
+        );
+        const taskId = "TASK-20260803-101";
+        await writeFile(
+          join(inboxDir, `${taskId}-PM-to-DEV.md`),
+          TASK_BODY(taskId, "DEV"),
+        );
+
+        const listed = await pipeline.dispatcher.listMyTasks({
+          role: "DEV",
+          agentId: "DEV-01",
+          sessionId: orbit.session_id,
+        });
+        assert.deepEqual(listed.map((task) => task.task_id), [taskId]);
+        const read = await pipeline.dispatcher.readMyTask({
+          taskId,
+          role: "DEV",
+          agentId: "DEV-01",
+          sessionId: orbit.session_id,
+        });
+        assert.equal(read.task_id, taskId);
+        await assert.rejects(
+          () =>
+            pipeline.dispatcher.listMyTasks({
+              role: "QA",
+              agentId: "DEV-01",
+              sessionId: orbit.session_id,
+            }),
+          /AGENT_ROLE_MISMATCH/,
+        );
+
+        const claimed = await pipeline.dispatcher.claimMyTask({
+          taskId,
+          role: "DEV",
+          agentId: "DEV-01",
+          sessionId: orbit.session_id,
+        });
+        assert.equal(claimed.ok, true);
+        assert.equal(claimed.stage, "active");
+
+        const repeated = await pipeline.dispatcher.claimMyTask({
+          taskId,
+          role: "DEV",
+          agentId: "DEV-01",
+          sessionId: orbit.session_id,
+        });
+        assert.equal(repeated.ok, true);
+        assert.equal(repeated.idempotent, true);
+
+        const state = await pipeline.dispatcher.getDispatchTaskState(taskId);
+        assert.equal(state.attempts.length, 1);
+        assert.equal(state.active_lease?.session_id, orbit.session_id);
+        assert.equal(state.classification?.state, "running");
+        await pipeline.sessionManager.cancelSession(orbit.session_id, "cleanup");
+      } finally {
+        await pipeline.shutdown();
+      }
+    });
+  });
+
+  it("repairs inbox/dispatched and redispatches the same TASK with one durable attempt", async () => {
+    await withTempScheduler(async ({ rootDir, stateDir }) => {
+      const lifecycleRoot = join(rootDir, "fcop", "_lifecycle");
+      const inboxDir = join(lifecycleRoot, "inbox");
+      await mkdir(join(lifecycleRoot, "active"), { recursive: true });
+      await mkdir(inboxDir, { recursive: true });
+      const lifecycleGovernor = new LifecycleGovernor({
+        lifecycleRoot,
+        projectRoot: rootDir,
+        logger: quietLogger(),
+      });
+      const pipeline = await buildPipeline({
+        inboxDir,
+        stateDir,
+        projectRoot: rootDir,
+        lifecycleGovernor,
+      });
+      try {
+        await pipeline.registry.register(makeAgentSpec());
+        const taskId = "TASK-20260803-102";
+        const filename = `${taskId}-PM-to-DEV.md`;
+        await writeFile(
+          join(inboxDir, filename),
+          TASK_BODY(taskId, "DEV").replace("status: pending", "status: pending\nstate: dispatched"),
+        );
+
+        const outcome = await pipeline.dispatcher.redispatchTask({
+          taskId,
+          mode: "repair_retry",
+          idempotencyKey: "test-redispatch-102",
+        });
+        assert.equal(outcome.kind, "dispatched");
+        const state = await pipeline.dispatcher.getDispatchTaskState(taskId);
+        assert.equal(state.attempts.length, 1);
+        assert.equal(state.attempts[0]?.mode, "repair_retry");
+        assert.equal(state.lifecycle_bucket, "active");
+        await access(join(lifecycleRoot, "active", filename));
+        await assert.rejects(() => access(join(inboxDir, filename)));
+
+        const repeated = await pipeline.dispatcher.redispatchTask({
+          taskId,
+          mode: "repair_retry",
+          idempotencyKey: "test-redispatch-102",
+        });
+        assert.equal(repeated.kind, "already_dispatched");
+        assert.equal(
+          (await pipeline.dispatcher.getDispatchTaskState(taskId)).attempts.length,
+          1,
         );
       } finally {
         await pipeline.shutdown();

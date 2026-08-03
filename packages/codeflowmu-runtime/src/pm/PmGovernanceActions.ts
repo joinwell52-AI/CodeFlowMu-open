@@ -27,6 +27,13 @@ import { evaluatePmSummaryGate } from "./PmSummaryGate.ts";
 import { evaluateProductDeliveryGate } from "./ProductDeliveryGovernance.ts";
 import { evaluateQaReportAcceptance } from "./qaAcceptanceFromReport.ts";
 import { aggregateUsageForThread, type ThreadUsageSummary } from "./UsageAggregator.ts";
+import { DispatchAttemptStore } from "../scheduler/DispatchAttemptStore.ts";
+import { classifyTaskDispatchStall } from "../scheduler/TaskDispatchStall.ts";
+import { evaluateDispatchEligibility } from "./taskDispatchGate.ts";
+import {
+  filterThreadTasks,
+  loadExecutionGateContext,
+} from "./taskDispatchContext.ts";
 import {
   isTaskHotPathBody,
   readTaskBodyByIdPrefix,
@@ -88,6 +95,11 @@ export type StallFindingCode =
   | "active_stalled_done_report"
   | "missing_report"
   | "inbox_fragment"
+  | "waiting_dependency"
+  | "lifecycle_split"
+  | "task_unclaimed"
+  | "session_lost"
+  | "waiting_admin"
   | "pending_pm_review"
   | "waiting_pm_attention"
   | "waiting_pm_summary"
@@ -1019,6 +1031,10 @@ export async function detectThreadStall(
 
   const findings: StallFinding[] = [];
   const suggestions: StallSuggestion[] = [];
+  const dispatchAttempts = new DispatchAttemptStore({ projectRoot });
+  const dispatchContext = await loadExecutionGateContext(projectRoot).catch(
+    () => null,
+  );
 
   if (!rootId) {
     findings.push({
@@ -1094,16 +1110,80 @@ export async function detectThreadStall(
           taskIdMatchesPrefix(r.task_id, t.task_id),
       );
       if (!hasReport) {
+        const dispatchRef = dispatchContext?.tasks.find(
+          (candidate) =>
+            candidate.taskId === t.task_id || candidate.filename === t.filename,
+        );
+        const threadTasks = dispatchContext && dispatchRef
+          ? filterThreadTasks(dispatchContext.tasks, dispatchRef.threadKey)
+          : [];
+        const gate = dispatchRef && dispatchContext
+          ? evaluateDispatchEligibility(
+              dispatchRef,
+              threadTasks,
+              dispatchContext.reports,
+            )
+          : null;
+        const persisted = await dispatchAttempts.getTaskState(t.task_id);
+        const latestAttempt = persisted.attempts.at(-1);
+        const classification = classifyTaskDispatchStall({
+          lifecycleBucket: t.bucket,
+          fmState: String(t.state ?? t.yaml?.["state"] ?? "inbox"),
+          dependencyAllowed: gate?.reason !== "waiting_dependency",
+          waitingAdmin:
+            latestAttempt?.status === "rejected" &&
+            latestAttempt.reason === "waiting_admin_decision",
+          activeLease: persisted.active_lease,
+          latestAttempt,
+          // A non-expired lease is the durable signal available to this
+          // read-only ledger diagnostic. TaskDispatcher rechecks the live
+          // Session before any wake or redispatch side effect.
+          hasLiveSession: !!persisted.active_lease,
+        });
+
+        if (
+          classification.state === "waiting_dependency" ||
+          classification.state === "waiting_admin"
+        ) {
+          findings.push({
+            code: classification.state,
+            severity: "info",
+            message: `${t.task_id}: ${classification.reason}`,
+            entity_id: t.task_id,
+          });
+          continue;
+        }
+        if (
+          classification.state === "lifecycle_split" ||
+          classification.state === "task_unclaimed" ||
+          classification.state === "session_lost"
+        ) {
+          findings.push({
+            code: classification.state,
+            severity: "warn",
+            message: `${t.task_id}: ${classification.reason}`,
+            entity_id: t.task_id,
+          });
+        }
         findings.push({
           code: "missing_report",
           severity: "warn",
-          message: `${t.bucket} 任务无下游 REPORT：${t.task_id} → ${t.recipient}`,
+          message: `${t.bucket} 任务无下游 REPORT：${t.task_id} → ${t.recipient}；dispatch=${classification.state}`,
           entity_id: t.task_id,
         });
         suggestions.push({
           action: "wake_downstream",
-          detail: `催 ${t.recipient} 补 write_report 或继续执行`,
-          params: { task_id: t.task_id, role: t.recipient, reason: "nudge" },
+          detail:
+            classification.recommended_action === "repair_retry"
+              ? `修复生命周期分裂并对同一 TASK 重新派发给 ${t.recipient}`
+              : classification.recommended_action === "restart_session"
+                ? `为 ${t.recipient} 重启同一 TASK 的失联 Session`
+                : `通过任务控制平面唤醒 ${t.recipient}`,
+          params: {
+            task_id: t.task_id,
+            role: t.recipient,
+            reason: classification.recommended_action,
+          },
         });
       }
     }

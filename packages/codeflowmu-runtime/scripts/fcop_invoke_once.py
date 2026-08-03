@@ -1765,6 +1765,12 @@ def main() -> None:
         sys.exit(2)
 
     project_root = os.path.abspath(sys.argv[1])
+    if os.path.basename(project_root).lower() == "fcop" and (
+        os.path.isfile(os.path.join(project_root, "fcop.json"))
+        or os.path.isdir(os.path.join(project_root, "_lifecycle"))
+        or os.path.isdir(os.path.join(project_root, "tasks"))
+    ):
+        project_root = os.path.dirname(project_root)
     os.chdir(project_root)
     _ensure_fcop_sdk_importable(project_root)
 

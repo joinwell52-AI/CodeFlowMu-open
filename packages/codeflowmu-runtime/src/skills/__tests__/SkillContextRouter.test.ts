@@ -63,6 +63,7 @@ const MINI_MANIFEST = {
       "pm-product-requirements",
       "pm-scope-control",
       "pm-delivery-plan",
+      "pm-long-horizon-planning",
     ].map((id) => ({
       id,
       display_name: id,
@@ -377,6 +378,24 @@ describe("SkillContextRouter", () => {
         rows.filter((row) => row.task_id === taskId && row.outcome === "ok").length,
         8,
       );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("adds the long-horizon compiler only for a qualifying Level 3 task", async () => {
+    const root = await makeProject();
+    try {
+      const result = await resolveAndInjectAgentContextSkills(root, {
+        role: "PM",
+        message: "长期跨模块架构重构，建立 WP 任务树、Planning Gate、实验数据和恢复回滚计划",
+        intent: "task",
+        taskId: "TASK-20260803-010",
+        maxSkills: 3,
+      });
+      assert.ok(result.skillIds.includes("pm-long-horizon-planning"));
+      assert.equal(result.skillIds.length, 9);
+      assert.match(result.promptBlock, /Long-Horizon Planning Gate/);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

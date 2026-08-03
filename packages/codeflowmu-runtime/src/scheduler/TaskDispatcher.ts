@@ -41,6 +41,7 @@
  */
 
 import { promises as fs, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { toLocalIsoString } from "../_internal/local-iso.ts";
@@ -56,6 +57,7 @@ import type { RuntimeEvent, Unsubscribe } from "../types/state.ts";
 import type { SessionRecord } from "../types/state.ts";
 import type { InboxEvent, InboxWatcher } from "./InboxWatcher.ts";
 import {
+  findTaskLocationById,
   resolveTaskFileForMutation,
 } from "../lifecycle/taskPathUtils.ts";
 import type { LifecycleGovernor } from "./LifecycleGovernor.ts";
@@ -154,6 +156,15 @@ import {
 } from "../pm/agentTaskQueueControl.ts";
 import { guardLandedPmProductWorkerTask } from "../pm/ProductDeliveryRuntimeGate.ts";
 import { recordProductTaskClassification } from "../pm/ProductDeliveryGovernance.ts";
+import {
+  DispatchAttemptStore,
+  type DispatchAttempt,
+  type ExecutionLease,
+} from "./DispatchAttemptStore.ts";
+import {
+  classifyTaskDispatchStall,
+  type TaskDispatchStallClassification,
+} from "./TaskDispatchStall.ts";
 import {
   taskSpecAdmissionRecordPath,
   verifyTaskSpecAdmissionForDispatch,
@@ -404,6 +415,8 @@ export interface DispatchControlPlaneOptions {
    * It does not bypass lifecycle/frozen/paused checks or agent concurrency.
    */
   bypassBusinessGates?: boolean;
+  mode?: "initial" | "retry" | "repair_retry" | "restart_session" | "reassign";
+  idempotencyKey?: string;
 }
 
 /**
@@ -411,7 +424,7 @@ export interface DispatchControlPlaneOptions {
  * notes for downstream observability.
  */
 export type DispatchOutcome =
-  | { kind: "dispatched"; session_id: string; inboxHistoryRecorded?: boolean }
+  | { kind: "dispatched"; session_id: string; attempt_id?: string; lease_id?: string; inboxHistoryRecorded?: boolean }
   | { kind: "parse_failed"; reason: string }
   | { kind: "agent_not_found"; recipient: string; reason?: string }
   | { kind: "rejected_busy"; recipient: string; status: string }
@@ -437,7 +450,13 @@ export type DispatchOutcome =
   | { kind: "force_archived"; retry_key: string }
   | { kind: "no_task_id"; reason: string }
   | { kind: "observer_bypass"; recipient: string }
-  | { kind: "already_dispatched" }
+  | {
+      kind: "already_dispatched";
+      attempt_id?: string;
+      lease_id?: string;
+      session_id?: string;
+    }
+  | { kind: "lease_conflict"; attempt_id: string; lease_id?: string; session_id?: string; reason: string }
   | {
       kind: "dependency_pending";
       reason: string;
@@ -450,6 +469,8 @@ export type DispatchOutcome =
         | "waiting_dependency"
         | "task_not_dispatched"
         | "already_active"
+        | "lifecycle_split"
+        | "lifecycle_error"
         | "already_done"
         | "execution_blocked"
         | "product_brief_required"
@@ -465,6 +486,21 @@ export type DispatchOutcome =
       reason: string;
       source?: string;
     };
+
+export interface DispatchTaskStateView {
+  attempts: DispatchAttempt[];
+  active_lease?: ExecutionLease;
+  task_id?: string;
+  lifecycle_bucket?: string;
+  fm_state?: string;
+  dependency?: {
+    allowed: boolean;
+    task_ids: string[];
+    reason?: string;
+  };
+  live_session?: boolean;
+  classification?: TaskDispatchStallClassification;
+}
 
 export class TaskDispatcher {
   private readonly _watcher: InboxWatcher;
@@ -494,6 +530,7 @@ export class TaskDispatcher {
     string,
     { unsubscribe: Unsubscribe; filepath: string; filename: string; recipient: string }
   >();
+  private readonly _settlementJobs = new Set<Promise<void>>();
 
   /**
    * ADHOC priority queue — tasks that were rejected_busy and are waiting
@@ -526,6 +563,7 @@ export class TaskDispatcher {
   private readonly _pmQueueGuard: PmQueueGuard | undefined;
   private readonly _projectRoot: string | undefined;
   private readonly _dispatchRetryRegistry: DispatchRetryRegistry;
+  private readonly _dispatchAttemptStore: DispatchAttemptStore | undefined;
   private readonly _minScheduleRetryDelayMs: number;
   private _dispatchRetryHook: DispatchRetryHook | null = null;
 
@@ -550,6 +588,9 @@ export class TaskDispatcher {
     this._projectRoot = opts.projectRoot;
     this._dispatchRetryRegistry =
       opts.dispatchRetryRegistry ?? dispatchRetryRegistry;
+    this._dispatchAttemptStore = this._projectRoot
+      ? new DispatchAttemptStore({ projectRoot: this._projectRoot, now: this._now })
+      : undefined;
     this._minScheduleRetryDelayMs = opts.minScheduleRetryDelayMs ?? 0;
     this._inboxReconcileIntervalMs = Math.max(
       0,
@@ -691,7 +732,20 @@ export class TaskDispatcher {
       unsubscribe();
     }
     this._pendingSettlements.clear();
+    await Promise.allSettled([...this._settlementJobs]);
     await this._watcher.stop();
+  }
+
+  private _trackSettlement(job: Promise<void>): void {
+    const tracked = job.catch((error) => {
+      this._logger.error(
+        `[TaskDispatcher] settlement failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+    this._settlementJobs.add(tracked);
+    void tracked.finally(() => this._settlementJobs.delete(tracked));
   }
 
   // ── private ──────────────────────────────────────────────────────────
@@ -896,11 +950,7 @@ export class TaskDispatcher {
       );
     }
 
-    if (outcome.kind === "rejected_busy") {
-      await this._restoreRejectedBusyToInbox(filepath, filename);
-    } else if (_shouldRestoreClaimedTask(outcome)) {
-      await this._restoreDispatchedToInbox(filepath, filename, outcome.kind);
-    } else if (outcome.kind === "retry_waiting") {
+    if (outcome.kind === "retry_waiting") {
       this._scheduleDispatchRetry(
         filepath,
         filename,
@@ -927,6 +977,229 @@ export class TaskDispatcher {
 
   listDispatchRetryRecords() {
     return this._dispatchRetryRegistry.list();
+  }
+
+  async getDispatchTaskState(taskId: string): Promise<DispatchTaskStateView> {
+    const persisted = this._dispatchAttemptStore
+      ? await this._dispatchAttemptStore.getTaskState(taskId)
+      : { attempts: [] };
+    if (!this._projectRoot) return persisted;
+
+    const lifecycleRoot = join(this._projectRoot, "fcop", "_lifecycle");
+    const located = await findTaskLocationById(lifecycleRoot, taskId);
+    if (!located) return { ...persisted, task_id: taskId, lifecycle_bucket: "missing" };
+    const parsed = await this._parser.parse(located.path);
+    const dependency = await evaluateTaskDependencyGate(parsed, this._projectRoot);
+    const latestAttempt = persisted.attempts.at(-1);
+    const liveSessions = await this._sessionManager.listActive();
+    const hasLiveSession = liveSessions.some(
+      (session) =>
+        session.protocol.session_id === persisted.active_lease?.session_id ||
+        normalizeQueueTaskId(String(session.protocol.task_id ?? "")) ===
+          normalizeQueueTaskId(taskId),
+    );
+    const retry = this._dispatchRetryRegistry
+      .list()
+      .find(
+        (record) =>
+          normalizeQueueTaskId(String(record.task_id ?? "")) ===
+          normalizeQueueTaskId(taskId),
+      );
+    const classification = classifyTaskDispatchStall({
+      lifecycleBucket: located.stage,
+      fmState: String(parsed.frontmatter["state"] ?? "inbox"),
+      dependencyAllowed: dependency.allowed,
+      waitingAdmin: retry?.decisionRequired === true,
+      activeLease: persisted.active_lease,
+      latestAttempt,
+      hasLiveSession,
+    });
+    return {
+      ...persisted,
+      task_id: resolveCanonicalTaskId(located.filename, parsed),
+      lifecycle_bucket: located.stage,
+      fm_state: String(parsed.frontmatter["state"] ?? "inbox"),
+      dependency: {
+        allowed: dependency.allowed,
+        task_ids: dependency.dependencyTaskIds,
+        ...(dependency.reason ? { reason: dependency.reason } : {}),
+      },
+      live_session: hasLiveSession,
+      classification,
+    };
+  }
+
+  private async _assertExecutorIdentity(input: {
+    role: string;
+    agentId: string;
+    sessionId: string;
+  }): Promise<void> {
+    const role = input.role.trim().toUpperCase();
+    const agent = await this._registry.get(input.agentId);
+    if (!agent || String(agent.protocol.role ?? "").toUpperCase() !== role) {
+      throw new Error(`AGENT_ROLE_MISMATCH:${input.agentId}:${role}`);
+    }
+    const session = await this._sessionManager.getSession(input.sessionId);
+    if (
+      !session ||
+      session.protocol.agent_id !== input.agentId ||
+      session.protocol.status !== "running"
+    ) {
+      throw new Error(`EXECUTOR_SESSION_MISMATCH:${input.sessionId}:${input.agentId}`);
+    }
+  }
+
+  async listMyTasks(input: { role: string; agentId: string; sessionId: string }) {
+    if (!this._projectRoot) throw new Error("PROJECT_ROOT_UNAVAILABLE");
+    await this._assertExecutorIdentity(input);
+    const inbox = join(this._projectRoot, "fcop", "_lifecycle", "inbox");
+    const names = await fs.readdir(inbox).catch(() => [] as string[]);
+    const out: Array<Record<string, unknown>> = [];
+    for (const filename of names.filter((name) => /^TASK-.*\.md$/i.test(name))) {
+      const filepath = join(inbox, filename);
+      try {
+        const task = await this._parser.parse(filepath);
+        if (String(task.recipient ?? "").toUpperCase() !== input.role.toUpperCase()) continue;
+        const dependency = await evaluateTaskDependencyGate(task, this._projectRoot);
+        out.push({
+          task_id: resolveCanonicalTaskId(filename, task),
+          filename,
+          recipient: task.recipient,
+          sender: task.sender,
+          thread_key: task.thread_key,
+          claimable: dependency.allowed,
+          ...(dependency.allowed ? {} : { blocked_reason: dependency.reason, dependency_task_ids: dependency.dependencyTaskIds }),
+        });
+      } catch {
+        // Invalid task files are not offered to an executor.
+      }
+    }
+    return out;
+  }
+
+  async readMyTask(input: {
+    taskId: string;
+    role: string;
+    agentId: string;
+    sessionId: string;
+  }) {
+    if (!this._projectRoot) throw new Error("PROJECT_ROOT_UNAVAILABLE");
+    await this._assertExecutorIdentity(input);
+    const lifecycleRoot = join(this._projectRoot, "fcop", "_lifecycle");
+    const located = await findTaskLocationById(lifecycleRoot, input.taskId);
+    if (!located) throw new Error(`TASK_NOT_FOUND:${input.taskId}`);
+    const task = await this._parser.parse(located.path);
+    if (String(task.recipient ?? "").toUpperCase() !== input.role.toUpperCase()) {
+      throw new Error(`TASK_RECIPIENT_MISMATCH:${task.recipient ?? ""}`);
+    }
+    return {
+      task_id: resolveCanonicalTaskId(located.filename, task),
+      stage: located.stage,
+      path: located.path,
+      frontmatter: task.frontmatter,
+      body: task.body,
+    };
+  }
+
+  async claimMyTask(input: {
+    taskId: string;
+    role: string;
+    agentId: string;
+    sessionId: string;
+    idempotencyKey?: string;
+  }) {
+    if (!this._projectRoot || !this._lifecycleGovernor || !this._dispatchAttemptStore) {
+      throw new Error("TASK_CLAIM_CONTROL_PLANE_UNAVAILABLE");
+    }
+    await this._assertExecutorIdentity(input);
+    const lifecycleRoot = join(this._projectRoot, "fcop", "_lifecycle");
+    const located = await findTaskLocationById(lifecycleRoot, input.taskId);
+    if (!located) throw new Error(`TASK_NOT_FOUND:${input.taskId}`);
+    if (located.stage !== "inbox") {
+      const state = await this._dispatchAttemptStore.getTaskState(input.taskId);
+      const lease = state.active_lease;
+      if (located.stage === "active" && lease?.session_id === input.sessionId && lease.agent_id === input.agentId) {
+        return { ok: true, idempotent: true, task_id: input.taskId, stage: "active", lease };
+      }
+      throw new Error(`TASK_NOT_CLAIMABLE:${located.stage}`);
+    }
+    const task = await this._parser.parse(located.path);
+    const taskId = resolveCanonicalTaskId(located.filename, task);
+    if (String(task.recipient ?? "").toUpperCase() !== input.role.toUpperCase()) {
+      throw new Error(`TASK_RECIPIENT_MISMATCH:${task.recipient ?? ""}`);
+    }
+    const registered = await this._registry.list({ role: input.role });
+    if (!registered.some((agent) => agent.protocol.agent_id === input.agentId)) {
+      throw new Error(`AGENT_ROLE_MISMATCH:${input.agentId}:${input.role}`);
+    }
+    const dependency = await evaluateTaskDependencyGate(task, this._projectRoot);
+    if (!dependency.allowed) throw new Error(`DEPENDENCY_PENDING:${dependency.dependencyTaskIds.join(",")}`);
+    const offered = await this._dispatchAttemptStore.offer({
+      task_id: taskId,
+      task_path: located.path,
+      task_content_hash: createHash("sha256").update(JSON.stringify(task.frontmatter)).update("\n").update(task.body).digest("hex"),
+      ...(task.thread_key ? { thread_key: task.thread_key } : {}),
+      target_role: input.role,
+      target_agent_id: input.agentId,
+      source: "agent_self_claim",
+      mode: "agent_claim",
+      idempotency_key: input.idempotencyKey ?? `agent-claim:${taskId}:${input.sessionId}`,
+    });
+    const claimed = await this._dispatchAttemptStore.claim({
+      taskId,
+      attemptId: offered.attempt.attempt_id,
+      agentId: input.agentId,
+      sessionId: input.sessionId,
+    });
+    if (!claimed.ok) return { ok: false, code: claimed.code, active_lease: claimed.active_lease };
+    const activePath = await this._lifecycleGovernor.awaitDispatchInboxToActive(located.path, {
+      attemptId: offered.attempt.attempt_id,
+      leaseId: claimed.lease.lease_id,
+      agentId: input.agentId,
+    });
+    await this._dispatchAttemptStore.markRunning(offered.attempt.attempt_id, input.sessionId);
+    return {
+      ok: true,
+      idempotent: offered.idempotent || claimed.idempotent,
+      task_id: taskId,
+      stage: "active",
+      path: activePath,
+      attempt_id: offered.attempt.attempt_id,
+      lease_id: claimed.lease.lease_id,
+    };
+  }
+
+  async redispatchTask(input: {
+    taskId: string;
+    mode: "retry" | "repair_retry" | "restart_session" | "reassign";
+    role?: string;
+    agentId?: string;
+    idempotencyKey: string;
+  }): Promise<DispatchOutcome> {
+    if (!this._projectRoot || !this._lifecycleGovernor) {
+      return { kind: "dispatch_skipped", reason: "lifecycle_error", detail: "control plane unavailable" };
+    }
+    const lifecycleRoot = join(this._projectRoot, "fcop", "_lifecycle");
+    let located = await findTaskLocationById(lifecycleRoot, input.taskId);
+    if (!located) return { kind: "no_task_id", reason: `task not found: ${input.taskId}` };
+    const parsed = await this._parser.parse(located.path);
+    const role = input.role ?? parsed.recipient ?? extractRecipientFromFilename(located.filename);
+    if (located.stage === "active") {
+      const live = (await this._sessionManager.listActive()).find((session) =>
+        normalizeQueueTaskId(String(session.protocol.task_id ?? "")) === normalizeQueueTaskId(input.taskId));
+      if (live) return { kind: "already_dispatched" };
+      await this._lifecycleGovernor.restoreToInboxAfterDispatchFailure(located.path, `redispatch:${input.mode}`);
+      located = await findTaskLocationById(lifecycleRoot, input.taskId);
+    }
+    if (!located) return { kind: "no_task_id", reason: `task disappeared: ${input.taskId}` };
+    if (located.stage === "inbox" && ["dispatched", "running"].includes(String(parsed.frontmatter["state"] ?? ""))) {
+      await this._lifecycleGovernor.repairInboxLifecycleSplit(located.path, `redispatch:${input.mode}`);
+    }
+    return this.dispatchTaskFromControlPlane(located.path, located.filename, role, "pm_redispatch", {
+      ...(input.agentId ? { preferredAgentId: input.agentId } : {}),
+      mode: input.mode,
+      idempotencyKey: input.idempotencyKey,
+    });
   }
 
   /**
@@ -1170,6 +1443,20 @@ export class TaskDispatcher {
         const explicitDeps = parsedForGate
           ? collectDependencyTaskIds(parsedForGate)
           : [];
+        if (gate.reason === "lifecycle_split" && this._lifecycleGovernor) {
+          filepath = await this._lifecycleGovernor.repairInboxLifecycleSplit(
+            filepath,
+            `control_plane_repair:${_source ?? "dispatch"}`,
+          );
+          this._panelEvents?.emit("codeflowmu.lifecycle.split_repaired", {
+            event: "lifecycle_split_repaired",
+            task_path: filepath,
+            filename,
+            role: recipient,
+            detail: gate.detail,
+            at: toLocalIsoString(this._now()),
+          });
+        } else
         if (
           !gate.allowed &&
           !(
@@ -1179,6 +1466,8 @@ export class TaskDispatcher {
           const skipReason =
             gate.reason === "waiting_dependency"
               ? "waiting_dependency"
+              : gate.reason === "lifecycle_split"
+                ? "lifecycle_split"
               : gate.reason === "already_active"
                 ? "already_active"
                 : gate.reason === "already_done"
@@ -1660,7 +1949,9 @@ export class TaskDispatcher {
         }
         return { kind: "already_dispatched" };
       }
-      await fs.writeFile(filepath, _patchFmState(raw, "dispatched"), "utf-8");
+      // Do not project `dispatched` here. The durable attempt lease below and
+      // LifecycleKernel own the claim; writing YAML first creates the historic
+      // inbox/dispatched split when a later step fails.
     } catch (claimErr) {
       this._logger.warn(
         `[TaskDispatcher] claim write failed for ${filename}: ${
@@ -1702,6 +1993,71 @@ export class TaskDispatcher {
         reason: pendingRetry.lastError,
         failure_count: pendingRetry.failureCount,
         retry_key: retryKey,
+      };
+    }
+
+    const offered = this._dispatchAttemptStore
+      ? await this._dispatchAttemptStore.offer({
+          task_id: taskId,
+          task_path: filepath,
+          task_content_hash: createHash("sha256")
+            .update(JSON.stringify(parsed.frontmatter))
+            .update("\n")
+            .update(parsed.body)
+            .digest("hex"),
+          ...(parsed.thread_key ? { thread_key: parsed.thread_key } : {}),
+          ...(String(parsed.frontmatter["parent"] ?? parsed.frontmatter["parent_task_id"] ?? "").trim()
+            ? { parent_task_id: String(parsed.frontmatter["parent"] ?? parsed.frontmatter["parent_task_id"]).trim() }
+            : {}),
+          target_role: recipient,
+          target_agent_id: agent.protocol.agent_id,
+          source: cp?.idempotencyKey ? "control_plane" : "watcher",
+          mode: cp?.mode ?? "initial",
+          ...(cp?.idempotencyKey ? { idempotency_key: cp.idempotencyKey } : {}),
+        })
+      : undefined;
+    if (offered?.idempotent && this._dispatchAttemptStore) {
+      const existingState = await this._dispatchAttemptStore.getTaskState(taskId);
+      if (
+        existingState.active_lease ||
+        [
+          "reported",
+          "settled",
+          "rejected",
+          "expired",
+          "stale",
+          "session_failed",
+          "superseded",
+        ].includes(offered.attempt.status)
+      ) {
+        return {
+          kind: "already_dispatched",
+          attempt_id: offered.attempt.attempt_id,
+          ...(existingState.active_lease
+            ? {
+                lease_id: existingState.active_lease.lease_id,
+                session_id: existingState.active_lease.session_id,
+              }
+            : {}),
+        };
+      }
+    }
+    const provisionalSessionId = offered ? `pending:${offered.attempt.attempt_id}` : "";
+    const claimed = offered && this._dispatchAttemptStore
+      ? await this._dispatchAttemptStore.claim({
+          taskId,
+          attemptId: offered.attempt.attempt_id,
+          agentId: agent.protocol.agent_id,
+          sessionId: provisionalSessionId,
+        })
+      : undefined;
+    if (claimed && !claimed.ok) {
+      return {
+        kind: "lease_conflict",
+        attempt_id: offered!.attempt.attempt_id,
+        ...(claimed.active_lease?.lease_id ? { lease_id: claimed.active_lease.lease_id } : {}),
+        ...(claimed.active_lease?.session_id ? { session_id: claimed.active_lease.session_id } : {}),
+        reason: claimed.code,
       };
     }
 
@@ -1773,8 +2129,31 @@ export class TaskDispatcher {
     // events all point at the canonical active file after the atomic rename.
     let executionFilepath = filepath;
     if (this._lifecycleGovernor) {
-      executionFilepath =
-        await this._lifecycleGovernor.awaitDispatchInboxToActive(filepath);
+      try {
+        executionFilepath = await this._lifecycleGovernor.awaitDispatchInboxToActive(
+          filepath,
+          claimed?.ok
+            ? {
+                attemptId: claimed.attempt.attempt_id,
+                leaseId: claimed.lease.lease_id,
+                agentId: agent.protocol.agent_id,
+              }
+            : undefined,
+        );
+      } catch (error) {
+        if (offered && this._dispatchAttemptStore) {
+          await this._dispatchAttemptStore.finish(
+            offered.attempt.attempt_id,
+            "rejected",
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+        return {
+          kind: "dispatch_skipped",
+          reason: "lifecycle_error",
+          detail: error instanceof Error ? error.message : String(error),
+        };
+      }
     }
 
     const payload: SessionStartPayload = {
@@ -1813,6 +2192,18 @@ export class TaskDispatcher {
         });
       }
     } catch (err) {
+      if (offered && this._dispatchAttemptStore) {
+        await this._dispatchAttemptStore.finish(
+          offered.attempt.attempt_id,
+          "session_failed",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      if (this._lifecycleGovernor) {
+        await this._lifecycleGovernor
+          .restoreToInboxAfterDispatchFailure(executionFilepath, "session_start_failed")
+          .catch(() => undefined);
+      }
       if (err instanceof InvalidAgentStatusError) {
         this._logger.warn(
           `[TaskDispatcher] agent ${agent.protocol.agent_id} busy ` +
@@ -1849,6 +2240,13 @@ export class TaskDispatcher {
         retryKey,
         err instanceof Error ? err : new Error(reason),
         { filepath, task_id: taskId },
+      );
+    }
+
+    if (offered && this._dispatchAttemptStore) {
+      await this._dispatchAttemptStore.markRunning(
+        offered.attempt.attempt_id,
+        sessionId,
       );
     }
 
@@ -1892,7 +2290,7 @@ export class TaskDispatcher {
       ) {
         return;
       }
-      void this._handleSessionSettlement({
+      this._trackSettlement(this._handleSessionSettlement({
         evt,
         sessionId,
         filepath: executionFilepath,
@@ -1901,7 +2299,8 @@ export class TaskDispatcher {
         taskId,
         reportRecipient: parsed.sender ?? "PM",
         agentId,
-      });
+        ...(offered ? { attemptId: offered.attempt.attempt_id } : {}),
+      }));
     };
     unsubscribe = this._sessionManager.onEvent(listener);
     this._pendingSettlements.set(sessionId, {
@@ -1918,6 +2317,13 @@ export class TaskDispatcher {
       taskId,
       reportRecipient: parsed.sender ?? "PM",
       agentId,
+      ...(offered ? { attemptId: offered.attempt.attempt_id } : {}),
+    }).catch((error) => {
+      this._logger.error(
+        `[TaskDispatcher] terminal settlement recovery failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     });
 
     this._panelEvents?.emit("codeflowmu.task_dispatched", {
@@ -1927,6 +2333,8 @@ export class TaskDispatcher {
       agent_id: agentId,
       session_id: sessionId,
       role: agent.protocol.role ?? recipient,
+      ...(offered ? { attempt_id: offered.attempt.attempt_id } : {}),
+      ...(claimed?.ok ? { lease_id: claimed.lease.lease_id } : {}),
       at: toLocalIsoString(this._now()),
     });
 
@@ -1942,7 +2350,13 @@ export class TaskDispatcher {
       });
     }
 
-    return { kind: "dispatched", session_id: sessionId, inboxHistoryRecorded: true };
+    return {
+      kind: "dispatched",
+      session_id: sessionId,
+      ...(offered ? { attempt_id: offered.attempt.attempt_id } : {}),
+      ...(claimed?.ok ? { lease_id: claimed.lease.lease_id } : {}),
+      inboxHistoryRecorded: true,
+    };
   }
 
   private async _handleSessionSettlement(params: {
@@ -1954,6 +2368,7 @@ export class TaskDispatcher {
     taskId: string;
     reportRecipient: string;
     agentId: string;
+    attemptId?: string;
   }): Promise<void> {
     const pending = this._pendingSettlements.get(params.sessionId);
     if (!pending) return;
@@ -1964,6 +2379,17 @@ export class TaskDispatcher {
     const toState =
       params.evt.event_type === "runtime.session_ended" ? "ended" : "cancelled";
     const note = describeSettlement(params.evt);
+    if (params.attemptId && this._dispatchAttemptStore) {
+      const payload = params.evt.payload as { status?: string; report_written?: boolean } | undefined;
+      const failed =
+        params.evt.event_type === "runtime.session_cancelled" ||
+        ["failed", "timeout", "cancelled"].includes(String(payload?.status ?? "").toLowerCase());
+      await this._dispatchAttemptStore.finish(
+        params.attemptId,
+        payload?.report_written === true ? "reported" : failed ? "session_failed" : "settled",
+        note || undefined,
+      );
+    }
     if (_isWorkerRole(params.recipient)) {
       this._reportGate?.scheduleEnsureReciprocalReport({
         taskId: params.taskId,
@@ -2031,6 +2457,7 @@ export class TaskDispatcher {
     taskId: string;
     reportRecipient: string;
     agentId: string;
+    attemptId?: string;
   }): Promise<void> {
     await this._sessionManager.awaitSettled(params.sessionId).catch(() => undefined);
     if (!this._pendingSettlements.has(params.sessionId)) return;
@@ -2358,13 +2785,8 @@ export class TaskDispatcher {
         return;
       }
 
-      const resolved = await resolveTaskFileForMutation(filepath);
-      const raw = await fs.readFile(resolved, "utf-8");
-      const state = _parseFmState(raw);
-      if (state !== "dispatched" && state !== "active") return;
-      await fs.writeFile(resolved, _patchFmState(raw, "inbox"), "utf-8");
-      this._logger.info(
-        `[TaskDispatcher] restored ${filename} state ${state} -> inbox after ${reason}`,
+      this._logger.warn(
+        `[TaskDispatcher] lifecycle restore refused for ${filename}: LifecycleGovernor is unavailable`,
       );
     } catch (err) {
       this._logger.warn(
@@ -2440,20 +2862,7 @@ export class TaskDispatcher {
     filepath: string,
     filename: string,
   ): Promise<void> {
-    try {
-      const raw = await fs.readFile(filepath, "utf-8");
-      if (_parseFmState(raw) !== "dispatched") return;
-      await fs.writeFile(filepath, _patchFmState(raw, "inbox"), "utf-8");
-      this._logger.info(
-        `[TaskDispatcher] restored ${filename} state dispatched -> inbox after rejected_busy`,
-      );
-    } catch (err) {
-      this._logger.warn(
-        `[TaskDispatcher] failed local rejected_busy restore for ${filename}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
+    await this._restoreDispatchedToInbox(filepath, filename, "rejected_busy");
   }
 
   private _outcomeToEntry(outcome: DispatchOutcome): StateHistoryEntry {
@@ -2555,6 +2964,14 @@ export class TaskDispatcher {
         // in _handleInbox), so we should never reach here. Included for
         // exhaustive type safety.
         return { at, by, from: "inbox", to: "already_dispatched" };
+      case "lease_conflict":
+        return {
+          at,
+          by,
+          from: "inbox",
+          to: "lease_conflict",
+          note: `${outcome.reason}; attempt_id=${outcome.attempt_id}${outcome.lease_id ? `; lease_id=${outcome.lease_id}` : ""}`,
+        };
       case "dependency_pending":
         return {
           at,
@@ -2707,7 +3124,7 @@ export class TaskDispatcher {
     if (!_isAdhocInboxPath(item.filepath, this._watcher.dir)) return false;
     try {
       const raw = await fs.readFile(item.filepath, "utf-8");
-      return _parseFmState(raw) === "inbox";
+      return _isDispatchClaimableState(_parseFmState(raw));
     } catch {
       return false;
     }

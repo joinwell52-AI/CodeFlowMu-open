@@ -382,8 +382,19 @@ import {
   advanceAgentQueue,
   getTaskDispatchStatus,
   evaluateProductDeliveryGate,
+  productBriefPath,
   writePlanningArtifact,
   recordPlanningLevelOverride,
+  validateLongHorizonPlan,
+  persistPlanningValidation,
+  readPlanningValidation,
+  sha256Digest,
+  submitPlanningGate,
+  decidePlanningGate,
+  recordPlanningGateDelivery,
+  currentPlanningGateState,
+  readPlanningGateHistory,
+  PLANNING_GATE_DECISIONS,
   evaluatePmSummaryGate,
   OperationApprovalError,
   OperationApprovalService,
@@ -6830,6 +6841,87 @@ export function buildWebPanelApp(
     }
   });
 
+  app.post("/api/v2/pm/governance/planning-validation", async (req: Request, res: Response) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const taskId = String(body["task_id"] ?? body["current_task_id"] ?? "").trim();
+      const threadKey = String(body["thread_key"] ?? "").trim();
+      const sessionId = String(body["session_id"] ?? "").trim();
+      const callerRole = String(body["caller_role"] ?? "").trim();
+      const agentId = String(body["agent_id"] ?? "").trim();
+      const sourceDigest = String(body["source_digest"] ?? "").trim();
+      const bodyMarkdown = String(body["body_markdown"] ?? "");
+      const factSnapshotAt = String(body["fact_snapshot_at"] ?? "").trim();
+      const planningIr = body["planning_ir"];
+      if (!taskId || !threadKey || !sourceDigest || !bodyMarkdown.trim() || !planningIr || typeof planningIr !== "object" || Array.isArray(planningIr)) {
+        sendError(res, 400, "INVALID_LONG_HORIZON_VALIDATION", "task_id, thread_key, source_digest, body_markdown, planning_ir and fact_snapshot_at are required");
+        return;
+      }
+      const identity = await validateRuntimePlanningIdentity(sessionId, callerRole, taskId, agentId);
+      if (!identity.ok) {
+        sendError(res, 409, identity.code, identity.message);
+        return;
+      }
+      const root = projectRoot();
+      const ctx = await resolveThreadContext(root, { task_id: taskId, thread_key: threadKey });
+      if (!ctx?.root_task_id || ctx.root_task_id !== taskId) {
+        sendError(res, 409, "PLANNING_ROOT_TASK_MISMATCH", "validation must target the bound root task and thread");
+        return;
+      }
+      const rootTask = ctx.tasks.find((task) => task.task_id === ctx.root_task_id);
+      const gate = await evaluateProductDeliveryGate({
+        projectRoot: root,
+        taskId: ctx.root_task_id,
+        taskBody: ctx.root_body ?? "",
+        taskFrontmatter: rootTask?.yaml,
+      });
+      if (!gate.classification.long_horizon_required) {
+        sendError(res, 409, "LONG_HORIZON_NOT_REQUIRED", "task is not classified as long-horizon planning");
+        return;
+      }
+      const sourceSpec = (planningIr as Record<string, unknown>)["source"] as Record<string, unknown> | undefined;
+      const declaredSourcePath = String(sourceSpec?.["path"] ?? "").trim();
+      let observedSourceDigest: string | undefined;
+      let observedSourceLineCount: number | undefined;
+      let sourceReadError: string | undefined;
+      try {
+        if (!declaredSourcePath) throw new Error("planning_ir.source.path is required");
+        const resolvedSourcePath = path.isAbsolute(declaredSourcePath)
+          ? declaredSourcePath
+          : pathResolve(root, declaredSourcePath);
+        const sourceBytes = readFileSync(resolvedSourcePath);
+        observedSourceDigest = sha256Digest(sourceBytes);
+        const sourceText = sourceBytes.toString("utf8");
+        observedSourceLineCount = sourceText.length === 0
+          ? 0
+          : sourceText.replace(/\r?\n$/, "").split(/\r?\n/).length;
+      } catch (error) {
+        sourceReadError = error instanceof Error ? error.message : String(error);
+      }
+      const result = validateLongHorizonPlan({
+        taskId,
+        rootTaskId: ctx.root_task_id,
+        threadKey,
+        sessionId,
+        sourceDigest,
+        bodyMarkdown,
+        planningIr: planningIr as Record<string, unknown>,
+        factSnapshotAt,
+        observedSourceDigest,
+        observedSourceLineCount,
+        sourceReadError,
+      });
+      const persistedValidationPath = await persistPlanningValidation(root, result);
+      res.status(result.ready_for_review ? 200 : 422).json({
+        ok: result.ready_for_review,
+        validation: result,
+        path: persistedValidationPath,
+      });
+    } catch (err) {
+      sendError(res, 400, "LONG_HORIZON_VALIDATION_FAILED", String(err));
+    }
+  });
+
   app.post("/api/v2/pm/governance/planning-artifact", async (req: Request, res: Response) => {
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
@@ -6842,6 +6934,8 @@ export function buildWebPanelApp(
       const agentId = String(body["agent_id"] ?? "").trim();
       const bodyMarkdown = String(body["body_markdown"] ?? "");
       const status = String(body["status"] ?? "ready").trim().toLowerCase();
+      const sourceDigest = String(body["source_digest"] ?? "").trim();
+      const validationDigest = String(body["validation_digest"] ?? "").trim();
       if (
         !taskId ||
         !/^[A-Za-z0-9._:-]+$/.test(sessionId) ||
@@ -6870,13 +6964,13 @@ export function buildWebPanelApp(
         sendError(res, 409, identity.code, identity.message);
         return;
       }
-      if (!bodyMarkdown.trim() || !["draft", "ready"].includes(status)) {
+      if (!bodyMarkdown.trim() || !["draft", "needs_admin_decision", "ready_for_review", "ready", "paused", "terminated"].includes(status)) {
         rememberPlanningFailure(
           taskId,
           "INVALID_PLANNING_ARTIFACT",
           "补齐 Product Brief 正文并使用 status=draft 或 ready 后重试。",
         );
-        sendError(res, 400, "INVALID_PLANNING_ARTIFACT", "body_markdown and status=draft|ready are required");
+        sendError(res, 400, "INVALID_PLANNING_ARTIFACT", "body_markdown and a supported artifact status are required");
         return;
       }
 
@@ -6900,15 +6994,46 @@ export function buildWebPanelApp(
         sendError(res, 409, "PLANNING_ARTIFACT_NOT_REQUIRED", "Level 0 task does not accept a planning artifact");
         return;
       }
+      const validation = before.classification.long_horizon_required
+        ? await readPlanningValidation(root, ctx.root_task_id)
+        : null;
+      if (before.classification.long_horizon_required && !threadKey) {
+        sendError(res, 400, "LONG_HORIZON_THREAD_REQUIRED", "long-horizon planning requires thread_key");
+        return;
+      }
+      if (before.classification.long_horizon_required && status === "ready_for_review") {
+        if (!validation?.ready_for_review || validation.validation_digest !== validationDigest || validation.source_digest !== sourceDigest || validation.body_digest !== sha256Digest(bodyMarkdown.trim())) {
+          sendError(res, 409, "PLANNING_VALIDATION_STALE", "ready_for_review requires the current passed validation/source digest");
+          return;
+        }
+      }
       const artifact = await writePlanningArtifact({
         projectRoot: root,
         taskId: ctx.root_task_id,
         planningLevel: before.planning_level,
         bodyMarkdown,
-        status: status as "draft" | "ready",
+        status: status as "draft" | "needs_admin_decision" | "ready_for_review" | "ready" | "paused" | "terminated",
         callerRole,
         sessionId,
+        rootTaskId: ctx.root_task_id,
+        threadKey: threadKey || undefined,
+        sourceDigest: sourceDigest || undefined,
+        validationDigest: validationDigest || undefined,
+        validationPassed: Boolean(validation?.ready_for_review),
+        longHorizon: before.classification.long_horizon_required,
       });
+      const planningGateSubmission = before.classification.long_horizon_required && status === "ready_for_review" && validation
+        ? await submitPlanningGate({
+            projectRoot: root,
+            taskId: ctx.root_task_id,
+            threadKey,
+            revision: artifact.revision,
+            bodyDigest: artifact.body_digest,
+            validationDigest: validation.validation_digest,
+            sourceDigest: validation.source_digest,
+            submittedBy: callerRole,
+          })
+        : null;
       const gate = await evaluateProductDeliveryGate({
         projectRoot: root,
         taskId: ctx.root_task_id,
@@ -6916,7 +7041,7 @@ export function buildWebPanelApp(
         taskFrontmatter: rootTask?.yaml,
       });
       planningFailureByTask.delete(ctx.root_task_id);
-      res.json({ ok: true, artifact, gate });
+      res.json({ ok: true, artifact, planning_gate_submission: planningGateSubmission, gate });
     } catch (err) {
       const body = (req.body ?? {}) as Record<string, unknown>;
       rememberPlanningFailure(
@@ -6925,6 +7050,177 @@ export function buildWebPanelApp(
         "根据错误详情修复后，从同一 PM Runtime 会话重试；不要手工写规划文件。",
       );
       sendError(res, 400, "PLANNING_ARTIFACT_WRITE_FAILED", String(err));
+    }
+  });
+
+  app.post("/api/v2/pm/governance/planning-gate/submit", async (req: Request, res: Response) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const taskId = String(body["task_id"] ?? "").trim();
+      const threadKey = String(body["thread_key"] ?? "").trim();
+      const sessionId = String(body["session_id"] ?? "").trim();
+      const submittedBy = String(body["submitted_by"] ?? body["caller_role"] ?? "").trim();
+      const identity = await validateRuntimePlanningIdentity(sessionId, submittedBy, taskId, String(body["agent_id"] ?? "").trim());
+      if (!identity.ok) {
+        sendError(res, 409, identity.code, identity.message);
+        return;
+      }
+      const root = projectRoot();
+      const ctx = await resolveThreadContext(root, { task_id: taskId, thread_key: threadKey });
+      if (!ctx?.root_task_id || ctx.root_task_id !== taskId) {
+        sendError(res, 409, "PLANNING_ROOT_TASK_MISMATCH", "Planning Gate submission must target the bound root task");
+        return;
+      }
+      const rootTask = ctx.tasks.find((task) => task.task_id === taskId);
+      const product = await evaluateProductDeliveryGate({ projectRoot: root, taskId, taskBody: ctx.root_body ?? "", taskFrontmatter: rootTask?.yaml });
+      const validation = await readPlanningValidation(root, taskId);
+      if (!validation?.ready_for_review || product.validation_status !== "passed" || !product.planning_artifact_revision || !product.body_digest || !product.validation_digest) {
+        sendError(res, 409, "PLANNING_NOT_READY_FOR_GATE", "current artifact has no matching passed validation");
+        return;
+      }
+      const submission = await submitPlanningGate({
+        projectRoot: root,
+        taskId,
+        threadKey,
+        revision: product.planning_artifact_revision,
+        bodyDigest: product.body_digest,
+        validationDigest: product.validation_digest,
+        sourceDigest: validation.source_digest,
+        submittedBy,
+      });
+      res.json({ ok: true, submission });
+    } catch (err) {
+      sendError(res, 400, "PLANNING_GATE_SUBMIT_FAILED", String(err));
+    }
+  });
+
+  app.get("/api/v2/pm/governance/planning-gate", async (req: Request, res: Response) => {
+    try {
+      const taskId = String(req.query["task_id"] ?? "").trim();
+      if (!taskId) {
+        sendError(res, 400, "MISSING_INPUT", "task_id is required");
+        return;
+      }
+      const root = projectRoot();
+      const validation = await readPlanningValidation(root, taskId);
+      let raw = "";
+      try { raw = readFileSync(productBriefPath(root, taskId), "utf8"); } catch { /* no canonical Brief yet */ }
+      const fm = raw ? parseMarkdownFrontmatter(raw) as Record<string, unknown> : {};
+      const revision = Number(fm["revision"] ?? 0) || null;
+      const bodyDigest = String(fm["body_digest"] ?? "");
+      const validationDigest = String(fm["validation_digest"] ?? "");
+      const state = await currentPlanningGateState(root, taskId, { revision, body_digest: bodyDigest, validation_digest: validationDigest });
+      res.json({
+        ok: true,
+        task_id: taskId,
+        revision,
+        body_digest: bodyDigest || null,
+        validation_digest: validationDigest || null,
+        validation,
+        status: state.status,
+        submission: state.submission,
+        decision: state.decision,
+        history_count: state.history.length,
+        canonical_preview: raw ? raw.slice(0, 120_000) : null,
+      });
+    } catch (err) {
+      sendError(res, 500, "PLANNING_GATE_READ_FAILED", String(err));
+    }
+  });
+
+  app.get("/api/v2/pm/governance/planning-gate/history", async (req: Request, res: Response) => {
+    try {
+      const taskId = String(req.query["task_id"] ?? "").trim();
+      if (!taskId) {
+        sendError(res, 400, "MISSING_INPUT", "task_id is required");
+        return;
+      }
+      res.json({ ok: true, task_id: taskId, history: await readPlanningGateHistory(projectRoot(), taskId) });
+    } catch (err) {
+      sendError(res, 500, "PLANNING_GATE_HISTORY_FAILED", String(err));
+    }
+  });
+
+  app.post("/api/v2/pm/governance/planning-gate/decide", async (req: Request, res: Response) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const taskId = String(body["task_id"] ?? "").trim();
+      const threadKey = String(body["thread_key"] ?? "").trim();
+      const revision = Number(body["revision"]);
+      const bodyDigest = String(body["body_digest"] ?? "").trim();
+      const validationDigest = String(body["validation_digest"] ?? "").trim();
+      const decisionValue = String(body["decision"] ?? "") as typeof PLANNING_GATE_DECISIONS[number];
+      const reason = String(body["reason"] ?? "").trim();
+      if (!taskId || !threadKey || !Number.isInteger(revision) || !bodyDigest || !validationDigest || !PLANNING_GATE_DECISIONS.includes(decisionValue) || !reason) {
+        sendError(res, 400, "INVALID_PLANNING_GATE_DECISION", "task/thread/revision/digests, one of five decisions, and reason are required");
+        return;
+      }
+      const root = projectRoot();
+      const ctx = await resolveThreadContext(root, { task_id: taskId, thread_key: threadKey });
+      if (!ctx?.root_task_id || ctx.root_task_id !== taskId) {
+        sendError(res, 409, "PLANNING_ROOT_TASK_MISMATCH", "decision must target the current root task/thread");
+        return;
+      }
+      const artifactRaw = readFileSync(productBriefPath(root, taskId), "utf8");
+      const artifactFm = parseMarkdownFrontmatter(artifactRaw) as Record<string, unknown>;
+      if (Number(artifactFm["revision"] ?? 0) !== revision || String(artifactFm["body_digest"] ?? "") !== bodyDigest || String(artifactFm["validation_digest"] ?? "") !== validationDigest) {
+        sendError(res, 409, "PLANNING_GATE_STALE", "decision revision/digest does not match the current canonical Brief");
+        return;
+      }
+      const pending = await decidePlanningGate({
+        projectRoot: root,
+        taskId,
+        threadKey,
+        revision,
+        bodyDigest,
+        validationDigest,
+        decision: decisionValue,
+        reason,
+      });
+      const agentId = String(artifactFm["pm"] ?? "PM").trim() || "PM";
+      const wakeId = newPmHeartbeatWakeId();
+      const message = [
+        `ADMIN Planning Gate decision: ${decisionValue}.`,
+        `Task: ${taskId}; revision: ${revision}.`,
+        `Body digest: ${bodyDigest}; validation digest: ${validationDigest}.`,
+        `Reason: ${reason}`,
+        decisionValue === "approve_wp00" ? "Only WP-00 is now authorized; later WPs remain closed." : "Do not dispatch new work until the recorded decision contract permits it.",
+      ].join("\n");
+      let delivered = false;
+      let wakeSessionId = "";
+      let deliveryError = "";
+      try {
+        const collector = {
+          statusCode: 200,
+          body: {} as Record<string, unknown>,
+          status(code: number) { this.statusCode = code; return this; },
+          json(payload: Record<string, unknown>) { this.body = payload; return this; },
+        };
+        await handleDirectSession(collector as unknown as Response, {
+          agentId,
+          message,
+          intent: "wake",
+          operatorRole: "ADMIN",
+          taskId,
+          threadKey,
+          uiLang: readPanelUiLang(root),
+          wakeId,
+        });
+        wakeSessionId = String(collector.body["session_id"] ?? "").trim();
+        delivered = collector.statusCode < 400 && collector.body["ok"] === true && Boolean(wakeSessionId);
+        if (!delivered) deliveryError = `wake_direct_${collector.statusCode}`;
+      } catch (error) {
+        deliveryError = error instanceof Error ? error.message : String(error);
+      }
+      const decision = await recordPlanningGateDelivery(root, pending, {
+        notice_status: delivered ? "delivered" : "failed",
+        wake_status: delivered ? "started" : "failed",
+        notice_detail: delivered ? `wake_id=${wakeId}` : deliveryError,
+        wake_detail: delivered ? `session_id=${wakeSessionId}` : deliveryError,
+      });
+      res.status(delivered ? 200 : 202).json({ ok: true, decision, delivered, wake_id: wakeId, wake_session_id: wakeSessionId || null, delivery_error: deliveryError || null });
+    } catch (err) {
+      sendError(res, 400, "PLANNING_GATE_DECIDE_FAILED", String(err));
     }
   });
 
@@ -7006,6 +7302,9 @@ export function buildWebPanelApp(
         planning_level: product.planning_level,
         planning_label: product.classification.planning_label,
         classification_reason: product.classification.classification_reason,
+        long_horizon_required: product.classification.long_horizon_required,
+        long_horizon_reason: product.classification.long_horizon_reason,
+        long_horizon_signals: product.classification.long_horizon_signals,
         classification_override: product.classification.override_by === "ADMIN",
         planning_status: planningFailureByTask.has(ctx.root_task_id)
           ? "failed"
@@ -7014,6 +7313,12 @@ export function buildWebPanelApp(
           planningFailureByTask.get(ctx.root_task_id) ?? null,
         planning_artifact_path: product.planning_artifact_path,
         planning_artifact_revision: product.planning_artifact_revision,
+        artifact_status: product.artifact_status,
+        validation_status: product.validation_status,
+        planning_gate_status: product.planning_gate_status,
+        dispatch_scope: product.dispatch_scope,
+        body_digest: product.body_digest,
+        validation_digest: product.validation_digest,
         product_brief: product.product_brief_ready ? "completed" : product.planning_status,
         pm_product_skills: `${product.invoked_skills.length}/${product.required_skills.length}`,
         required_skills: product.required_skills,
@@ -7492,9 +7797,9 @@ export function buildWebPanelApp(
       return;
     }
     try {
-      // All callers share the same direct AI wake primitive. Task review,
-      // dependency handling and lifecycle decisions belong to the AI after
-      // wake, not to this endpoint.
+      // Canonical TASK requests are routed by the executor through
+      // TaskDispatcher; only pure chat without a TASK may directly wake an
+      // existing Session.
       const result = await pmWakeExecutorRef(plan);
       const status = result.outcome === "error"
           ? 500
@@ -7502,6 +7807,101 @@ export function buildWebPanelApp(
       res.status(status).json({ ok: result.ok, plan, result, reconcile: null });
     } catch (err) {
       sendError(res, 500, "WAKE_DOWNSTREAM_FAILED", String(err));
+    }
+  });
+
+  app.get("/api/v2/runtime/tasks/my", async (req: Request, res: Response) => {
+    try {
+      const role = String(req.query["role"] ?? "").trim().toUpperCase();
+      const agentId = String(req.query["agent_id"] ?? "").trim();
+      const sessionId = String(req.query["session_id"] ?? "").trim();
+      if (!role || !agentId || !sessionId) {
+        return sendError(res, 400, "EXECUTOR_IDENTITY_REQUIRED", "role, agent_id and session_id are required");
+      }
+      const tasks = await runtime.dispatcher.listMyTasks({ role, agentId, sessionId });
+      res.json({ ok: true, role, agent_id: agentId, tasks });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      sendError(
+        res,
+        /MISMATCH/.test(message) ? 403 : 500,
+        "LIST_MY_TASKS_FAILED",
+        message,
+      );
+    }
+  });
+
+  app.get("/api/v2/runtime/tasks/:taskId/my", async (req: Request, res: Response) => {
+    try {
+      const role = String(req.query["role"] ?? "").trim().toUpperCase();
+      const agentId = String(req.query["agent_id"] ?? "").trim();
+      const sessionId = String(req.query["session_id"] ?? "").trim();
+      if (!role || !agentId || !sessionId) {
+        return sendError(res, 400, "EXECUTOR_IDENTITY_REQUIRED", "role, agent_id and session_id are required");
+      }
+      const taskId = String(req.params.taskId ?? "");
+      const task = await runtime.dispatcher.readMyTask({
+        taskId,
+        role,
+        agentId,
+        sessionId,
+      });
+      res.json({ ok: true, agent_id: agentId, task });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = /TASK_NOT_FOUND/.test(message) ? 404 : /MISMATCH/.test(message) ? 403 : 500;
+      sendError(res, status, "READ_MY_TASK_FAILED", message);
+    }
+  });
+
+  app.post("/api/v2/runtime/tasks/:taskId/claim", async (req: Request, res: Response) => {
+    try {
+      const result = await runtime.dispatcher.claimMyTask({
+        taskId: String(req.params.taskId ?? ""),
+        role: String(req.body?.role ?? "").trim().toUpperCase(),
+        agentId: String(req.body?.agent_id ?? "").trim(),
+        sessionId: String(req.body?.session_id ?? "").trim(),
+        idempotencyKey: String(req.body?.idempotency_key ?? "").trim() || undefined,
+      });
+      res.status(result.ok ? 200 : 409).json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = /TASK_NOT_FOUND/.test(message) ? 404 : /MISMATCH|IDENTITY/.test(message) ? 403 : /DEPENDENCY_PENDING|NOT_CLAIMABLE/.test(message) ? 409 : 500;
+      sendError(res, status, "CLAIM_TASK_FAILED", message);
+    }
+  });
+
+  app.get("/api/v2/runtime/tasks/:taskId/dispatch-state", async (req: Request, res: Response) => {
+    try {
+      const taskId = String(req.params.taskId ?? "");
+      res.json({ ok: true, task_id: taskId, ...(await runtime.dispatcher.getDispatchTaskState(taskId)) });
+    } catch (err) {
+      sendError(res, 500, "DISPATCH_STATE_FAILED", String(err));
+    }
+  });
+
+  app.post("/api/v2/runtime/tasks/:taskId/redispatch", async (req: Request, res: Response) => {
+    try {
+      const mode = String(req.body?.mode ?? "").trim() as "retry" | "repair_retry" | "restart_session" | "reassign";
+      const idempotencyKey = String(req.body?.idempotency_key ?? "").trim();
+      if (!["retry", "repair_retry", "restart_session", "reassign"].includes(mode) || !idempotencyKey) {
+        return sendError(res, 400, "REDISPATCH_PARAMS_REQUIRED", "valid mode and idempotency_key are required");
+      }
+      const outcome = await runtime.dispatcher.redispatchTask({
+        taskId: String(req.params.taskId ?? ""),
+        mode,
+        role: String(req.body?.role ?? "").trim() || undefined,
+        agentId: String(req.body?.agent_id ?? "").trim() || undefined,
+        idempotencyKey,
+      });
+      res.status(outcome.kind === "dispatched" || outcome.kind === "already_dispatched" ? 200 : 409).json({
+        ok: outcome.kind === "dispatched" || outcome.kind === "already_dispatched",
+        task_id: String(req.params.taskId ?? ""),
+        mode,
+        outcome,
+      });
+    } catch (err) {
+      sendError(res, 500, "REDISPATCH_TASK_FAILED", String(err));
     }
   });
 
@@ -16964,16 +17364,23 @@ export function buildWebPanelApp(
     }
   }
 
-  const useDirectAiWake = (): boolean => true;
   const executePmWakeDownstreamRaw: WakeDownstreamExecutor = async (plan) =>
     agentWakeMutex.run(plan.agent_id, async () => {
       const root = resolveProjectRoot();
+      let canonicalTaskPath: string | undefined;
+      if (plan.task_id) {
+        try {
+          canonicalTaskPath = findTaskFileByIdPrefix(root, plan.task_id)?.path;
+        } catch {
+          canonicalTaskPath = undefined;
+        }
+      }
       // Wake is an AI runtime primitive, not a task-dispatch decision.  The
       // agent decides what work is actionable after it wakes.  In particular,
       // stale lifecycle projection, dependency checks, report presence and
       // sequential planning must never prevent an idle AI from being woken.
       // Formal task dispatch remains a separate TaskDispatcher operation.
-      if (useDirectAiWake()) {
+      if (!canonicalTaskPath) {
       const directGate = await evaluateAgentWakeGate({
         agentId: plan.agent_id,
         registry: runtime.registry,
@@ -17054,9 +17461,8 @@ export function buildWebPanelApp(
       }
       }
 
-      /* Legacy dispatch-aware wake path retained below temporarily for
-       * source compatibility; direct wake above is the authoritative path. */
-      /* istanbul ignore next */
+      // A canonical TASK is assignment authority. Task-bound wake must pass
+      // through TaskDispatcher; only pure chat without a TASK starts directly.
       const isExplicitPmWake =
         plan.source === "pm_agent_tool" || plan.source === "admin_review_reject";
       const queueExplicitWake = async (reason: string) => {

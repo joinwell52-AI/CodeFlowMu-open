@@ -5,7 +5,9 @@ export const PM_RUNTIME_CONTROL_TOOL_NAMES = [
   "pm.detect_thread_stall",
   "pm.close_admin_task",
   "pm.wake_downstream",
+  "pm.redispatch_task",
   "pm.review_check",
+  "pm.validate_long_horizon_plan",
   "pm.write_planning_artifact",
   "pm.record_planning_skill_evidence",
   "pm.inspect_task_spec",
@@ -167,6 +169,44 @@ export const PM_RUNTIME_CONTROL_TOOL_DEFINITIONS: readonly PmRuntimeControlToolD
     },
   },
   {
+    name: "pm.redispatch_task",
+    description:
+      "Retry or repair and retry the same canonical TASK through TaskDispatcher. This creates a new auditable attempt, never a duplicate TASK.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: stringProp("Existing canonical TASK id"),
+        mode: {
+          type: "string",
+          enum: ["retry", "repair_retry", "restart_session", "reassign"],
+        },
+        role: stringProp("Optional target role"),
+        agent_id: stringProp("Optional registered target agent"),
+        idempotency_key: stringProp("Required idempotency key"),
+      },
+      required: ["task_id", "mode", "idempotency_key"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "pm.validate_long_horizon_plan",
+    description:
+      "对长期复杂任务的 Planning IR、Requirement 覆盖、预算、DAG、事实时效和正文 digest 做确定性语义校验；结果与当前 task/thread/session 绑定。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: stringProp("ADMIN→PM 根任务 id"),
+        thread_key: stringProp("根任务 thread_key"),
+        source_digest: stringProp("完整源任务书 SHA-256"),
+        body_markdown: stringProp("待写入的完整自包含 Product Brief 正文"),
+        planning_ir: { type: "object", description: "非权威 Planning IR JSON" },
+        fact_snapshot_at: stringProp("实时事实快照 ISO-8601 时间"),
+      },
+      required: ["task_id", "thread_key", "source_digest", "body_markdown", "planning_ir", "fact_snapshot_at"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "pm.write_planning_artifact",
     description:
       "通过 Runtime 在主任务唯一合法路径写入 PLAN/Product Brief。禁止使用 shell、Python 或手工 frontmatter 写规划产物。",
@@ -177,10 +217,12 @@ export const PM_RUNTIME_CONTROL_TOOL_DEFINITIONS: readonly PmRuntimeControlToolD
         body_markdown: stringProp("完整规划正文；只传 Markdown 正文，不得包含 YAML frontmatter"),
         status: {
           type: "string",
-          enum: ["draft", "ready"],
-          description: "规划状态；章节完整后使用 ready",
+          enum: ["draft", "needs_admin_decision", "ready_for_review", "ready", "paused", "terminated"],
+          description: "长期规划使用 needs_admin_decision 或 ready_for_review；普通规划兼容 ready",
         },
         thread_key: stringProp("可选 FCoP thread_key，用于定位主任务"),
+        source_digest: stringProp("长期规划源任务书 SHA-256"),
+        validation_digest: stringProp("pm.validate_long_horizon_plan 返回的 validation digest"),
       },
       required: ["body_markdown"],
       additionalProperties: false,
@@ -671,6 +713,18 @@ export async function invokePmRuntimeControlTool(input: {
         caller_session_id: input.sessionId,
       };
       break;
+    case "pm.redispatch_task":
+      method = "POST";
+      path = `/api/v2/runtime/tasks/${encodeURIComponent(requiredString(input.args, "task_id"))}/redispatch`;
+      body = {
+        mode: requiredString(input.args, "mode"),
+        role: optionalString(input.args, "role") || undefined,
+        agent_id: optionalString(input.args, "agent_id") || undefined,
+        idempotency_key: requiredString(input.args, "idempotency_key"),
+        caller: agentId,
+        caller_session_id: input.sessionId,
+      };
+      break;
     case "pm.record_planning_skill_evidence":
       method = "POST";
       path = "/api/v2/pm/governance/planning-skill-evidence";
@@ -704,7 +758,25 @@ export async function invokePmRuntimeControlTool(input: {
         body_markdown: requiredString(input.args, "body_markdown"),
         status: optionalString(input.args, "status") || "ready",
         thread_key: optionalString(input.args, "thread_key") || undefined,
+        source_digest: optionalString(input.args, "source_digest") || undefined,
+        validation_digest: optionalString(input.args, "validation_digest") || undefined,
         caller_role: agentId,
+        session_id: input.sessionId,
+      };
+      break;
+    case "pm.validate_long_horizon_plan":
+      method = "POST";
+      path = "/api/v2/pm/governance/planning-validation";
+      body = {
+        task_id: requiredString(input.args, "task_id"),
+        current_task_id: String(input.currentTaskId ?? "").trim(),
+        thread_key: requiredString(input.args, "thread_key"),
+        source_digest: requiredString(input.args, "source_digest"),
+        body_markdown: requiredString(input.args, "body_markdown"),
+        planning_ir: input.args["planning_ir"],
+        fact_snapshot_at: requiredString(input.args, "fact_snapshot_at"),
+        caller_role: agentId,
+        agent_id: agentId,
         session_id: input.sessionId,
       };
       break;

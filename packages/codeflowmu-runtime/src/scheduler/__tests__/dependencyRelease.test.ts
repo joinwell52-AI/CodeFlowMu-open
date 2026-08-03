@@ -337,7 +337,12 @@ describe("releasePendingDependencyTasks integration", () => {
           ).length,
           1,
         );
-        assert.equal(frontmatterState(await readFile(qaPath, "utf-8")), "dispatched");
+        const dispatchState = await pipeline.dispatcher.getDispatchTaskState(qaTaskId);
+        assert.ok(
+          ["running", "reported", "settled"].includes(
+            dispatchState.attempts.at(-1)?.status ?? "",
+          ),
+        );
 
         const cycleRaw = await readFile(
           pmGovernanceCycleJournalPath(rootDir),
@@ -455,7 +460,12 @@ describe("releasePendingDependencyTasks integration", () => {
           ).length,
           1,
         );
-        assert.equal(frontmatterState(await readFile(qaPath, "utf-8")), "dispatched");
+        const dispatchState = await pipeline.dispatcher.getDispatchTaskState(qaTaskId);
+        assert.ok(
+          ["running", "reported", "settled"].includes(
+            dispatchState.attempts.at(-1)?.status ?? "",
+          ),
+        );
       } finally {
         await pipeline.shutdown();
       }
@@ -602,8 +612,8 @@ describe("releasePendingDependencyTasks integration", () => {
 
         await waitFor(
           async () => {
-            const state = frontmatterState(await readFile(qaPath, "utf-8"));
-            return state === "dispatched" ? state : null;
+            const state = await pipeline.dispatcher.getDispatchTaskState(qaTaskId);
+            return state.attempts.length > 0 ? state.attempts.at(-1)?.status : null;
           },
           { what: "QA auto-dispatch after DEV session end", timeoutMs: 5000 },
         );

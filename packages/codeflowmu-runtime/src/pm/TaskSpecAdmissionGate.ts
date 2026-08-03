@@ -108,6 +108,7 @@ export interface TaskSpecAdmissionInput {
 
 const SUPPORTED_PM_FORMAL_TOOLS = new Set([
   "pm.write_planning_artifact",
+  "pm.validate_long_horizon_plan",
   "pm.record_planning_skill_evidence",
   "pm.summarize_thread",
   "pm.detect_thread_stall",

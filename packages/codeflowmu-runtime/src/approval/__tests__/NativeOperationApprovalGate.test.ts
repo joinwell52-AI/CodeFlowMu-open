@@ -31,6 +31,27 @@ test("native boundary allows ordinary local programming and does not implement c
   assert.equal(expensiveLocalTest.decision, "ALLOW");
 });
 
+test("executor claim and PM same-TASK redispatch are normal control-plane actions", async () => {
+  const claim = await evaluateNativeOperationBoundary({
+    ...base,
+    toolName: "claim_task",
+    args: { task_id: "TASK-1" },
+  });
+  assert.equal(claim.decision, "ALLOW");
+
+  const redispatch = await evaluateNativeOperationBoundary({
+    ...base,
+    agentId: "PM-01",
+    toolName: "pm.redispatch_task",
+    args: {
+      task_id: "TASK-1",
+      mode: "repair_retry",
+      idempotency_key: "retry-TASK-1-1",
+    },
+  });
+  assert.equal(redispatch.decision, "ALLOW");
+});
+
 test("native boundary routes production, security, external and destructive effects to approval", async () => {
   const commands = [
     "gh pr merge 12 --squash",

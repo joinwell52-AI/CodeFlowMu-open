@@ -131,8 +131,11 @@ export class LifecycleGovernor {
   }
 
   /** Await explicit dispatch: inbox → active before session start. */
-  async awaitDispatchInboxToActive(taskFilePath: string): Promise<string> {
-    await this._moveInboxToActive(taskFilePath);
+  async awaitDispatchInboxToActive(
+    taskFilePath: string,
+    claim?: { attemptId?: string; leaseId?: string; agentId?: string },
+  ): Promise<string> {
+    await this._moveInboxToActive(taskFilePath, claim);
     const resolved = await resolveTaskFileForMutation(
       taskFilePath,
       this._lifecycleRoot,
@@ -271,6 +274,23 @@ export class LifecycleGovernor {
     });
   }
 
+  async repairInboxLifecycleSplit(
+    taskFilePath: string,
+    reason: string,
+  ): Promise<string> {
+    const taskId = this._taskIdFromPath(taskFilePath);
+    await taskLifecycleMutex.run(taskId, async () => {
+      const resolved = await resolveTaskFileForMutation(
+        taskFilePath,
+        this._lifecycleRoot,
+      );
+      if (stageFromPath(resolved, this._lifecycleRoot) !== "inbox") return;
+      await this._kernel.runtimeRepairInboxSplit(resolved, reason);
+      scheduleLedgerRebuild(this._projectRoot);
+    });
+    return resolveTaskFileForMutation(taskFilePath, this._lifecycleRoot);
+  }
+
   private _taskIdFromPath(taskFilePath: string): string {
     return basename(taskFilePath).replace(/\.md$/i, "");
   }
@@ -299,8 +319,7 @@ export class LifecycleGovernor {
           state === "active" ||
           state === "running"
         ) {
-          const patched = raw.replace(/^state:\s*\S+/m, "state: inbox");
-          await fs.writeFile(resolved, patched, "utf-8");
+          await this._kernel.runtimeRepairInboxSplit(resolved, reason);
           this._log.info?.(
             `[LifecycleGovernor] ${basename(resolved)}: inbox frontmatter ${state} → inbox (${reason})`,
           );
@@ -331,8 +350,7 @@ export class LifecycleGovernor {
       const stateMatch = raw.match(/^state:\s*(\S+)/m);
       const state = stateMatch?.[1];
       if (state !== "dispatched" && state !== "active") return;
-      const patched = raw.replace(/^state:\s*\S+/m, "state: inbox");
-      await fs.writeFile(resolved, patched, "utf-8");
+      await this._kernel.runtimeRepairInboxSplit(resolved, reason);
       this._log.info?.(
         `[LifecycleGovernor] ${basename(resolved)}: frontmatter → inbox (${reason})`,
       );
@@ -345,7 +363,10 @@ export class LifecycleGovernor {
     }
   }
 
-  private async _moveInboxToActive(taskFilePath: string): Promise<void> {
+  private async _moveInboxToActive(
+    taskFilePath: string,
+    claim?: { attemptId?: string; leaseId?: string; agentId?: string },
+  ): Promise<void> {
     const taskId = this._taskIdFromPath(taskFilePath);
     await taskLifecycleMutex.run(taskId, async () => {
       let resolved: string;
@@ -361,7 +382,7 @@ export class LifecycleGovernor {
       if (stage !== "inbox") return;
 
       await withTimeout("inbox→active", this._timeoutMs, async () => {
-        await this._kernel.runtimeDispatchInboxToActive(resolved);
+        await this._kernel.runtimeDispatchInboxToActive(resolved, claim);
       });
       this._log.info?.(
         `[LifecycleGovernor] ${basename(resolved)}: inbox → active (runtime_dispatch)`,

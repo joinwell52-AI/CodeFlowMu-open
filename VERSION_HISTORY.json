@@ -1,9 +1,9 @@
 [
   {
-    "version": "V1.2.12-open",
+    "version": "V1.2.13-open",
     "date": "2026-08-03",
     "tasks": [
-      "TASK-20260727-005"
+      "TASK-20260803-001"
     ],
     "title": "CodeFlowMu Open Dev Team Edition",
     "changes": [

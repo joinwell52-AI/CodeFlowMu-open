@@ -17,8 +17,11 @@ export type TaskFm = {
   to?: string | null;
   line?: "main" | "branch";
 
-  state?: LifecycleStage | "dispatched";
+  state?: LifecycleStage | "dispatched" | "running";
   lifecycle_path?: string;
+  dispatch_attempt_id?: string;
+  execution_lease_id?: string;
+  dispatch_agent_id?: string;
 
   driver?: string;
   reviewer?: string;

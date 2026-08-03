@@ -5,7 +5,7 @@
  * callers cannot drift into prompt-only, path-specific interpretations.
  */
 
-import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { parse as parseYaml } from "yaml";
 
@@ -14,6 +14,13 @@ import {
   verifySkillInvocationIntegrity,
   type SkillInvocationRecord,
 } from "./SkillInvocationJournal.ts";
+import {
+  LONG_HORIZON_SKILL_ID,
+  classifyLongHorizonPlanning,
+  readPlanningValidation,
+  sha256Digest,
+} from "./LongHorizonPlanning.ts";
+import { currentPlanningGateState } from "./PlanningGateStore.ts";
 
 export const PRODUCT_DELIVERY_TASK_CLASS = "product_delivery" as const;
 export type PmPlanningLevel = 0 | 1 | 2 | 3;
@@ -37,6 +44,9 @@ export interface ProductTaskClassification {
   product_design_required: boolean;
   qa_required: boolean;
   matched_signals: string[];
+  long_horizon_required: boolean;
+  long_horizon_reason: string;
+  long_horizon_signals: string[];
   override_by?: string;
   override_reason?: string;
 }
@@ -51,6 +61,12 @@ export interface ProductDeliveryGateStatus {
   planning_status: "not_required" | "legacy_compatible" | "missing" | "in_progress" | "completed";
   planning_artifact_path: string;
   planning_artifact_revision: number | null;
+  artifact_status: string;
+  validation_status: "not_required" | "missing" | "failed" | "passed" | "stale";
+  planning_gate_status: "not_required" | "not_submitted" | "pending" | "approved" | "changes_requested" | "paused" | "replan" | "terminated" | "stale";
+  dispatch_scope: "open" | "closed" | "wp00_only";
+  body_digest: string | null;
+  validation_digest: string | null;
   missing_sections: string[];
   invalid_skill_evidence: string[];
   dispatch_open: boolean;
@@ -169,6 +185,7 @@ export function classifyProductTask(
     2: "standard_feature_plan",
     3: "full_product_plan",
   } as const;
+  const longHorizon = classifyLongHorizonPlanning(body, frontmatter, level);
 
   return {
     task_class: product ? PRODUCT_DELIVERY_TASK_CLASS : "non_product_change",
@@ -182,6 +199,9 @@ export function classifyProductTask(
         ? false
         : explicitQaRequired ?? product,
     matched_signals: matched,
+    long_horizon_required: longHorizon.required,
+    long_horizon_reason: longHorizon.reason,
+    long_horizon_signals: longHorizon.matched_signals,
     ...(validAdminOverride ? { override_by: "ADMIN", override_reason: overrideReason } : {}),
   };
 }
@@ -218,26 +238,54 @@ export function planningArtifactPath(
   );
 }
 
+export type PlanningArtifactStatus =
+  | "draft"
+  | "needs_admin_decision"
+  | "ready_for_review"
+  | "ready"
+  | "approved"
+  | "paused"
+  | "terminated";
+
+function markdownBody(raw: string): string {
+  return raw.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "").trim();
+}
+
+function supersededSnapshot(raw: string): string {
+  if (!raw.startsWith("---\n") && !raw.startsWith("---\r\n")) return raw;
+  return raw.replace(/^---\r?\n/, "---\nhistory_status: superseded_non_authoritative\n");
+}
+
 export async function writePlanningArtifact(input: {
   projectRoot: string;
   taskId: string;
   planningLevel: 1 | 2 | 3;
   bodyMarkdown: string;
-  status?: "draft" | "ready";
+  status?: PlanningArtifactStatus;
   callerRole: string;
   sessionId: string;
+  rootTaskId?: string;
+  threadKey?: string;
+  sourceDigest?: string;
+  validationDigest?: string;
+  validationPassed?: boolean;
+  longHorizon?: boolean;
 }): Promise<{
   path: string;
   task_id: string;
   planning_level: 1 | 2 | 3;
-  status: "draft" | "ready";
+  status: PlanningArtifactStatus;
   revision: number;
+  body_digest: string;
+  previous_digest: string | null;
+  validation_digest: string | null;
+  history_path: string | null;
 }> {
   const taskId = canonicalProductBriefTaskId(input.taskId);
   const callerRole = String(input.callerRole ?? "").trim();
   const sessionId = String(input.sessionId ?? "").trim();
   const bodyMarkdown = String(input.bodyMarkdown ?? "").trim();
-  const status = input.status === "draft" ? "draft" : "ready";
+  const status = input.status ?? "ready";
   if (!taskId) throw new Error("task_id is required");
   if (![1, 2, 3].includes(input.planningLevel)) {
     throw new Error("planning_level must be 1, 2, or 3");
@@ -256,49 +304,95 @@ export async function writePlanningArtifact(input: {
   if (/^---\s*$/m.test(bodyMarkdown.split(/\r?\n/, 1)[0] ?? "")) {
     throw new Error("body_markdown must not contain YAML frontmatter");
   }
+  if (input.longHorizon && status === "ready") {
+    throw new Error("long-horizon planning must use needs_admin_decision or ready_for_review, not ambiguous ready");
+  }
+  if (input.longHorizon && status === "ready_for_review") {
+    if (!input.validationPassed || !/^sha256:[0-9a-f]{64}$/i.test(input.sourceDigest ?? "") || !/^sha256:[0-9a-f]{64}$/i.test(input.validationDigest ?? "")) {
+      throw new Error("ready_for_review requires a passed validation bound to source and body digests");
+    }
+    if (!String(input.threadKey ?? "").trim()) throw new Error("long-horizon planning requires thread_key");
+  }
 
   const path = planningArtifactPath(input.projectRoot, taskId, input.planningLevel);
   let revision = 1;
   let createdAt = new Date().toISOString();
+  let previousRaw = "";
+  let previousDigest: string | null = null;
   try {
-    const existing = await readFile(path, "utf8");
-    const fm = parseFrontmatter(existing);
+    previousRaw = await readFile(path, "utf8");
+    const fm = parseFrontmatter(previousRaw);
     const previousRevision = Number(fm["revision"]);
     if (Number.isFinite(previousRevision) && previousRevision > 0) {
       revision = previousRevision + 1;
     }
     createdAt = stringField(fm, "created_at") || createdAt;
+    previousDigest = stringField(fm, "body_digest") || sha256Digest(markdownBody(previousRaw));
   } catch {
     // First revision.
   }
   const updatedAt = new Date().toISOString();
-  await mkdir(join(path, ".."), { recursive: true });
-  await writeFile(
-    path,
-    [
+  const bodyDigest = sha256Digest(bodyMarkdown);
+  const rootTaskId = canonicalProductBriefTaskId(input.rootTaskId || taskId);
+  const validationStatus = input.longHorizon
+    ? input.validationPassed ? "passed" : status === "needs_admin_decision" ? "failed" : "missing"
+    : "not_required";
+  const rendered = [
       "---",
       `task_id: ${taskId}`,
+      `root_task_id: ${rootTaskId}`,
+      ...(input.threadKey ? [`thread_key: ${input.threadKey}`] : []),
       `planning_level: ${input.planningLevel}`,
       `pm: ${callerRole}`,
       `status: ${status}`,
+      `artifact_status: ${status}`,
+      `validation_status: ${validationStatus}`,
+      "planning_gate_status: not_submitted",
+      "dispatch_scope: closed",
       `revision: ${revision}`,
       `created_at: ${createdAt}`,
       `updated_at: ${updatedAt}`,
       `session_id: ${sessionId}`,
+      `body_digest: ${bodyDigest}`,
+      `previous_digest: ${previousDigest ?? "null"}`,
+      ...(input.sourceDigest ? [`source_digest: ${input.sourceDigest}`] : []),
+      ...(input.validationDigest ? [`validation_digest: ${input.validationDigest}`] : []),
+      ...(input.longHorizon ? ["planning_method: long_horizon"] : []),
       "source: pm.write_planning_artifact",
       "---",
       "",
       bodyMarkdown,
       "",
-    ].join("\n"),
-    "utf8",
-  );
+    ].join("\n");
+  await mkdir(join(path, ".."), { recursive: true });
+  let historyPath: string | null = null;
+  if (previousRaw) {
+    const historyDir = join(input.projectRoot, ".codeflowmu", "pm-governance", "planning-history", taskId);
+    await mkdir(historyDir, { recursive: true });
+    historyPath = join(historyDir, `revision-${String(revision - 1).padStart(4, "0")}-${(previousDigest ?? "sha256:unknown").replace("sha256:", "").slice(0, 12)}.md`);
+    try {
+      await writeFile(historyPath, supersededSnapshot(previousRaw), { encoding: "utf8", flag: "wx" });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+  }
+  const temporary = `${path}.tmp-${process.pid}-${Date.now()}`;
+  await writeFile(temporary, rendered, "utf8");
+  await rename(temporary, path);
+  const persisted = await readFile(path, "utf8");
+  if (sha256Digest(markdownBody(persisted)) !== bodyDigest) {
+    throw new Error("planning artifact read-back digest mismatch");
+  }
   return {
     path,
     task_id: taskId,
     planning_level: input.planningLevel,
     status,
     revision,
+    body_digest: bodyDigest,
+    previous_digest: previousDigest,
+    validation_digest: input.validationDigest ?? null,
+    history_path: historyPath,
   };
 }
 
@@ -509,8 +603,10 @@ function missingRequiredSections(raw: string, level: 1 | 2 | 3): string[] {
     .map(([name]) => name);
 }
 
-function requiredSkillsForLevel(level: PmPlanningLevel): string[] {
-  return level === 3 ? [...PRODUCT_DESIGN_REQUIRED_SKILLS] : [];
+function requiredSkillsForLevel(level: PmPlanningLevel, longHorizon = false): string[] {
+  return level === 3
+    ? [...PRODUCT_DESIGN_REQUIRED_SKILLS, ...(longHorizon ? [LONG_HORIZON_SKILL_ID] : [])]
+    : [];
 }
 
 function isCompletePlanningEvidenceShape(row: SkillInvocationRecord): boolean {
@@ -569,7 +665,7 @@ export async function evaluateProductDeliveryGate(input: {
   const classification = classifyProductTask(input.taskBody, effectiveFrontmatter);
   const level = classification.planning_level;
   const path = planningArtifactPath(input.projectRoot, input.taskId, level);
-  const requiredSkills = requiredSkillsForLevel(level);
+  const requiredSkills = requiredSkillsForLevel(level, classification.long_horizon_required);
   if (level === 0 || !classification.product_design_required) {
     return {
       task_id: input.taskId,
@@ -581,6 +677,12 @@ export async function evaluateProductDeliveryGate(input: {
       planning_status: "not_required",
       planning_artifact_path: path,
       planning_artifact_revision: null,
+      artifact_status: "not_required",
+      validation_status: "not_required",
+      planning_gate_status: "not_required",
+      dispatch_scope: "open",
+      body_digest: null,
+      validation_digest: null,
       missing_sections: [],
       invalid_skill_evidence: [],
       dispatch_open: true,
@@ -617,6 +719,12 @@ export async function evaluateProductDeliveryGate(input: {
       planning_status: "legacy_compatible",
       planning_artifact_path: path,
       planning_artifact_revision: legacyRevision,
+      artifact_status: legacyRaw ? stringField(legacyFm, "status") || "legacy" : "legacy",
+      validation_status: "not_required",
+      planning_gate_status: "not_required",
+      dispatch_scope: "open",
+      body_digest: legacyRaw ? stringField(legacyFm, "body_digest") || sha256Digest(markdownBody(legacyRaw)) : null,
+      validation_digest: null,
       missing_sections: [],
       invalid_skill_evidence: [],
       dispatch_open: true,
@@ -648,6 +756,12 @@ export async function evaluateProductDeliveryGate(input: {
       planning_status: "missing",
       planning_artifact_path: path,
       planning_artifact_revision: null,
+      artifact_status: "missing",
+      validation_status: classification.long_horizon_required ? "missing" : "not_required",
+      planning_gate_status: classification.long_horizon_required ? "not_submitted" : "not_required",
+      dispatch_scope: "closed",
+      body_digest: null,
+      validation_digest: null,
       missing_sections: LEVEL_SECTION_REQUIREMENTS[level as 1 | 2 | 3].map(([name]) => name),
       invalid_skill_evidence: [],
       dispatch_open: false,
@@ -667,9 +781,35 @@ export async function evaluateProductDeliveryGate(input: {
 
   const fm = parseFrontmatter(raw);
   const briefTaskId = stringField(fm, "task_id");
-  const ready = stringField(fm, "status").toLowerCase() === "ready";
+  const artifactStatus = (stringField(fm, "artifact_status") || stringField(fm, "status")).toLowerCase();
+  const ready = classification.long_horizon_required
+    ? artifactStatus === "ready_for_review"
+    : artifactStatus === "ready" || artifactStatus === "approved";
   const revisionRaw = Number(fm["revision"]);
   const revision = Number.isFinite(revisionRaw) && revisionRaw > 0 ? revisionRaw : null;
+  const bodyDigest = stringField(fm, "body_digest") || sha256Digest(markdownBody(raw));
+  const artifactValidationDigest = stringField(fm, "validation_digest");
+  const validation = classification.long_horizon_required
+    ? await readPlanningValidation(input.projectRoot, input.taskId)
+    : null;
+  let validationStatus: ProductDeliveryGateStatus["validation_status"] = classification.long_horizon_required ? "missing" : "not_required";
+  if (validation) {
+    validationStatus = validation.ready_for_review &&
+      validation.body_digest === bodyDigest &&
+      validation.validation_digest === artifactValidationDigest &&
+      Date.parse(validation.valid_until) >= Date.now()
+      ? "passed"
+      : validation.body_digest !== bodyDigest || validation.validation_digest !== artifactValidationDigest
+        ? "stale"
+        : "failed";
+  }
+  const planningGate = classification.long_horizon_required
+    ? await currentPlanningGateState(input.projectRoot, input.taskId, {
+        revision,
+        body_digest: bodyDigest,
+        validation_digest: artifactValidationDigest,
+      })
+    : null;
   const invocations = await readRecentSkillInvocations(input.projectRoot, 5000);
   const firstDispatchAt = await firstDownstreamTaskCreatedAt(input.projectRoot, input.taskId);
   const candidates = invocations.filter(
@@ -713,6 +853,17 @@ export async function evaluateProductDeliveryGate(input: {
   if (!ready) findings.push("planning_artifact_not_ready");
   if (missingSkills.length) findings.push(`product_skills_missing:${missingSkills.join(",")}`);
   if (invalidSkillEvidence.length) findings.push(`skill_evidence_invalid:${invalidSkillEvidence.join(",")}`);
+  if (classification.long_horizon_required && validationStatus !== "passed") {
+    findings.push(`long_horizon_validation_${validationStatus}`);
+  }
+  const contentReady = findings.length === 0;
+  const planningGateStatus: ProductDeliveryGateStatus["planning_gate_status"] = classification.long_horizon_required
+    ? (planningGate?.status ?? "not_submitted")
+    : "not_required";
+  const dispatchOpen = contentReady && (!classification.long_horizon_required || planningGateStatus === "approved");
+  if (classification.long_horizon_required && planningGateStatus !== "approved") {
+    findings.push(`planning_gate_${planningGateStatus}`);
+  }
   // Open business issues remain visible to PM/Panel, but are not planning-evidence failures.
 
   return {
@@ -720,16 +871,22 @@ export async function evaluateProductDeliveryGate(input: {
     classification,
     product_brief_path: path,
     product_brief_exists: true,
-    product_brief_ready: findings.length === 0,
+    product_brief_ready: contentReady,
     planning_level: level,
-    planning_status: findings.length === 0 ? "completed" : "in_progress",
+    planning_status: dispatchOpen ? "completed" : "in_progress",
     planning_artifact_path: path,
     planning_artifact_revision: revision,
+    artifact_status: artifactStatus,
+    validation_status: validationStatus,
+    planning_gate_status: planningGateStatus,
+    dispatch_scope: dispatchOpen ? (classification.long_horizon_required ? "wp00_only" : "open") : "closed",
+    body_digest: bodyDigest,
+    validation_digest: artifactValidationDigest || null,
     missing_sections: missingSections,
     invalid_skill_evidence: invalidSkillEvidence,
-    dispatch_open: findings.length === 0,
+    dispatch_open: dispatchOpen,
     next_action:
-      findings.length === 0
+      dispatchOpen
         ? null
         : missingSections.length
           ? `补全方案章节：${missingSections.join("、")}`
@@ -737,13 +894,17 @@ export async function evaluateProductDeliveryGate(input: {
             ? `执行并提交技能证据：${missingSkills.join("、")}`
             : invalidSkillEvidence.length
               ? "重新通过 Runtime 提交无效的技能执行证据"
-              : "将规划产物状态更新为 ready",
+              : classification.long_horizon_required && validationStatus !== "passed"
+                ? "运行长期规划语义校验并提交匹配正文 digest 的结果"
+                : classification.long_horizon_required && planningGateStatus !== "approved"
+                  ? "提交并等待 ADMIN Planning Gate 决定"
+                  : "将规划产物状态更新为 ready",
     required_skills: requiredSkills,
     invoked_skills: invokedSkills,
     missing_skills: missingSkills,
     findings,
     open_issues: openIssues,
     related_issues: issues.related,
-    allowed: findings.length === 0,
+    allowed: dispatchOpen,
   };
 }

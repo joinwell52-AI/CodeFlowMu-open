@@ -33,6 +33,7 @@ export {
   type AdHocPriority,
   type AdhocQueueItem,
   type DispatchOutcome,
+  type DispatchTaskStateView,
   type DispatchControlPlaneOptions,
 } from "./TaskDispatcher.ts";
 

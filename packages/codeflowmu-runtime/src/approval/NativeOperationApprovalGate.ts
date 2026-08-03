@@ -51,7 +51,8 @@ function roleFromAgentId(agentId: string): string {
 }
 
 function normalizedToolName(toolName: string): string {
-  return toolName.trim().toLowerCase().replace(/^.*[.:/]/, "");
+  const raw = toolName.trim().toLowerCase();
+  return raw.startsWith("pm.") ? raw : raw.replace(/^.*[.:/]/, "");
 }
 
 function extractCommand(args: Record<string, unknown>): string {
@@ -118,7 +119,7 @@ export async function evaluateNativeOperationBoundary(input: {
   }
 
   const tool = normalizedToolName(input.toolName);
-  if (/^(?:write_task|write_report|write_issue|write_review|review|review_task|submit_review|approve_review|reject_review|mark_human_approved|archive_task|claim_task|submit_task|finish_task|approve_task|reopen_task)$/.test(tool)) {
+  if (/^(?:write_task|write_report|write_issue|write_review|review|review_task|submit_review|approve_review|reject_review|mark_human_approved|archive_task|claim_task|submit_task|finish_task|approve_task|reopen_task|pm\.redispatch_task)$/.test(tool)) {
     return { decision: "ALLOW" };
   }
 

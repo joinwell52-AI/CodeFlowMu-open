@@ -397,7 +397,35 @@ export {
   type ProductTaskClassification,
   type ProductDeliveryGateStatus,
   type PmPlanningLevel,
+  type PlanningArtifactStatus,
 } from "./ProductDeliveryGovernance.ts";
+export {
+  LONG_HORIZON_SKILL_ID,
+  LONG_HORIZON_SIGNAL_PATTERNS,
+  classifyLongHorizonPlanning,
+  validateLongHorizonPlan,
+  persistPlanningValidation,
+  readPlanningValidation,
+  planningValidationPath,
+  sha256Digest,
+  type LongHorizonClassification,
+  type PlanningFinding,
+  type PlanningValidationResult,
+  type ValidateLongHorizonPlanInput,
+} from "./LongHorizonPlanning.ts";
+export {
+  PLANNING_GATE_DECISIONS,
+  planningGateHistoryPath,
+  submitPlanningGate,
+  decidePlanningGate,
+  recordPlanningGateDelivery,
+  readPlanningGateHistory,
+  currentPlanningGateState,
+  type PlanningGateDecisionValue,
+  type PlanningGateSubmission,
+  type PlanningGateDecision,
+  type PlanningGateRecord,
+} from "./PlanningGateStore.ts";
 export {
   evaluatePmSummaryGate,
   type PmSummaryGateResult,

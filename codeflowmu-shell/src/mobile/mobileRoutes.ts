@@ -848,6 +848,10 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
           ? findChildTasksForParent(mergedTask, tasks as Record<string, unknown>[])
           : [],
       });
+      const dispatchState = await proxyPanelGet(
+        ctx.panelPort,
+        `/api/v2/runtime/tasks/${encodeURIComponent(taskIdNorm)}/dispatch-state`,
+      );
       res.json({
         task: mergedTask,
         task_spec_admission: taskSpecAdmission,
@@ -857,6 +861,7 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
         child_tasks,
         flow_overview,
         available_actions,
+        dispatch_state: dispatchState.ok ? dispatchState.body : null,
       });
     } catch (err) {
       res.status(500).json({ ok: false, error: String(err) });
@@ -899,6 +904,19 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
         const panelRes = await proxyPanelPost(ctx.panelPort, `/api/v2/tasks/${encodeURIComponent(taskId)}/unstick`, {
           reason: "mobile_unstick",
         });
+        res.status(panelRes.status).json(panelRes.body);
+        return;
+      }
+      if (action === "redispatch") {
+        const panelRes = await proxyPanelPost(
+          ctx.panelPort,
+          `/api/v2/runtime/tasks/${encodeURIComponent(taskId)}/redispatch`,
+          {
+            mode: "repair_retry",
+            role: recipient || undefined,
+            idempotency_key: `mobile-redispatch:${taskId}:${Date.now()}`,
+          },
+        );
         res.status(panelRes.status).json(panelRes.body);
         return;
       }

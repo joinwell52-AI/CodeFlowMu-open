@@ -20,6 +20,18 @@ describe("PmRuntimeControlTools", () => {
     }
   });
 
+  it("exposes same-TASK redispatch as an idempotent PM control tool", () => {
+    const definition = PM_RUNTIME_CONTROL_TOOL_DEFINITIONS.find(
+      (tool) => tool.name === "pm.redispatch_task",
+    );
+    assert.ok(definition);
+    assert.deepEqual(definition.inputSchema.required, [
+      "task_id",
+      "mode",
+      "idempotency_key",
+    ]);
+  });
+
   it("exposes structured inspection, approval and evidence tools", () => {
     const names = new Set(PM_RUNTIME_CONTROL_TOOL_NAMES);
     for (const name of [
@@ -196,6 +208,51 @@ describe("PmRuntimeControlTools", () => {
       assert.equal(received?.["session_id"], "session-real-pm-902");
       assert.equal(received?.["caller_role"], "PM-01");
       assert.match(String(received?.["body_markdown"]), /站会小助手/);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => error ? reject(error) : resolve()),
+      );
+    }
+  });
+
+  it("forwards long-horizon validation with Runtime task/thread/session binding", async () => {
+    let received: Record<string, unknown> | null = null;
+    let requestPath = "";
+    const server = createServer((req, res) => {
+      requestPath = req.url ?? "";
+      let raw = "";
+      req.setEncoding("utf8");
+      req.on("data", (chunk) => { raw += chunk; });
+      req.on("end", () => {
+        received = JSON.parse(raw) as Record<string, unknown>;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ ok: true, validation: { ready_for_review: true } }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      assert(address && typeof address === "object");
+      const result = await invokePmRuntimeControlTool({
+        toolName: "pm.validate_long_horizon_plan",
+        args: {
+          task_id: "TASK-20260803-903",
+          thread_key: "thread-903",
+          source_digest: `sha256:${"a".repeat(64)}`,
+          body_markdown: "# Product Brief",
+          planning_ir: { requirements: [] },
+          fact_snapshot_at: "2026-08-03T20:00:00+08:00",
+        },
+        currentTaskId: "TASK-20260803-903",
+        agentId: "PM-01",
+        sessionId: "session-real-pm-903",
+        panelUrl: `http://127.0.0.1:${address.port}`,
+      });
+      assert.equal(result.ok, true);
+      assert.equal(requestPath, "/api/v2/pm/governance/planning-validation");
+      assert.equal(received?.["thread_key"], "thread-903");
+      assert.equal(received?.["session_id"], "session-real-pm-903");
+      assert.deepEqual(received?.["planning_ir"], { requirements: [] });
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => error ? reject(error) : resolve()),

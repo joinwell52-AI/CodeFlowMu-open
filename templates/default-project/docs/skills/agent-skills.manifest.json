@@ -431,6 +431,15 @@
       "status": "playbook_stub"
     },
     {
+      "id": "pm-long-horizon-planning",
+      "display_name": "PM 长期复杂任务总体规划",
+      "description": "审计长篇复杂任务书，建立 Requirement/WP/Gate/测试/证据覆盖，并生成经 digest 绑定语义校验和 ADMIN Planning Gate 的唯一 Product Brief。",
+      "doc": "docs/skills/pm-planning-governance.md",
+      "skill_package": "skills/pm-long-horizon-planning/SKILL.md",
+      "status": "implemented",
+      "load_policy": "conditional_long_horizon"
+    },
+    {
       "id": "pm-acceptance-criteria",
       "display_name": "PM 验收标准",
       "doc": "docs/skills/pm-playbook/acceptance-criteria.md",

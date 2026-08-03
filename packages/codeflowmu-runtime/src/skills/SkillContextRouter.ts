@@ -13,6 +13,7 @@ import {
   classifyProductTask,
   PRODUCT_DESIGN_REQUIRED_SKILLS,
 } from "../pm/ProductDeliveryGovernance.ts";
+import { LONG_HORIZON_SKILL_ID } from "../pm/LongHorizonPlanning.ts";
 import {
   isPmDispatchForbiddenBody,
   isTaskHotPathBody,
@@ -370,15 +371,19 @@ function matchContextSkills(
   ).sort(
     (a, b) => a.priority - b.priority,
   );
-  const productRequired =
-    role === "PM" && classifyProductTask(ctx.text).product_design_required;
+  const classification = classifyProductTask(ctx.text);
+  const productRequired = role === "PM" && classification.product_design_required;
+  const requiredSkills = [
+    ...PRODUCT_DESIGN_REQUIRED_SKILLS,
+    ...(classification.long_horizon_required ? [LONG_HORIZON_SKILL_ID] : []),
+  ];
   const max = productRequired
-    ? Math.max(opts.maxSkills ?? 3, PRODUCT_DESIGN_REQUIRED_SKILLS.length)
+    ? Math.max(opts.maxSkills ?? 3, requiredSkills.length)
     : opts.maxSkills ?? 3;
   const seen = new Set<string>();
   const out: SkillContextMatch[] = [];
   if (productRequired) {
-    for (const skillId of PRODUCT_DESIGN_REQUIRED_SKILLS) {
+    for (const skillId of requiredSkills) {
       seen.add(skillId);
       out.push({
         skillId,
@@ -527,6 +532,9 @@ export async function resolveAndInjectAgentContextSkills(
     matches.some((match) => match.skillId === "pm-product-design-brief")
   ) {
     promptBlock += `\n\n## Product Design Gate (runtime-enforced) — CodeFlowMu Dev-Team PM Planning\nThis is a CodeFlowMu development-team workflow above FCoP, not an FCoP core-protocol rule. Runtime classifies the root task as Level 0-3. Before the first write_task to DEV/QA/OPS, complete the matching PLAN (Level 1/2) or Product Brief (Level 3) by calling \`pm.write_planning_artifact\` with Markdown body only. Runtime will write Level 3 to \`fcop/internal/product-briefs/PRODUCT-BRIEF-${opts.taskId}.md\` and Level 1/2 to the corresponding \`PLAN-${opts.taskId}.md\`. Do not use shell, Python, native edit, or hand-written YAML to create the planning file; Runtime selects the canonical path and frontmatter. Auto-injected guidance is recommendation only and is never execution evidence. For every required Level 3 skill, read and apply it, then call \`pm.record_planning_skill_evidence\` with task_id, Runtime session_id (added automatically), input context, output summary, matching brief section, and affected product decisions. Never append \`.codeflowmu/skill-invocations.jsonl\` by shell or script.`;
+  }
+  if (role === "PM" && matches.some((match) => match.skillId === LONG_HORIZON_SKILL_ID)) {
+    promptBlock += "\n\n## Long-Horizon Planning Gate (runtime-enforced)\nRead the complete source through EOF, audit contradictions and current facts, build a Planning IR and 100% hard-requirement coverage, then call `pm.validate_long_horizon_plan`. A matching validation digest and ADMIN Planning Gate approval for the current revision/body digest are required before WP-00. Auto-injection is never execution evidence.";
   }
   const skillIds = matches.map((m) => m.skillId);
 

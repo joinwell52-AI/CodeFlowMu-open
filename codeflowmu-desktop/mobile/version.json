@@ -1,12 +1,12 @@
 {
-  "app_version": "V1.0.60",
-  "resource_version": "1.0.60",
-  "cache_name": "codeflowmu-pwa-v1.0.60",
-  "updated_at": "2026-08-02T17:48:59Z",
-  "release_name": "统一操作审批与恢复",
+  "app_version": "V1.0.61",
+  "resource_version": "1.0.61",
+  "cache_name": "codeflowmu-pwa-v1.0.61",
+  "updated_at": "2026-08-03T15:12:14Z",
+  "release_name": "任务自主认领与长期规划",
   "changes": [
-    "展示精确审批目标、操作摘要、执行器与恢复建议，避免授权内容含糊不清",
-    "区分已批准与已执行，拒绝、过期或摘要失效后确定性返回重新规划",
-    "PM等待审批不再计作失败，有效进展抑制重复心跳，无进展时自动熔断"
+    "任务页新增 Agent 自主认领、同 TASK 重派与恢复状态展示",
+    "长期复杂规划增加 Product Brief、WP 依赖图、预算日程和 Planning Gate 展示",
+    "审批后仅开放 WP-00，并保留规划版本历史与来源校验信息"
   ]
 }

@@ -71,9 +71,12 @@ describe("FcopToolProfile", () => {
     }
   });
 
-  it("worker executor profile remains exactly 3 hot-path tools", () => {
-    assert.equal(EXECUTOR_TOOLS.length, 3);
+  it("worker executor profile includes controlled discovery and claim recovery", () => {
+    assert.equal(EXECUTOR_TOOLS.length, 6);
     assert.deepEqual([...EXECUTOR_TOOLS], [
+      "list_my_tasks",
+      "read_my_task",
+      "claim_task",
       "write_report",
       "write_issue",
       "drop_suggestion",

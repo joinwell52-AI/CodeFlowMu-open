@@ -1,0 +1,4 @@
+interface:
+  display_name: "PM 长期复杂任务总体规划"
+  short_description: "审计长任务书并生成经语义校验的可执行 Product Brief"
+  default_prompt: "Use $pm-long-horizon-planning to audit the specified taskbook, build requirement coverage, and produce one validated Product Brief."

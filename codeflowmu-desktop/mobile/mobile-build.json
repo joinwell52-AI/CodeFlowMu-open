@@ -1,7 +1,6 @@
 {
-  "ui_version": "v1.0.60",
+  "ui_version": "v1.0.61",
   "source": "codeflowmu-desktop/mobile",
-  "built_at": "2026-08-02T12:34:47Z",
-  "commit": "f767e5f4",
-  "build_time": "2026-08-02T17:48:59Z"
+  "built_at": "2026-08-03T15:12:15Z",
+  "commit": "879cec6a"
 }

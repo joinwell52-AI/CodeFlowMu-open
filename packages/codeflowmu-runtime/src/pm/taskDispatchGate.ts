@@ -10,6 +10,7 @@ export type DispatchGateReason =
   | "allowed"
   | "waiting_dependency"
   | "task_not_dispatched"
+  | "lifecycle_split"
   | "already_active"
   | "already_done";
 
@@ -275,6 +276,13 @@ export function evaluateDispatchEligibility(
   }
   const fm = String(target.fmState ?? "inbox").toLowerCase();
   if (fm === "dispatched" || fm === "running") {
+    if (bucket === "inbox") {
+      return {
+        allowed: false,
+        reason: "lifecycle_split",
+        detail: `physical bucket=inbox but frontmatter state=${fm}`,
+      };
+    }
     return {
       allowed: false,
       reason: "already_active",

@@ -10,6 +10,7 @@ type MobileCloseout = {
 export type MobileTaskActionId =
   | "nudge"
   | "unstick"
+  | "redispatch"
   | "approve"
   | "reject"
   | "archive"
@@ -334,6 +335,15 @@ export function buildAvailableTaskActions(
       disabled_reason: openChildren.length
         ? l(`不能归档：仍有 ${openChildren.length} 个子任务未收口`, `Cannot archive: ${openChildren.length} child task(s) remain open.`)
         : undefined,
+    });
+  }
+
+  if (["inbox", "active", "running"].includes(bucket) || ["inbox", "active", "running", "failed"].includes(status)) {
+    actions.push({
+      id: "redispatch",
+      label: l("重新派发", "Redispatch"),
+      enabled: panelReady,
+      disabled_reason: panelReason,
     });
   }
 

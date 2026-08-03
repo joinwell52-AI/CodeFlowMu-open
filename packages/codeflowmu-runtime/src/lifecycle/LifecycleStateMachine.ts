@@ -145,7 +145,7 @@ export class LifecycleStateMachine {
   resolveStage(taskPath: string, fm: TaskFm): LifecycleStage {
     const fromPath = stageFromPath(taskPath, this.lifecycleRoot);
     if (fromPath) return fromPath;
-    if (fm.state && fm.state !== "dispatched") return fm.state;
+    if (fm.state && fm.state !== "dispatched" && fm.state !== "running") return fm.state;
     throw new Error(`cannot resolve lifecycle stage for ${taskPath}`);
   }
 
@@ -488,7 +488,10 @@ export class LifecycleStateMachine {
   }
 
   /** Runtime dispatch: inbox → active with transition record (no authority check). */
-  async runtimeDispatchInboxToActive(taskPath: string): Promise<void> {
+  async runtimeDispatchInboxToActive(
+    taskPath: string,
+    claim?: { attemptId?: string; leaseId?: string; agentId?: string },
+  ): Promise<void> {
     this.guardAutomaticWrite("runtimeDispatchInboxToActive");
     const from = stageFromPath(taskPath, this.lifecycleRoot);
     if (from !== "inbox") return;
@@ -509,8 +512,38 @@ export class LifecycleStateMachine {
       action: "runtime_dispatch",
     });
 
+    await this.store.patch(taskPath, {
+      state: "active",
+      lifecycle_path: "fcop/_lifecycle/active",
+      ...(claim?.attemptId ? { dispatch_attempt_id: claim.attemptId } : {}),
+      ...(claim?.leaseId ? { execution_lease_id: claim.leaseId } : {}),
+      ...(claim?.agentId ? { dispatch_agent_id: claim.agentId } : {}),
+    });
+
     await fs.mkdir(dirname(dest), { recursive: true });
     await fs.rename(taskPath, dest);
+  }
+
+  async runtimeRepairInboxSplit(
+    taskPath: string,
+    reason = "lifecycle_split_repair",
+  ): Promise<void> {
+    this.guardAutomaticWrite("runtimeRepairInboxSplit");
+    if (stageFromPath(taskPath, this.lifecycleRoot) !== "inbox") return;
+    await this.appendTransition(taskPath, {
+      from: "inbox",
+      to: "inbox",
+      by: "CodeFlowMu",
+      action: "runtime_repair_lifecycle_split",
+      reason,
+    });
+    await this.store.patch(taskPath, {
+      state: "inbox",
+      lifecycle_path: "fcop/_lifecycle/inbox",
+      dispatch_attempt_id: undefined,
+      execution_lease_id: undefined,
+      dispatch_agent_id: undefined,
+    });
   }
 
   /**

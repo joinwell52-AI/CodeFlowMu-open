@@ -43,6 +43,17 @@ function report(
 }
 
 describe("taskDispatchGate", () => {
+  it("classifies inbox plus dispatched projection as lifecycle_split", () => {
+    const target = task({
+      recipient: "DEV",
+      lifecycleBucket: "inbox",
+      fmState: "dispatched",
+    });
+    const result = evaluateDispatchEligibility(target, [target], []);
+    assert.equal(result.allowed, false);
+    assert.equal(result.reason, "lifecycle_split");
+  });
+
   it("prerequisite chain DEV→QA→EVAL", () => {
     assert.deepEqual(prerequisiteWorkerRoles("DEV"), []);
     assert.deepEqual(prerequisiteWorkerRoles("QA"), []);
