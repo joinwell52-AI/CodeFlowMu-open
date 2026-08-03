@@ -25,6 +25,7 @@ export type FcopBootstrapFile = {
   target_rel: string;
   sha256: string;
   category: "rules" | "protocol" | "commentary" | "role_template" | "adopted" | "host_contract";
+  source_origin?: "working_tree" | "bundled_shell_resource" | "default_project_template" | "git_head";
   preserved_local?: true;
   source_sha256?: string;
 };
@@ -139,6 +140,17 @@ const LEDGER_PRESERVE_PREFIXES = [
   ".codeflowmu/operation-approvals/records/",
 ] as const;
 
+const DEV_TEAM_ROLE_TEMPLATE_FILES = [
+  "fcop/shared/roles/PM.md",
+  "fcop/shared/roles/PM.en.md",
+  "fcop/shared/roles/DEV.md",
+  "fcop/shared/roles/DEV.en.md",
+  "fcop/shared/roles/QA.md",
+  "fcop/shared/roles/QA.en.md",
+  "fcop/shared/roles/OPS.md",
+  "fcop/shared/roles/OPS.en.md",
+] as const;
+
 function slash(value: string): string {
   return value.replace(/\\/g, "/").replace(/^\.\//, "");
 }
@@ -151,6 +163,52 @@ function fileSha(path: string): string | null {
   return existsSync(path) && statSync(path).isFile()
     ? sha256Buffer(readFileSync(path))
     : null;
+}
+
+function readGitHeadFile(root: string, rel: string): Buffer | null {
+  try {
+    return execFileSync("git", ["-C", root, "show", `HEAD:${slash(rel)}`], {
+      encoding: "buffer",
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function readBootstrapSource(
+  sourceRoot: string,
+  sourceRel: string,
+): { content: Buffer; origin: NonNullable<FcopBootstrapFile["source_origin"]> } | null {
+  const rel = slash(sourceRel);
+  const workingTreePath = join(sourceRoot, rel);
+  if (existsSync(workingTreePath) && statSync(workingTreePath).isFile()) {
+    return { content: readFileSync(workingTreePath), origin: "working_tree" };
+  }
+
+  // Mother runtime resources live outside the mutable project FCoP tree. This
+  // remains available even when sourceRoot === targetRoot and a project cleanup
+  // has removed every root-level fcop/shared template from both disk and HEAD.
+  const bundledShellPath = join(sourceRoot, "codeflowmu-shell", "resources", "fcop-bootstrap", rel);
+  if (existsSync(bundledShellPath) && statSync(bundledShellPath).isFile()) {
+    return { content: readFileSync(bundledShellPath), origin: "bundled_shell_resource" };
+  }
+
+  // Open Edition ships an immutable initialized project template because its
+  // application root is not itself an FCoP project.
+  const defaultTemplatePath = join(sourceRoot, "templates", "default-project", rel);
+  if (existsSync(defaultTemplatePath) && statSync(defaultTemplatePath).isFile()) {
+    return { content: readFileSync(defaultTemplatePath), origin: "default_project_template" };
+  }
+
+  // The mother repository may also be the project being initialized. Runtime
+  // cleanup can therefore remove fcop/shared/** from the working tree before
+  // initialization. HEAD is the immutable release baseline in that same-repo
+  // case; reading it prevents target deletion from erasing the source template.
+  const gitHead = readGitHeadFile(sourceRoot, rel);
+  return gitHead ? { content: gitHead, origin: "git_head" } : null;
 }
 
 function stable(value: unknown): unknown {
@@ -266,6 +324,9 @@ function manifestFileCandidates(sourceRoot: string): Array<Omit<FcopBootstrapFil
     { source_rel: "fcop/shared/TEAM-OPERATING-RULES.en.md", target_rel: "fcop/shared/TEAM-OPERATING-RULES.en.md", category: "role_template" },
     { source_rel: "workspace/README.md", target_rel: "workspace/README.md", category: "host_contract" },
   ];
+  for (const rel of DEV_TEAM_ROLE_TEMPLATE_FILES) {
+    candidates.push({ source_rel: rel, target_rel: rel, category: "role_template" });
+  }
   for (const rel of listFiles(sourceRoot, "fcop/shared/roles")) {
     candidates.push({ source_rel: rel, target_rel: rel, category: "role_template" });
   }
@@ -331,17 +392,22 @@ export function createFcopBootstrapManifest(input: {
   fcopPackageCompatibility?: string;
 }): FcopBootstrapManifest {
   const sourceRoot = resolve(input.sourceRoot);
-  const files = manifestFileCandidates(sourceRoot)
-    .filter((entry) => existsSync(join(sourceRoot, entry.source_rel)))
-    .map((entry) => {
+  const seenTargets = new Set<string>();
+  const files: FcopBootstrapFile[] = [];
+  for (const entry of manifestFileCandidates(sourceRoot)) {
+      if (seenTargets.has(entry.target_rel)) continue;
+      seenTargets.add(entry.target_rel);
       assertSafeRelative(entry.source_rel);
       assertSafeRelative(entry.target_rel);
-      return {
+      const source = readBootstrapSource(sourceRoot, entry.source_rel);
+      if (!source) continue;
+      files.push({
         ...entry,
-        sha256: fileSha(join(sourceRoot, entry.source_rel))!,
-      };
-    })
-    .sort((left, right) => left.target_rel.localeCompare(right.target_rel));
+        sha256: sha256Buffer(source.content),
+        source_origin: source.origin,
+      });
+  }
+  files.sort((left, right) => left.target_rel.localeCompare(right.target_rel));
   const sourceVersion = readVersion(join(sourceRoot, "package.json"), "unknown");
   const shellVersion = readVersion(join(sourceRoot, "codeflowmu-shell", "package.json"), sourceVersion);
   const runtimeVersion = readVersion(join(sourceRoot, "packages", "codeflowmu-runtime", "package.json"), sourceVersion);
@@ -508,6 +574,20 @@ export function buildFcopInitPlan(input: {
       : [];
   if (profile.mode === "project" && requestedRoles.length === 0) {
     conflict.push({ target_rel: "fcop/fcop.json", reason: `unsupported team profile: ${requestedTeam}` });
+  }
+  const requiredRoleTemplates = [
+    "fcop/shared/TEAM-ROLES.md",
+    "fcop/shared/TEAM-OPERATING-RULES.md",
+    ...requestedRoles.map((role) => `fcop/shared/roles/${role}.md`),
+  ];
+  const manifestTargets = new Set(manifest.files.map((file) => file.target_rel));
+  for (const rel of requiredRoleTemplates) {
+    if (!manifestTargets.has(rel)) {
+      conflict.push({
+        target_rel: rel,
+        reason: "required Rule 4.5 bootstrap source is unavailable in the release baseline",
+      });
+    }
   }
   const configCompatible = !existingConfig || (
     String(existingConfig["mode"] ?? "") === requestedMode &&
@@ -712,7 +792,6 @@ export class FcopInitTransaction {
       for (const file of this.plan.manifest.files) {
         if (!created.has(file.target_rel) && !updates.has(file.target_rel)) continue;
         assertSafeRelative(file.target_rel);
-        const source = join(this.sourceRoot, file.source_rel);
         const target = join(this.targetRoot, file.target_rel);
         assertWithin(this.targetRoot, target);
         if (existsSync(target)) {
@@ -722,7 +801,9 @@ export class FcopInitTransaction {
         }
         const stage = join(txRoot, "staging", file.target_rel);
         mkdirSync(dirname(stage), { recursive: true });
-        copyFileSync(source, stage);
+        const source = readBootstrapSource(this.sourceRoot, file.source_rel);
+        if (!source) throw new Error(`bootstrap source disappeared after approval: ${file.source_rel}`);
+        writeFileSync(stage, source.content);
         if (fileSha(stage) !== file.sha256) throw new Error(`staging digest mismatch: ${file.target_rel}`);
         mkdirSync(dirname(target), { recursive: true });
         writeAtomic(target, readFileSync(stage));

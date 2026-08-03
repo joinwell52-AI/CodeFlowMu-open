@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -154,6 +155,76 @@ test("partial uninitialized project preserves local bootstrap files and complete
   } finally {
     rmSync(source, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("same-repository initialization restores deleted Rule 4.5 templates from the signed git baseline", async () => {
+  const root = sourceFixture();
+  const requiredTemplates = [
+    "fcop/shared/TEAM-ROLES.md",
+    "fcop/shared/TEAM-OPERATING-RULES.md",
+    "fcop/shared/roles/PM.md",
+    "fcop/shared/roles/DEV.md",
+    "fcop/shared/roles/QA.md",
+    "fcop/shared/roles/OPS.md",
+  ];
+  try {
+    execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "bootstrap-test@example.invalid"], { cwd: root });
+    execFileSync("git", ["config", "user.name", "Bootstrap Test"], { cwd: root });
+    execFileSync("git", ["add", "."], { cwd: root });
+    execFileSync("git", ["commit", "-m", "bootstrap baseline"], { cwd: root, stdio: "ignore" });
+    for (const rel of requiredTemplates) rmSync(join(root, rel));
+
+    const plan = compatiblePlan(root, root);
+    assert.equal(plan.mode, "new");
+    assert.deepEqual(plan.conflict, []);
+    for (const rel of requiredTemplates) {
+      assert.ok(plan.create.some((entry) => entry.target_rel === rel), `${rel} must be restored`);
+      assert.equal(plan.manifest.files.find((file) => file.target_rel === rel)?.source_origin, "git_head");
+    }
+
+    await new FcopInitTransaction(plan).execute(plan.plan_digest);
+    for (const rel of requiredTemplates) assert.equal(existsSync(join(root, rel)), true);
+    assert.equal(verifyFcopBootstrapManifest(root).ok, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("same-repository initialization keeps working after root templates are deleted from HEAD", async () => {
+  const root = sourceFixture();
+  const requiredTemplates = [
+    "fcop/shared/TEAM-ROLES.md",
+    "fcop/shared/TEAM-OPERATING-RULES.md",
+    "fcop/shared/roles/PM.md",
+    "fcop/shared/roles/DEV.md",
+    "fcop/shared/roles/QA.md",
+    "fcop/shared/roles/OPS.md",
+  ];
+  try {
+    for (const rel of requiredTemplates) {
+      write(
+        root,
+        `codeflowmu-shell/resources/fcop-bootstrap/${rel}`,
+        readFileSync(join(root, rel), "utf8"),
+      );
+      rmSync(join(root, rel));
+    }
+
+    const plan = compatiblePlan(root, root);
+    assert.deepEqual(plan.conflict, []);
+    for (const rel of requiredTemplates) {
+      assert.equal(
+        plan.manifest.files.find((file) => file.target_rel === rel)?.source_origin,
+        "bundled_shell_resource",
+      );
+    }
+
+    await new FcopInitTransaction(plan).execute(plan.plan_digest);
+    for (const rel of requiredTemplates) assert.equal(existsSync(join(root, rel)), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

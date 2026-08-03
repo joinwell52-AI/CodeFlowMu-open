@@ -255,4 +255,4 @@ fcop 2.0.0 是**哲学性 major**——既有 envelope 与 frontmatter 字段不
 ## CodeFlowMu Dev-Team PM Planning Governance
 
 This is a CodeFlowMu development-team workflow above FCoP, not an FCoP core-protocol rule.
-PM must follow `docs/skills/pm-planning-governance.md` and complete the matching Level 0-3 planning gate before the first DEV/QA/OPS implementation task is created.
+PM must follow `docs/skills/pm-planning-governance.md` and complete the matching Level 0-3 plan before creating the first DEV/QA/OPS implementation task.
