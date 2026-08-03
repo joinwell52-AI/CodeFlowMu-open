@@ -333,7 +333,13 @@ export interface Review {
 // SessionRun never cross the fcop bridge; this schema is the only SSOT.
 // ───────────────────────────────────────────────────────────────────────────
 
-export type SessionStatus = "running" | "completed" | "failed" | "cancelled";
+export type SessionStatus =
+  | "running"
+  | "waiting_approval"
+  | "approval_creation_pending"
+  | "completed"
+  | "failed"
+  | "cancelled";
 export type RunStatus = "running" | "finished" | "failed" | "cancelled";
 
 export interface SessionRunTokensUsed {

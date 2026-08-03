@@ -3732,4 +3732,9 @@ unilaterally.
 ## CodeFlowMu Dev-Team PM Planning Governance
 
 This is a CodeFlowMu development-team workflow above FCoP, not an FCoP core-protocol rule.
+PM must follow `docs/skills/pm-planning-governance.md` and complete the matching Level 0-3 plan before creating the first DEV/QA/OPS implementation task.
+
+## CodeFlowMu Dev-Team PM Planning Governance
+
+This is a CodeFlowMu development-team workflow above FCoP, not an FCoP core-protocol rule.
 PM must follow `docs/skills/pm-planning-governance.md` and complete the matching Level 0-3 planning gate before the first DEV/QA/OPS implementation task is created.

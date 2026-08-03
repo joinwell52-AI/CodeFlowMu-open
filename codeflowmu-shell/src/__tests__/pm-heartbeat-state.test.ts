@@ -9,11 +9,47 @@ import {
   evaluatePmHeartbeatFuse,
   readPmHeartbeatState,
   registerAcceptedPmHeartbeatWake,
+  registerPmHeartbeatTick,
   settlePmHeartbeatWake,
   writePmHeartbeatState,
 } from "../pm-heartbeat-state.ts";
 
 describe("PM heartbeat result state", () => {
+  it("persists every accepted, skipped, and failed scheduler tick", () => {
+    const root = mkdtempSync(join(tmpdir(), "cf-pm-tick-state-"));
+    try {
+      const state = emptyPmHeartbeatState();
+      registerPmHeartbeatTick(state, {
+        tick_id: "TICK-1",
+        observed_at: "2026-08-03T00:00:00.000Z",
+        project_root: root,
+        status: "skipped",
+        decision: "skipped",
+        skip_reason: "waiting_approval",
+        task_id: "TASK-1",
+      });
+      registerPmHeartbeatTick(state, {
+        tick_id: "TICK-2",
+        observed_at: "2026-08-03T00:01:00.000Z",
+        project_root: root,
+        status: "failed",
+        decision: "failed",
+        skip_reason: "wake_http_failed",
+        detail: "503",
+      });
+      writePmHeartbeatState(root, state);
+      const restored = readPmHeartbeatState(root);
+      assert.deepEqual(restored.ticks.map((tick) => [tick.tick_id, tick.status, tick.skip_reason]), [
+        ["TICK-1", "skipped", "waiting_approval"],
+        ["TICK-2", "failed", "wake_http_failed"],
+      ]);
+      assert.equal(restored.last_run_at_ms, 0);
+      assert.equal(restored.last_digest, "");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("persists an accepted wake and blocks another wake while its session is pending", () => {
     const root = mkdtempSync(join(tmpdir(), "cf-pm-wake-state-"));
     try {

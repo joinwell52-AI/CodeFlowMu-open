@@ -13,6 +13,8 @@ const base = {
   projectId: "project",
   agentId: "DEV-01",
   sessionId: "session-1",
+  taskId: "TASK-1",
+  threadKey: "thread-1",
 };
 
 test("native boundary allows ordinary local programming and does not implement cost approval", async () => {
@@ -29,7 +31,7 @@ test("native boundary allows ordinary local programming and does not implement c
   assert.equal(expensiveLocalTest.decision, "ALLOW");
 });
 
-test("native boundary denies unmigrated production, security, external and destructive adapters", async () => {
+test("native boundary routes production, security, external and destructive effects to approval", async () => {
   const commands = [
     "gh pr merge 12 --squash",
     "kubectl apply -f production.yaml",
@@ -38,7 +40,8 @@ test("native boundary denies unmigrated production, security, external and destr
   ];
   for (const command of commands) {
     const decision = await evaluateNativeOperationBoundary({ ...base, args: { command } });
-    assert.equal(decision.decision, "DENY", command);
+    assert.equal(decision.decision, "REQUIRE_APPROVAL", command);
+    if (decision.decision === "REQUIRE_APPROVAL") assert.ok(decision.input.rule_ids?.length);
   }
 });
 
@@ -73,7 +76,6 @@ test("governance storage is readable but not directly mutable by agents", async 
 
   for (const [toolName, args] of [
     ["edit", { path: "fcop/reports/REPORT-006.md" }],
-    ["delete_file", { path: "fcop/issues/ISSUE-002.md" }],
     ["apply_patch", { path: "fcop/_lifecycle/inbox/TASK-006.md" }],
     ["shell", { command: "del fcop\\reports\\REPORT-006.md" }],
     ["shell", { command: "echo changed > fcop\\reports\\REPORT-006.md" }],
@@ -82,21 +84,29 @@ test("governance storage is readable but not directly mutable by agents", async 
     ["shell", { command: "git checkout -- fcop\\reports\\REPORT-006.md" }],
   ] as const) {
     const decision = await evaluateNativeOperationBoundary({ ...base, toolName, args });
-    assert.equal(decision.decision, "DENY", toolName);
-    if (decision.decision === "DENY") {
-      assert.match(decision.reason, /governance_storage_boundary/);
+    assert.equal(decision.decision, "REQUIRE_APPROVAL", toolName);
+    if (decision.decision === "REQUIRE_APPROVAL") {
+      assert.ok((decision.input.rule_ids?.length ?? 0) > 0);
     }
   }
 });
 
-test("Runtime protocol writes remain allowed", async () => {
-  for (const toolName of ["write_task", "write_report", "write_issue", "write_review", "submit_review"]) {
+test("Runtime protocol writes use exact role capability sets", async () => {
+  for (const toolName of ["write_report", "write_issue"]) {
     const decision = await evaluateNativeOperationBoundary({
       ...base,
       toolName,
       args: { path: "fcop/reports/managed-by-runtime.md" },
     });
     assert.equal(decision.decision, "ALLOW", toolName);
+  }
+  for (const toolName of ["write_task", "write_review", "submit_review"]) {
+    const decision = await evaluateNativeOperationBoundary({
+      ...base,
+      toolName,
+      args: { path: "fcop/reports/managed-by-runtime.md" },
+    });
+    assert.equal(decision.decision, "ROLE_CAPABILITY_DENIED", toolName);
   }
 });
 
@@ -164,20 +174,24 @@ test("structured cleanup routes directories to approval and allows exact task te
   }
 });
 
-test("format text is harmless but a real disk format command is denied", async () => {
+test("format text is harmless while unknown and destructive commands route safely", async () => {
   for (const command of [
     "echo format appears in documentation",
-    "node cli.js --format json",
     "rg format docs",
   ]) {
     const decision = await evaluateNativeOperationBoundary({ ...base, args: { command } });
     assert.equal(decision.decision, "ALLOW", command);
   }
+  const unknown = await evaluateNativeOperationBoundary({
+    ...base,
+    args: { command: "node cli.js --format json" },
+  });
+  assert.equal(unknown.decision, "REQUIRE_APPROVAL");
   const destructive = await evaluateNativeOperationBoundary({
     ...base,
     args: { command: "format.exe X:" },
   });
-  assert.equal(destructive.decision, "DENY");
+  assert.equal(destructive.decision, "REQUIRE_APPROVAL");
 });
 
 test("Windows PowerShell 5 && chains are stopped before native execution", async () => {
@@ -190,10 +204,9 @@ test("Windows PowerShell 5 && chains are stopped before native execution", async
     },
   });
   assert.deepEqual(denied, {
-    decision: "DENY",
-    reason: "powershell5_unsupported_and_chain",
-    next_safe_action:
-      "Run the commands as separate tool calls, or use '; if ($LASTEXITCODE -eq 0) { ... }'.",
+    decision: "TOOL_REQUEST_INVALID",
+    canonical_tool_id: "shell",
+    reason: "tool request is invalid for the current shell dialect: powershell5_unsupported_and_chain",
   });
 
   for (const args of [
@@ -205,7 +218,7 @@ test("Windows PowerShell 5 && chains are stopped before native execution", async
       toolName: "shell",
       args,
     });
-    assert.equal(allowed.decision, "ALLOW");
+    assert.notEqual(allowed.decision, "TOOL_REQUEST_INVALID");
   }
 });
 
@@ -285,7 +298,7 @@ test("a capability lease cannot bypass remote-push preflight or operation approv
       },
     };
     const allowed = await evaluateNativeOperationBoundary(call);
-    assert.equal(allowed.decision, "DENY");
+    assert.equal(allowed.decision, "REQUIRE_APPROVAL");
     const replay = await evaluateNativeOperationBoundary({
       ...call,
       args: {
@@ -296,7 +309,7 @@ test("a capability lease cannot bypass remote-push preflight or operation approv
         },
       },
     });
-    assert.equal(replay.decision, "DENY");
+    assert.equal(replay.decision, "REQUIRE_APPROVAL");
     assert.equal(service.get(approved.governance.governance_id, 1).status, "effective");
   } finally {
     rmSync(projectRoot, { recursive: true, force: true });

@@ -306,6 +306,8 @@ export interface AgentSendSpec {
    * SessionManager — authoritative for write_report task_id guard.
    */
   pinnedTaskId?: string;
+  /** Thread key paired with pinnedTaskId for exact approval wait scoping. */
+  pinnedThreadKey?: string;
   /** Absolute or repo-relative path to the active TASK file (basename → task id). */
   taskFilepath?: string;
   /** Optional frontmatter task_id from parsed TASK (fallback after spec fields). */
@@ -641,6 +643,7 @@ export class CursorSdkAdapter implements AgentSdkAdapter {
       agentId: spec.agentId,
       projectRoot: effectiveCwd,
       ...(spec.pinnedTaskId ? { taskId: spec.pinnedTaskId } : {}),
+      ...(spec.pinnedThreadKey ? { threadKey: spec.pinnedThreadKey } : {}),
       ...(spec.maxToolRounds != null ? { maxToolRounds: spec.maxToolRounds } : {}),
       tokenEstimate: estimateCursorSendTokens({
         text: spec.text,
@@ -954,6 +957,12 @@ export class InMemoryRunHandle implements RunHandle {
     error?: Error;
     sdkError?: string;
     failureCode?: string;
+    operationFingerprint?: string;
+    operationClassification?: "approval_required" | "approval_creation_pending";
+    retryPolicy?: "none";
+    nextSafeAction?: string;
+    reportRequired?: boolean;
+    operationOutcome?: Record<string, unknown>;
   }): void {
     if (this._settled) return;
     this._settled = true;
@@ -971,6 +980,16 @@ export class InMemoryRunHandle implements RunHandle {
       tool_calls_count: 0,
       ...(opts.sdkError ? { sdk_error: opts.sdkError } : {}),
       ...(opts.failureCode ? { failure_code: opts.failureCode } : {}),
+      ...(opts.operationFingerprint
+        ? { operation_fingerprint: opts.operationFingerprint }
+        : {}),
+      ...(opts.operationClassification
+        ? { operation_classification: opts.operationClassification }
+        : {}),
+      ...(opts.retryPolicy ? { retry_policy: opts.retryPolicy } : {}),
+      ...(opts.nextSafeAction ? { next_safe_action: opts.nextSafeAction } : {}),
+      ...(opts.reportRequired != null ? { report_required: opts.reportRequired } : {}),
+      ...(opts.operationOutcome ? { operation_outcome: opts.operationOutcome } : {}),
     });
   }
 

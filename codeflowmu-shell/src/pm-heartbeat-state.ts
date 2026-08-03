@@ -31,12 +31,31 @@ export type PmHeartbeatFuse = {
   alert_emitted: boolean;
 };
 
+export type PmHeartbeatTickRecord = {
+  tick_id: string;
+  observed_at: string;
+  project_root: string;
+  status: "accepted" | "skipped" | "failed";
+  decision: "accepted" | "skipped" | "failed";
+  skip_reason?: string;
+  task_id?: string;
+  input_digest?: string;
+  wake_id?: string;
+  active_session?: string;
+  queue_guard?: Record<string, unknown>;
+  wake_http_status?: string | number;
+  session_id?: string;
+  detail?: string;
+};
+
 export type PmHeartbeatState = {
   schema_version: 1;
   last_run_at_ms: number;
   last_digest: string;
   wakes: PmHeartbeatWakeRecord[];
   fuses: Record<string, PmHeartbeatFuse>;
+  ticks: PmHeartbeatTickRecord[];
+  recovered_policy_freezes: Record<string, string>;
 };
 
 export function pmHeartbeatStatePath(projectRoot: string): string {
@@ -44,7 +63,15 @@ export function pmHeartbeatStatePath(projectRoot: string): string {
 }
 
 export function emptyPmHeartbeatState(): PmHeartbeatState {
-  return { schema_version: 1, last_run_at_ms: 0, last_digest: "", wakes: [], fuses: {} };
+  return {
+    schema_version: 1,
+    last_run_at_ms: 0,
+    last_digest: "",
+    wakes: [],
+    fuses: {},
+    ticks: [],
+    recovered_policy_freezes: {},
+  };
 }
 
 export function readPmHeartbeatState(projectRoot: string): PmHeartbeatState {
@@ -57,6 +84,16 @@ export function readPmHeartbeatState(projectRoot: string): PmHeartbeatState {
       last_digest: String(parsed.last_digest ?? ""),
       wakes: Array.isArray(parsed.wakes) ? parsed.wakes.slice(-100) : [],
       fuses: parsed.fuses && typeof parsed.fuses === "object" ? parsed.fuses : {},
+      ticks: Array.isArray(parsed.ticks)
+        ? parsed.ticks.slice(-200).map((tick) => ({
+            ...tick,
+            decision: tick.decision ?? tick.status,
+          }))
+        : [],
+      recovered_policy_freezes:
+        parsed.recovered_policy_freezes && typeof parsed.recovered_policy_freezes === "object"
+          ? parsed.recovered_policy_freezes
+          : {},
     };
   } catch {
     return emptyPmHeartbeatState();
@@ -68,7 +105,11 @@ export function writePmHeartbeatState(projectRoot: string, state: PmHeartbeatSta
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   try {
-    writeFileSync(temporary, `${JSON.stringify({ ...state, wakes: state.wakes.slice(-100) }, null, 2)}\n`, "utf8");
+    writeFileSync(temporary, `${JSON.stringify({
+      ...state,
+      wakes: state.wakes.slice(-100),
+      ticks: state.ticks.slice(-200),
+    }, null, 2)}\n`, "utf8");
     renameSync(temporary, path);
   } finally {
     if (existsSync(temporary)) rmSync(temporary, { force: true });
@@ -77,6 +118,14 @@ export function writePmHeartbeatState(projectRoot: string, state: PmHeartbeatSta
 
 export function newPmHeartbeatWakeId(now = new Date()): string {
   return `PM-WAKE-${now.toISOString().replace(/[-:.TZ]/g, "").slice(0, 17)}-${randomBytes(5).toString("hex")}`;
+}
+
+export function registerPmHeartbeatTick(
+  state: PmHeartbeatState,
+  tick: PmHeartbeatTickRecord,
+): void {
+  state.ticks.push(tick);
+  state.ticks = state.ticks.slice(-200);
 }
 
 export function registerAcceptedPmHeartbeatWake(

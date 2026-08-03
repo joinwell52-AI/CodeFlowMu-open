@@ -1,12 +1,12 @@
 # CodeFlowMu 操作审批边界与入口清单
 
-版本：V1.2.8（统一三态决策与可恢复审批闭环）
+版本：V1.2.10（精确能力 Gate + 二态负面路由 + 独立审批）
 日期：2026-08-03
 范围：`D:\codeflowmu` 母版受控入口
 
 ## 1. 产品边界
 
-全局“审批”只承载 AI 在动作发生前申请的五类临时权限：破坏性操作、外部写入与通信、发布与生产、凭据/权限/安全、Runtime/审批/权限边界变更。
+全局“审批”承载 AI 在动作发生前由 13 条 `NEG.*` 事实路由出的单次操作请求，包括越界/保护边界/治理绕过/共享状态/不可逆/动态批量/外部副作用/安全权限/Runtime 控制/远端发布/合同变化/效果不透明/并发冲突。
 
 TASK、REPORT、REVIEW、事实核查、EVAL、技术故障和事后知悉不进入操作审批。`high_cost` 仍只是观察字段，没有额度模型，不创建审批，也不阻断普通执行。
 
@@ -20,11 +20,11 @@ TASK、REPORT、REVIEW、事实核查、EVAL、技术故障和事后知悉不进
 | --- | --- | --- |
 | AI 在活动项目内进行普通 patch、构建、测试、本地 commit | ALLOW | 任务默认权限 |
 | PM 在当前任务绑定的 `workspace/` 或 `.codeflowmu/scratch/<TASK>/` 生成本地临时材料 | ALLOW | 任务绑定、路径边界和限额 |
-| PM 对明确产品文件执行结构化写入、建目录、复制、移动或 patch | REQUIRE_APPROVAL | 精确摘要 + 一次性令牌 + 受控执行器 |
-| PM 通过 raw shell 修改产品文件 | DENY: `APPROVAL_ADAPTER_REQUIRED` | 改用结构化 workspace 执行器，不生成死审批 |
+| PM 对任务内、明确、可逆且未命中负面项的文件执行写入、建目录、复制、移动或 patch | ALLOW | 精确 OperationFacts + 当前 TASK/thread 绑定 |
+| PM 通过 raw shell 修改产品文件 | ALLOW 或 REQUIRE_APPROVAL | Shell 只生成候选事实；命中 `NEG.*` 时先建单，缺执行器为同单 `pending_executor` |
 | AI 精确执行 `git push [-u] origin <branch>` | REQUIRE_APPROVAL | 操作摘要绑定的一次性令牌 |
-| AI 使用强推、复合 push 或无法确定目标的 push | DENY | 不可通过模糊审批放行 |
-| AI 调用尚未迁移的生产、安全、外部写、破坏性原生命令 | DENY | 先实现受控执行器再开放 |
+| AI 使用强推、复合 push 或无法确定目标的 push | REQUIRE_APPROVAL | 先建真实审批；审批机制可拒绝当前调用，目标不完整时为 `pending_information` |
+| AI 调用尚未迁移的生产、安全、外部写、破坏性原生命令 | REQUIRE_APPROVAL | 先建真实审批；无执行器时为 `pending_executor`，不得伪等待或终止 Session |
 | 用户在 Panel 的确定清理、凭据、发布、迁移等入口操作 | ALLOW（确认后） | 原入口可信前台即时确认凭据 |
 | REVIEW/事实核查/EVAL | ALLOW（任务平面） | 各自生命周期或事实核查接口 |
 
@@ -33,7 +33,7 @@ TASK、REPORT、REVIEW、事实核查、EVAL、技术故障和事后知悉不进
 | 入口 | 类型 | V1.2.8 状态 | 批准/确认前程序效果 |
 | --- | --- | --- | --- |
 | `POST /api/v2/git/push` | 外部写入 | 已迁移 | 只读预检并写审批，`executed=false`，不触碰远端 |
-| Cursor SDK 原生精确 Git push | 外部写入 | 已迁移 | 在 `tool_call:running` 阶段取消调用并写审批 |
+| Cursor SDK 原生精确 Git push | 外部写入 | 已迁移 | 在 `tool_call:running` 阶段先建审批、投递 approval_id，再 yield 等待；不取消逻辑 Session |
 | `git.push` 受控执行器 | 外部写入 | 已迁移 | 校验一次性令牌与最新 SHA 后只推送绑定分支 |
 | `workspace.fs.write` | 有界产品写入 | 已迁移 | 绑定目标、内容哈希、大小、编码、覆盖策略和文件快照 |
 | `workspace.fs.mkdir` | 有界目录创建 | 已迁移 | 仅创建规范化后的精确目录 |
@@ -44,11 +44,11 @@ TASK、REPORT、REVIEW、事实核查、EVAL、技术故障和事后知悉不进
 | 干净初始化、Runtime 清理、工作区迁移 | 破坏性 | 用户前台确认 | 取消确认后目标文件不变 |
 | API 密钥、Browser/Windows Use 安全设置、Git remote | 安全/权限 | 用户前台确认 | 取消确认后配置不变；确认摘要不显示秘密值 |
 | 开源同步、版本调整、发布推送 | 发布/外部写 | 用户前台确认 | 取消确认后不构建、不写版本、不推送 |
-| `gh pr merge`、`gh ... comment/create` | 外部写入 | 默认阻断 | 无受控适配器，不执行、不生成死审批卡 |
-| `kubectl/helm/terraform` 写操作、`npm publish`、`docker push` | 生产发布 | 默认阻断 | 无受控适配器，不执行 |
-| `chmod/chown/icacls/takeown`、Git remote 变更 | 安全/权限 | 默认阻断 | 无受控适配器，不执行 |
-| `git reset --hard`、危险 `git clean`、格式化磁盘 | 破坏性 | 默认阻断 | 无受控适配器，不执行 |
-| 运行时审批核心、角色工具策略等生效代码 | 治理边界 | 结构化审批 | 只有已注册的精确 workspace 执行器可送审；raw shell 不可送审 |
+| `gh pr merge`、`gh ... comment/create` | 外部写入 | 送审 | 创建可见审批；无受控适配器时停在 `pending_executor` |
+| `kubectl/helm/terraform` 写操作、`npm publish`、`docker push` | 生产发布 | 送审 | 创建可见审批；审批机制独立判断并要求精确执行器 |
+| `chmod/chown/icacls/takeown`、Git remote 变更 | 安全/权限 | 送审 | 创建可见审批；批准前不执行 |
+| `git reset --hard`、危险 `git clean`、格式化磁盘 | 破坏性 | 送审 | 创建可见审批；不可批准边界由审批机制拒绝当前调用 |
+| 运行时审批核心、角色工具策略等生效代码 | 治理边界 | 送审 | 所有命中一次性保留；缺执行器/事实仍先有 approval_id |
 
 CodeFlowMu 不声称能够拦截操作系统中独立于本程序运行的任意进程；保证范围是上述受控入口和 Runtime 提供给 Agent 的工具入口。
 
@@ -68,10 +68,10 @@ CodeFlowMu 不声称能够拦截操作系统中独立于本程序运行的任意
 | 高成本误触发 | `high_cost` 不映射到任何本期审批类型 |
 | REVIEW 混入审批 | 全局审批只读取 `.codeflowmu/operation-approvals`；旧 REVIEW ack 已退休 |
 | 移动端绕过 | Mobile 使用同一操作审批存储和一次性执行接口；批准/拒绝必须填写理由 |
-| 旧角色 Gate 影子否决 | Cursor 与 Google 都只接受 `UnifiedOperationPolicy` / `NativeOperationApprovalGate` 的三态最终结果；`RoleToolPolicy` 仅保留兼容投影 |
+| 旧角色 Gate 影子否决 | Cursor 与 Google 都先调用同一 `RoleToolCapabilityGate`，只检查 role + exact canonical tool ID + active capability；`RoleToolPolicy` 仅历史只读 |
 | 调用者自报 ADMIN 批准 | `pm_implementation_override` / `approved_by` 不再产生授权；正式 lease 必须带 revision、lease ID、内容与作用域摘要 |
 | 审批能准备但不能执行 | Prepare、Preview、Recompute、Execute 和 Recovery 来自同一 `ControlledExecutorRegistry` |
-| 审批等待被当成失败 | `waiting_approval` 是可恢复状态；拒绝、过期、stale 进入 `needs_replan`，均不重放 raw shell |
+| 审批等待被当成失败 | 只有真实 pending approval + 上下文/指纹一致 + Agent notice 已投递才能进入 `waiting_approval`；拒绝、过期、撤销、stale 恢复 prior state 并通知 Agent，不自动 `needs_replan` |
 
 ## 5. 存储与审计
 
@@ -94,11 +94,11 @@ CodeFlowMu 不声称能够拦截操作系统中独立于本程序运行的任意
 
 ## 7. 单一决策链与回滚开关
 
-所有 Agent 工具入口按“主体/角色 + 能力 + 精确目标 + project/task/session + 实际效果 + 可逆性 + 治理边界 + 执行器能力”得到唯一三态结果：`ALLOW`、`REQUIRE_APPROVAL`、`DENY`。`CODEFLOWMU_POLICY_BLOCKED` 只作历史读取兼容，新执行路径使用本文件列出的精确错误码。
+所有 Agent 工具入口只有一个固定顺序：第一层 `role + exact canonical_tool_id + active capability/lease` 返回 `TOOL_ALLOWED` 或 `ROLE_CAPABILITY_DENIED`；第二层对冻结 `OperationFacts` 运行 13 条 `NEG.*`，只返回 `ALLOW` 或 `REQUIRE_APPROVAL`。是否批准、拒绝、补信息或补执行器只由已经持久化的同一审批记录裁决。`CODEFLOWMU_POLICY_BLOCKED`、策略 `DENY` 和 `APPROVAL_ADAPTER_REQUIRED` 只作历史读取兼容。
 
 无损回滚开关：
 
-- `CODEFLOWMU_UNIFIED_OPERATION_POLICY_ENABLED=0`：保留读取，但所有新 mutation 失败关闭为 `APPROVAL_ADAPTER_REQUIRED`；不会恢复参数自证漏洞；
+- `CODEFLOWMU_UNIFIED_OPERATION_POLICY_ENABLED=0`：保留读取，非只读操作安全降级为先建审批；不会恢复旧策略、参数自证或无单等待；
 - `CODEFLOWMU_CONTROLLED_EXECUTORS_ENABLED=0`：停止所有受控执行器的 Prepare/Execute，历史审批和审计保留可读；
 - `CODEFLOWMU_OPERATION_APPROVAL_RECOVERY_ENABLED=0`：停止决定后的自动任务恢复与唤醒，不删除等待状态或历史记录；
 - `CODEFLOWMU_GOVERNANCE_APPROVALS_ENABLED=0`：沿用治理契约已有的正式治理写入开关。

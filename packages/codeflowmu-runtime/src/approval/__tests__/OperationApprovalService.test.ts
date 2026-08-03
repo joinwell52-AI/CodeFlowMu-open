@@ -106,7 +106,7 @@ test("classifier requires approval for every deterministic high-impact effect cl
     classifyCapabilityRequest(request({ effect: { external_write: false, high_cost: true } })).decision,
     "REQUIRE_APPROVAL",
   );
-  assert.equal(classifyCapabilityRequest(request({ effect: { external_write: false, unknown: true } })).decision, "DENY");
+  assert.equal(classifyCapabilityRequest(request({ effect: { external_write: false, unknown: true } })).decision, "REQUIRE_APPROVAL");
   for (const effect of [
     "prohibited",
     "target_unbounded",
@@ -119,7 +119,7 @@ test("classifier requires approval for every deterministic high-impact effect cl
       classifyCapabilityRequest(
         request({ effect: { external_write: false, [effect]: true } }),
       ).decision,
-      "DENY",
+      "REQUIRE_APPROVAL",
       effect,
     );
   }

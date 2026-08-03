@@ -41,13 +41,10 @@ import {
   buildSdkFailurePayloadFields,
   type SessionRunWithSdkFailure,
 } from "./sdk-failure-classifier.ts";
-import { guardPmProductWorkerWriteTask } from "../pm/ProductDeliveryRuntimeGate.ts";
-import { guardPmDevDispatchWriteReport } from "../pm/guardPmDevDispatchWriteReport.ts";
 import {
   evaluateNativeOperationBoundary,
-  OperationApprovalService,
   OPERATION_APPROVAL_REQUIRED,
-  OPERATION_BOUNDARY_DENIED,
+  UniversalApprovalStore,
 } from "../approval/index.ts";
 
 /**
@@ -97,11 +94,15 @@ export type SessionRunWithOperationBoundary = {
     | "allowed_cleanup"
     | "already_absent"
     | "approval_required"
+    | "approval_creation_pending"
+    | "role_capability_denied"
+    | "tool_request_invalid"
     | "governance_authorized"
     | "absolutely_prohibited"
     | "policy_denied";
   operation_outcome?: Record<string, unknown>;
-  retry_policy?: "none" | "manual";
+  approval_id?: string;
+  retry_policy?: "none";
   next_safe_action?: string;
   report_required?: boolean;
 };
@@ -176,6 +177,8 @@ export interface SdkRunHandleOptions {
   projectRoot?: string;
   /** Canonical TASK id bound to this run, used by operation approvals. */
   taskId?: string;
+  /** Canonical thread key bound to the same TASK execution context. */
+  threadKey?: string;
 }
 
 export class SdkRunHandle implements RunHandle {
@@ -201,11 +204,12 @@ export class SdkRunHandle implements RunHandle {
   private _operationClassification:
     | SessionRunWithOperationBoundary["operation_classification"];
   private _operationOutcome: Record<string, unknown> | undefined;
-  private _operationRetryPolicy: "none" | "manual" | undefined;
+  private _operationRetryPolicy: "none" | undefined;
   private _operationNextSafeAction: string | undefined;
   private _operationReportRequired = false;
   private readonly _projectRoot: string | undefined;
   private readonly _taskId: string | undefined;
+  private readonly _threadKey: string | undefined;
   private readonly _gateCheckedToolCallIds = new Set<string>();
   private _lastToolName: string | null = null;
   private _lastAction: string | null = null;
@@ -222,6 +226,7 @@ export class SdkRunHandle implements RunHandle {
     this._tokenEstimate = opts.tokenEstimate;
     this._projectRoot = opts.projectRoot;
     this._taskId = opts.taskId;
+    this._threadKey = opts.threadKey;
     this._settlementPromise = this._driveStream();
   }
 
@@ -621,7 +626,6 @@ export class SdkRunHandle implements RunHandle {
     const toolName = this._extractToolCallName(message);
     const args = this._extractToolCallArgs(message);
     const projectRoot = this._projectRoot ?? process.cwd();
-    const currentOperationFingerprint = operationFingerprint(toolName, args);
     const operationBoundary = await evaluateNativeOperationBoundary({
       toolName,
       args,
@@ -630,9 +634,10 @@ export class SdkRunHandle implements RunHandle {
       agentId: this.agent_id,
       sessionId: this.session_id,
       ...(this._taskId ? { taskId: this._taskId } : {}),
+      ...(this._threadKey ? { threadKey: this._threadKey } : {}),
     });
     if (operationBoundary.decision === "ALLOW" && operationBoundary.outcome) {
-      this._operationFingerprint = currentOperationFingerprint;
+      this._operationFingerprint = operationFingerprint(toolName, args);
       this._operationClassification = operationBoundary.outcome.classification;
       this._operationOutcome = operationBoundary.outcome;
       this._operationRetryPolicy = "none";
@@ -657,135 +662,143 @@ export class SdkRunHandle implements RunHandle {
         },
       });
     }
-    if (operationBoundary.decision !== "ALLOW") {
-      this._operationFingerprint = currentOperationFingerprint;
-      if (operationBoundary.decision === "REQUIRE_APPROVAL") {
-        const prepared = new OperationApprovalService({ projectRoot }).prepare(operationBoundary.input);
-        if (prepared.decision === "REQUIRE_APPROVAL") {
-          this._operationBoundaryFailureCode = OPERATION_APPROVAL_REQUIRED;
-          this._operationClassification = "approval_required";
-          this._operationRetryPolicy = "manual";
-          this._operationNextSafeAction = "wait_for_operation_approval";
-          this._operationReportRequired = false;
-          this._operationBoundaryMessage = JSON.stringify({
-            code: OPERATION_APPROVAL_REQUIRED,
-            approval_id: prepared.approval.approval_id,
-            operation_digest: prepared.approval.operation_digest,
-            reason: prepared.approval.reason,
-          });
-        }
-      } else {
-        this._operationBoundaryFailureCode =
-          operationBoundary.code ?? OPERATION_BOUNDARY_DENIED;
-        const governanceApprovalWait =
-          this._operationBoundaryFailureCode.startsWith("APPROVAL_") &&
-          this._operationBoundaryFailureCode !== "APPROVAL_REJECTED" &&
-          this._operationBoundaryFailureCode !== "APPROVAL_EXPIRED" &&
-          this._operationBoundaryFailureCode !== "APPROVAL_REVOKED" &&
-          this._operationBoundaryFailureCode !==
-            "APPROVAL_ALREADY_CONSUMED";
-        this._operationClassification = governanceApprovalWait
-          ? "approval_required"
-          : this._operationBoundaryFailureCode === "ABSOLUTELY_PROHIBITED"
-            ? "absolutely_prohibited"
-            : "policy_denied";
-        this._operationRetryPolicy = governanceApprovalWait
-          ? "manual"
-          : "none";
-        this._operationNextSafeAction =
-          operationBoundary.next_safe_action ??
-          "write_report_or_replan_without_replaying_operation";
-        this._operationReportRequired = !governanceApprovalWait;
-        this._operationBoundaryMessage = JSON.stringify({
-          code: this._operationBoundaryFailureCode,
+    if (operationBoundary.decision === "ROLE_CAPABILITY_DENIED") {
+      this._operationFingerprint = operationFingerprint(toolName, args);
+      this._operationClassification = "role_capability_denied";
+      this._operationRetryPolicy = "none";
+      this._operationNextSafeAction = "use_an_exact_tool_capability_granted_to_the_current_role";
+      this._dispatch({
+        event_id: `${this.run_id}-role-capability-denied-${(this._eventSeq++).toString(36)}`,
+        at: this._now().toISOString(),
+        event_type: "sdk.status",
+        session_id: this.session_id,
+        run_id: this.run_id,
+        agent_id: this.agent_id,
+        payload: {
+          status: "tool_rejected",
+          code: "ROLE_CAPABILITY_DENIED",
+          canonical_tool_id: operationBoundary.canonical_tool_id,
           reason: operationBoundary.reason,
-        });
-      }
-      if (this._operationBoundaryFailureCode) {
+          operation_executed: false,
+          operation_fingerprint: this._operationFingerprint,
+        },
+      });
+      // A role capability miss belongs to the current tool call.  It is not
+      // a Session/Task lifecycle event and must never cancel the SDK run.
+      return false;
+    }
+    if (operationBoundary.decision === "TOOL_REQUEST_INVALID") {
+      this._operationFingerprint = operationFingerprint(toolName, args);
+      this._operationClassification = "tool_request_invalid";
+      this._operationRetryPolicy = "none";
+      this._operationNextSafeAction = "correct_the_current_tool_request";
+      this._dispatch({
+        event_id: `${this.run_id}-tool-request-invalid-${(this._eventSeq++).toString(36)}`,
+        at: this._now().toISOString(),
+        event_type: "sdk.status",
+        session_id: this.session_id,
+        run_id: this.run_id,
+        agent_id: this.agent_id,
+        payload: {
+          status: "tool_rejected",
+          code: "TOOL_REQUEST_INVALID",
+          canonical_tool_id: operationBoundary.canonical_tool_id,
+          reason: operationBoundary.reason,
+          operation_executed: false,
+          operation_fingerprint: this._operationFingerprint,
+        },
+      });
+      return false;
+    }
+    if (operationBoundary.decision === "REQUIRE_APPROVAL") {
+      const store = new UniversalApprovalStore(projectRoot);
+      const created = store.createPending(operationBoundary.input);
+      if (created.outcome === "ALLOW") return false;
+      if (created.outcome === "APPROVAL_CREATION_PENDING") {
+        this._operationBoundaryFailureCode = created.code;
+        this._operationFingerprint = created.operation_fingerprint;
+        this._operationClassification = "approval_creation_pending";
+        this._operationRetryPolicy = "none";
+        this._operationNextSafeAction = "wait_for_idempotent_approval_record_creation";
+        this._operationOutcome = {
+          operation_executed: false,
+          request_id: created.request_id,
+          retry_path: created.retry_path,
+          error: created.error,
+        };
         this._dispatch({
-          event_id: `${this.run_id}-operation-boundary-${(this._eventSeq++).toString(36)}`,
+          event_id: `${this.run_id}-approval-creation-pending-${(this._eventSeq++).toString(36)}`,
           at: this._now().toISOString(),
           event_type: "sdk.status",
           session_id: this.session_id,
           run_id: this.run_id,
           agent_id: this.agent_id,
           payload: {
-            status:
-              this._operationBoundaryFailureCode ===
-                OPERATION_APPROVAL_REQUIRED ||
-              this._operationClassification === "approval_required"
-                ? "waiting_approval"
-                : "needs_replan",
-            failure_code: this._operationBoundaryFailureCode,
-            failure_category: this._operationClassification,
-            retry_policy: this._operationRetryPolicy,
-            operation_fingerprint: this._operationFingerprint,
-            next_safe_action: this._operationNextSafeAction,
-            report_required: this._operationReportRequired,
-            tool: toolName,
-            message: this._operationBoundaryMessage,
+            status: "approval_creation_pending",
+            code: created.code,
+            operation_executed: false,
+            request_id: created.request_id,
+            operation_fingerprint: created.operation_fingerprint,
+            required_agent_action: "WAIT_FOR_APPROVAL_RECORD",
           },
         });
-        await this.cancel(`operation_boundary:${toolName}`);
         return true;
       }
-    }
-    let asyncBlockedReason: string | undefined;
-    if (/\b(?:write_task|create_task)$/i.test(toolName)) {
-      const productGate = await guardPmProductWorkerWriteTask({
-        projectRoot,
-        agentId: this.agent_id,
-        args,
+
+      // Deliver the structured notice first; only then is waiting_approval a
+      // valid projection.  Re-read and context-check the durable record.
+      this._dispatch({
+        event_id: `${this.run_id}-agent-approval-notice-${(this._eventSeq++).toString(36)}`,
+        at: this._now().toISOString(),
+        event_type: "sdk.status",
+        session_id: this.session_id,
+        run_id: this.run_id,
+        agent_id: this.agent_id,
+        payload: created.notice,
       });
-      if (!productGate.allowed) {
-        asyncBlockedReason = JSON.stringify({
-          code: productGate.code,
-          reason: productGate.reason,
-          required_action: productGate.required_action,
-          findings: productGate.findings,
-        });
-      }
-    }
-    if (!asyncBlockedReason && /\bwrite_report$/i.test(toolName)) {
-      const closeGate = await guardPmDevDispatchWriteReport(projectRoot, args, {
-        agentId: this.agent_id,
+      store.deliverAgentNotice(created.notice);
+      const waiting = store.validateWaitingProjection(created.notice);
+      this._operationBoundaryFailureCode = OPERATION_APPROVAL_REQUIRED;
+      this._operationFingerprint = created.notice.operation_fingerprint;
+      this._operationClassification = "approval_required";
+      this._operationRetryPolicy = "none";
+      this._operationNextSafeAction = "wait_for_approval_decision_event";
+      this._operationReportRequired = false;
+      this._operationOutcome = {
+        approval_id: waiting.approval_id,
+        approval_status: waiting.status,
+        operation_executed: false,
+        agent_notice_delivered: true,
+        project_id: created.notice.project_id,
+        task_id: created.notice.task_id,
+        thread_key: created.notice.thread_key,
+        role: created.notice.role,
+        operation_fingerprint: created.notice.operation_fingerprint,
+        rule_ids: waiting.rule_ids ?? [],
+      };
+      this._operationBoundaryMessage = JSON.stringify(created.notice);
+      this._dispatch({
+        event_id: `${this.run_id}-waiting-approval-${(this._eventSeq++).toString(36)}`,
+        at: this._now().toISOString(),
+        event_type: "sdk.status",
+        session_id: this.session_id,
+        run_id: this.run_id,
+        agent_id: this.agent_id,
+        payload: {
+          status: "waiting_approval",
+          failure_code: OPERATION_APPROVAL_REQUIRED,
+          approval_id: waiting.approval_id,
+          operation_fingerprint: this._operationFingerprint,
+          operation_executed: false,
+          agent_notice_delivered: true,
+          next_safe_action: this._operationNextSafeAction,
+        },
       });
-      if (!closeGate.allowed) {
-        asyncBlockedReason = JSON.stringify({
-          code: closeGate.code,
-          reason: closeGate.skipped_reason ?? "close_gate_failed",
-          findings: closeGate.findings,
-        });
-      }
+      // Ending the current inference turn is allowed; cancelling the logical
+      // Session or Task is not.  Breaking the stream yields after notice.
+      return true;
     }
-    // NativeOperationApprovalGate is the single authoritative operation
-    // decision point. The remaining guards are business-workflow invariants
-    // (task dispatch/report closure), not a second role/tool policy gate.
-    if (!asyncBlockedReason) return false;
-    this._operationBoundaryFailureCode = OPERATION_BOUNDARY_DENIED;
-    this._operationBoundaryMessage = asyncBlockedReason;
-    this._operationClassification = "policy_denied";
-    this._operationReportRequired = true;
-    this._operationFingerprint = createHash("sha256")
-      .update(`${toolName}\n${asyncBlockedReason}`)
-      .digest("hex");
-    this._operationNextSafeAction = "replan_to_satisfy_the_workflow_invariant";
-    this._dispatch({
-      event_id: `${this.run_id}-workflow-invariant-denied-${(this._eventSeq++).toString(36)}`,
-      at: this._now().toISOString(),
-      event_type: "sdk.status",
-      session_id: this.session_id,
-      run_id: this.run_id,
-      agent_id: this.agent_id,
-      payload: {
-        status: "finished",
-        failure_code: OPERATION_BOUNDARY_DENIED,
-        tool: toolName,
-        message: asyncBlockedReason,
-      },
-    });
-    await this.cancel(`workflow_invariant_denied:${toolName}`);
-    return true;
+    return false;
   }
 
   private _transientFailureCode(

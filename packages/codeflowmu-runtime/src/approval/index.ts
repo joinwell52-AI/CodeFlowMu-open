@@ -11,6 +11,7 @@ export {
   OperationApprovalService,
   classifyCapabilityRequest,
   computeOperationDigest,
+  isPendingApprovalStatus,
   type CapabilityDecision,
   type CapabilityRequest,
   type HumanConfirmationVerifier,
@@ -21,6 +22,39 @@ export {
   type OperationEffects,
   type PrepareOperationInput,
 } from "./OperationApprovalService.ts";
+export {
+  NEGATIVE_PREDICATES,
+  NEGATIVE_RULE_IDS,
+  buildOperationFacts,
+  canonicalToolCallId,
+  canonicalToolId,
+  evaluateNegativePredicates,
+  operationFingerprint,
+  negativeScopeEscape,
+  negativeProtectedBoundary,
+  negativeGovernanceBypass,
+  negativeSharedState,
+  negativeIrreversibleEffect,
+  negativeBulkDynamicTargets,
+  negativeExternalSideEffect,
+  negativeSecurityAuthority,
+  negativeRuntimeControl,
+  negativeRemoteReleaseProduction,
+  negativeContractChange,
+  negativeOpaqueEffect,
+  negativeConcurrencyConflict,
+  type NegativeMatch,
+  type NegativeRuleId,
+  type OperationFacts,
+  type OperationFactsInput,
+  type OperationKind,
+} from "./OperationFacts.ts";
+export {
+  APPROVAL_CREATION_PENDING,
+  UniversalApprovalStore,
+  type AgentApprovalNotice,
+  type ApprovalCreationResult,
+} from "./UniversalApprovalStore.ts";
 export { buildGitPushApprovalInput, type GitPushSubject } from "./GitPushApproval.ts";
 export {
   FilesystemCleanupPreflightError,

@@ -4230,6 +4230,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
           <button type="button" class="ts-save-btn" onclick="savePmHeartbeatSettings()">保存 PM 主动推进</button>
         </div>
       </div>
+      <div id="pmhb-health" style="font-size:12px;line-height:1.7;color:var(--text3);white-space:pre-wrap"></div>
     </div>
   </div>
   <!-- About Tab -->
@@ -25807,7 +25808,19 @@ async function loadPmHeartbeatSettingsUi(){
     Object.entries(map).forEach(([id,val])=>{const el=document.getElementById(id);if(el)el.value=String(val);});
     const changesOnly=document.getElementById('pmhb-changes-only');
     if(changesOnly)changesOnly.checked=c.onlyReportChanges!==false;
-    setPmhbStatus('已加载','#93c5fd');
+    setPmhbStatus('配置已加载','#93c5fd');
+    const healthEl=document.getElementById('pmhb-health');
+    if(healthEl){
+      const h=d.health||{};
+      const tick=h.last_tick||null;
+      const wake=h.last_successful_wake||null;
+      healthEl.textContent=[
+        '定时器：'+(h.scheduler_running?'运行中':'未运行'),
+        '最近判定：'+(tick?(String(tick.status||'—')+' · '+String(tick.observed_at||'—')):'暂无 tick'),
+        '跳过/失败原因：'+(tick&&tick.skip_reason?String(tick.skip_reason):'无'),
+        '最近成功 wake：'+(wake?(String(wake.started_at||'—')+' · '+String(wake.session_id||'—')):'暂无'),
+      ].join('\n');
+    }
   }catch(e){
     setPmhbStatus(String(e&&e.message||e),'#fca5a5');
   }

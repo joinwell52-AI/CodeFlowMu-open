@@ -5,6 +5,11 @@ export {
 } from "./AgentRegistry.ts";
 
 export {
+  evaluateRoleToolCapability,
+  type RoleToolCapabilityDecision,
+} from "./RoleToolCapabilityGate.ts";
+
+export {
   type PersistentStore,
   JsonFileStore,
   type JsonFileStoreOptions,

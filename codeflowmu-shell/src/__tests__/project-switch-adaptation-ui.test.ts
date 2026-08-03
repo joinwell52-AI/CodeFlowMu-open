@@ -64,11 +64,9 @@ test("PM heartbeat never overlaps an active PM session or patrols review-only ro
   assert.match(backend, /thread_key:\s*focusThreadKey/);
 });
 
-test("project switch repairs public Open skill projections", () => {
-  assert.match(
-    backend,
-    /await deployOpenEditionProjectProjection\(target\.root\)/,
-  );
-  assert.match(backend, /syncAgentPlaybookAssets\(root, \{ sourceRoot: hostRoot \}\)/);
-  assert.match(backend, /skillSync\.copiedSkillPackages/);
+test("project switch never performs an unapproved Open projection repair", () => {
+  assert.doesNotMatch(backend, /deployOpenEditionProjectProjection\(target\.root\)/);
+  assert.doesNotMatch(backend, /syncAgentPlaybookAssets\(target\.root/);
+  assert.match(backend, /app\.get\("\/api\/v2\/fcop\/init-plan"/);
+  assert.match(backend, /executeAdminConfirmedFcopInitPlan/);
 });

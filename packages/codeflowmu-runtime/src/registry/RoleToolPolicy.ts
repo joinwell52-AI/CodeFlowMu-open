@@ -839,17 +839,10 @@ export function evaluateRoleToolCall(
         : undefined,
   });
   if (decision.decision === "ALLOW") return { allow: true };
-  if (decision.decision === "REQUIRE_APPROVAL") {
-    return {
-      allow: false,
-      severity: "warn",
-      reason: `OPERATION_APPROVAL_REQUIRED:${decision.executor}`,
-    };
-  }
   return {
     allow: false,
-    severity: "block",
-    reason: `${decision.code}:${decision.reason}`,
+    severity: "warn",
+    reason: `OPERATION_APPROVAL_REQUIRED:${decision.executor}`,
   };
 }
 

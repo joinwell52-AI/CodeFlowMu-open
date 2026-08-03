@@ -15,7 +15,7 @@ import type { Agent } from "@codeflowmu/protocol";
 import {
   OperationApprovalService,
   OPERATION_APPROVAL_REQUIRED,
-  OPERATION_BOUNDARY_DENIED,
+  isPendingApprovalStatus,
 } from "../../approval/index.ts";
 import { SdkRunHandle } from "../SdkRunHandle.ts";
 
@@ -136,7 +136,7 @@ test("SdkRunHandle: 6th unique call_id triggers TURN_LIMIT", async () => {
   assert.equal(settled.failure_code, "TURN_LIMIT");
 });
 
-test("SdkRunHandle: PM edit on protected product code enters operation approval without failing", async () => {
+test("SdkRunHandle: PM edit on protected product code waits for approval without cancelling the Session", async () => {
   const projectRoot = await mkdtemp(join(tmpdir(), "cfmu-sdk-gate-"));
   let cancelReason: string | undefined;
   const messages = [
@@ -145,7 +145,7 @@ test("SdkRunHandle: PM edit on protected product code enters operation approval 
       call_id: "edit-1",
       name: "edit",
       status: "running",
-      args: { path: "codeflowmu-shell/src/web-panel.ts" },
+      args: { path: "packages/codeflowmu-runtime/src/approval/UnifiedOperationPolicy.ts" },
     },
   ];
 
@@ -169,16 +169,18 @@ test("SdkRunHandle: PM edit on protected product code enters operation approval 
     sessionId: "sess-role-gate",
     agentId: "PM-01",
     projectRoot,
+    taskId: "TASK-20260803-001-ADMIN-to-PM",
+    threadKey: "thread-sdk-protected-edit",
   });
 
   const settled = await handle.whenSettled();
   assert.equal(settled.status, "finished");
   assert.equal(settled.failure_code, OPERATION_APPROVAL_REQUIRED);
-  assert.match(cancelReason ?? "", /operation_boundary:edit/);
+  assert.equal(cancelReason, undefined);
   assert.equal(new OperationApprovalService({ projectRoot }).list().length, 1);
 });
 
-test("SdkRunHandle: Open DEV edit of install code is cancelled before the run continues", async () => {
+test("SdkRunHandle: Open DEV edit of install code waits for approval without cancelling", async () => {
   let cancelReason: string | undefined;
   const run = {
     id: "run-open-install-gate",
@@ -204,11 +206,13 @@ test("SdkRunHandle: Open DEV edit of install code is cancelled before the run co
       sessionId: "sess-open-install-gate",
       agentId: "DEV-01",
       projectRoot: "D:/CodeFlowMu-open/workspace/newproject",
+      taskId: "TASK-20260803-002-PM-to-DEV",
+      threadKey: "thread-sdk-open-install",
     });
     const settled = await handle.whenSettled();
     assert.equal(settled.status, "finished");
-    assert.equal(settled.failure_code, "ABSOLUTELY_PROHIBITED");
-    assert.match(cancelReason ?? "", /operation_boundary:edit/);
+    assert.equal(settled.failure_code, OPERATION_APPROVAL_REQUIRED);
+    assert.equal(cancelReason, undefined);
   } finally {
     if (previous === undefined) delete process.env.CODEFLOW_OPEN_EDITION;
     else process.env.CODEFLOW_OPEN_EDITION = previous;
@@ -276,19 +280,21 @@ test("SdkRunHandle: exact git push creates a pre-action approval and leaves remo
     sessionId: "sess-native-push-gate",
     agentId: "DEV-01",
     projectRoot: repo,
+    taskId: "TASK-20260803-003-PM-to-DEV",
+    threadKey: "thread-sdk-push",
   });
   const settled = await handle.whenSettled();
   assert.equal(settled.status, "finished");
   assert.equal(settled.failure_code, OPERATION_APPROVAL_REQUIRED);
-  assert.match(cancelReason ?? "", /operation_boundary:shell/);
+  assert.equal(cancelReason, undefined);
   const approvals = new OperationApprovalService({ projectRoot: repo }).list();
   assert.equal(approvals.length, 1);
-  assert.equal(approvals[0]!.status, "pending_approval");
+  assert.equal(isPendingApprovalStatus(approvals[0]!.status), true);
   assert.equal(approvals[0]!.request.action.executor, "git.push");
   assert.equal(await git(repo, ["ls-remote", "origin", "refs/heads/main"]), "");
 });
 
-test("SdkRunHandle: force git push is absolutely prohibited and creates no unusable approval", async () => {
+test("SdkRunHandle: force git push creates a real approval and does not terminate the Session", async () => {
   const { repo } = await createPushFixture();
   const run = {
     id: "run-native-force-push-gate",
@@ -312,20 +318,24 @@ test("SdkRunHandle: force git push is absolutely prohibited and creates no unusa
     sessionId: "sess-native-force-push-gate",
     agentId: "DEV-01",
     projectRoot: repo,
+    taskId: "TASK-20260803-004-PM-to-DEV",
+    threadKey: "thread-sdk-force-push",
   });
   const settled = await handle.whenSettled();
   assert.equal(settled.status, "finished");
-  assert.equal(settled.failure_code, "ABSOLUTELY_PROHIBITED");
+  assert.equal(settled.failure_code, OPERATION_APPROVAL_REQUIRED);
   assert.equal(
     (settled as typeof settled & { operation_classification?: string })
       .operation_classification,
-    "absolutely_prohibited",
+    "approval_required",
   );
   assert.equal(
     (settled as typeof settled & { retry_policy?: string }).retry_policy,
     "none",
   );
-  assert.equal(new OperationApprovalService({ projectRoot: repo }).list().length, 0);
+  const approvals = new OperationApprovalService({ projectRoot: repo }).list();
+  assert.equal(approvals.length, 1);
+  assert.equal(isPendingApprovalStatus(approvals[0]!.status), true);
 });
 
 test("SdkRunHandle: deleting an already absent exact target is a successful no-op", async () => {

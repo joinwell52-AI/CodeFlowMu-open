@@ -55,6 +55,12 @@ import {
   checkSkillsManifestHealth,
 } from "./fcop-v3-paths.ts";
 import {
+  buildFcopInitPlan,
+  FcopInitTransaction,
+  type FcopInitPlan,
+  type FcopInitTransactionResult,
+} from "./fcop-bootstrap-transaction.ts";
+import {
   diagnoseRuntimeProjectBinding,
   loadProjectRegistry,
   saveProjectRegistry,
@@ -116,6 +122,7 @@ import {
   newPmHeartbeatWakeId,
   readPmHeartbeatState,
   registerAcceptedPmHeartbeatWake,
+  registerPmHeartbeatTick,
   settlePmHeartbeatWake,
   writePmHeartbeatState,
 } from "./pm-heartbeat-state.ts";
@@ -125,7 +132,6 @@ import {
 } from "./fcop-adopted-pending.ts";
 import {
   buildAdoptedBootstrapHealthCheck,
-  ensureAdoptedFromSource,
 } from "./fcop-adopted-bootstrap.ts";
 import { executeLifecycleRuntimeAction, setLifecyclePanelSink } from "./lifecycle-runtime-bridge.ts";
 import {
@@ -277,6 +283,7 @@ import {
   startMobileGatewayClient,
   stopMobileGatewayClient,
 } from "./mobile/mobileGatewayClient.ts";
+import { loadMobileGatewayConfig } from "./mobile/mobileGatewayConfig.ts";
 import {
   ingestMobileSse,
   ingestMobileThinking,
@@ -329,7 +336,6 @@ import {
   isTransientSdkError,
   TransientSdkDelayedError,
   findReportForTaskOnDisk,
-  ensureLedgerLayout,
   buildAdminRejectPmWakeRequest,
   buildPmAdminRejectReworkPromptBlock,
   extractPmAdminRejectTodoSection,
@@ -352,9 +358,6 @@ import {
   AgentSkillsManifestMissingError,
   AgentSkillsManifestReadError,
   AgentSkillsManifestInvalidError,
-  plantPmSkillManifestIfMissing,
-  plantAgentSkillsManifestIfMissing,
-  syncAgentPlaybookAssets,
   isTaskReopenedForReworkFromLedger,
   stageFromPath,
   isCanonicalReportMarkdownFilename,
@@ -384,6 +387,7 @@ import {
   evaluatePmSummaryGate,
   OperationApprovalError,
   OperationApprovalService,
+  isPendingApprovalStatus,
   GovernanceApprovalService,
   buildFilesystemCleanupApprovalInput,
   executeFilesystemCleanupApproval,
@@ -4468,13 +4472,6 @@ export function buildWebPanelApp(
     const checks: Array<{ group: string; name: string; status: string; value: string }> = [];
     const root = resolveProjectRoot();
     const artifactLayout = resolveArtifactRoot(root);
-    if (existsSync(join(root, "fcop", "fcop.json"))) {
-      try {
-        await ensureLedgerLayout(root);
-      } catch {
-        /* 预检时尽力补齐 v3 inbox / ledger，不阻断检测 */
-      }
-    }
     const shellVersion = readShellVersion(SHELL_PKG_ROOT);
     const fcopMeta = readFcopJsonMeta(root);
     const protocolVersion =
@@ -4954,7 +4951,7 @@ export function buildWebPanelApp(
           "",
           `项目根目录：${root}`,
           `团队模板：${team}`,
-          "影响：将以 force=True 更新 Rule 4.5 团队角色文档",
+          "影响：仅补齐缺失模板；已存在内容必须通过初始化 plan/transaction 更新",
           "",
           "取消后不会写入模板文件。",
         ].join("\n"),
@@ -4966,10 +4963,10 @@ export function buildWebPanelApp(
       const escapedRoot = root.replace(/\\/g, "\\\\");
 
       send(`📍 项目根: ${root}`);
-      send(`📚 正在 deploy_role_templates(team='${team}', force=True)...`);
+      send(`📚 正在 deploy_role_templates(team='${team}', force=False)...`);
 
       const deployCmd =
-        `"${pythonBin}" -c "from fcop.project import Project; r=Project('${escapedRoot}').deploy_role_templates(team='${team}', lang='zh', force=True); print('deployed', len(r.deployed), 'skipped', len(r.skipped), 'archived', len(r.archived))"`;
+        `"${pythonBin}" -c "from fcop.project import Project; r=Project('${escapedRoot}').deploy_role_templates(team='${team}', lang='zh', force=False); print('deployed', len(r.deployed), 'skipped', len(r.skipped), 'archived', len(r.archived))"`;
       const { stdout: depOut, stderr: depErr } = await execAsync(deployCmd, {
         timeout: 120000,
       });
@@ -5011,6 +5008,29 @@ export function buildWebPanelApp(
    * POST /api/v2/fcop/init — One-click initialize / takeover FCoP project supporting multi-modes (project/solo)
    * Streams SSE progress events so the UI can show real-time "正在建立..." status.
    */
+  app.get("/api/v2/fcop/init-plan", async (_req: Request, res: Response) => {
+    try {
+      const root = resolveFcopActionRoot();
+      const sourceRoot = resolveMonorepoRootFromShellPkg(SHELL_PKG_ROOT) ?? root;
+      const pyProbe = await probeFcopPythonPackages(undefined, opts.fcopRuntime);
+      const plan = buildFcopInitPlan({
+        sourceRoot,
+        targetRoot: root,
+        installedFcopVersion: pyProbe.fcop,
+        installedFcopMcpVersion: pyProbe.fcopMcp,
+        bundledRulesVersion: pyProbe.bundledRulesVersion,
+        bundledProtocolVersion: pyProbe.bundledProtocolVersion,
+      });
+      res.json({ ok: plan.conflict.length === 0, plan });
+    } catch (error) {
+      res.status(500).json({
+        ok: false,
+        code: "FCOP_INIT_PLAN_FAILED",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
   app.post("/api/v2/fcop/init", async (req: Request, res: Response) => {
     // SSE headers — let the browser read the stream line by line
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
@@ -5055,6 +5075,36 @@ export function buildWebPanelApp(
           : req.body?.workspaceMode === "root"
             ? "root"
             : resolveArtifactRoot(root).mode;
+      const bootstrapSourceRoot =
+        resolveMonorepoRootFromShellPkg(SHELL_PKG_ROOT) ?? root;
+      const initPlan = buildFcopInitPlan({
+        sourceRoot: bootstrapSourceRoot,
+        targetRoot: root,
+        initializationProfile: {
+          mode: selectMode,
+          team: selectMode === "project" ? selectTeam : null,
+          roleCode: selectMode === "solo" ? selectRole : null,
+          workspaceMode: requestedWorkspaceMode,
+        },
+        installedFcopVersion: pyProbe.fcop,
+        installedFcopMcpVersion: pyProbe.fcopMcp,
+        bundledRulesVersion: pyProbe.bundledRulesVersion,
+        bundledProtocolVersion: pyProbe.bundledProtocolVersion,
+      });
+      send(`FCoP init plan: mode=${initPlan.mode} digest=${initPlan.plan_digest}`);
+      send(`  create=${initPlan.create.length} update=${initPlan.update.length} preserve=${initPlan.preserve.length} conflict=${initPlan.conflict.length}`);
+      send(`  versions=${JSON.stringify(initPlan.source_versions)}`);
+      for (const action of initPlan.package_upgrade_actions) send(`  upgrade-required: ${action}`);
+      if (initPlan.conflict.length > 0) {
+        send("FCoP init plan contains local/newer-content conflicts; no target file was changed.", true, {
+          success: false,
+          code: "FCOP_INIT_PLAN_CONFLICT",
+          plan: initPlan,
+          projectRoot: root,
+        });
+        res.end();
+        return;
+      }
 
       if (!(await trustedForegroundConfirmation({
         title: "CodeFlowMu 项目治理初始化确认",
@@ -5065,6 +5115,7 @@ export function buildWebPanelApp(
           `模式：${selectMode}`,
           `团队/角色：${selectMode === "solo" ? selectRole : selectTeam}`,
           `工作区模式：${requestedWorkspaceMode}`,
+          `Plan digest: ${initPlan.plan_digest}`,
           "影响：将创建或更新协议、角色、账本与运行时配置文件",
           "",
           "取消后不会部署初始化文件。",
@@ -5075,67 +5126,126 @@ export function buildWebPanelApp(
         return;
       }
 
-      await deployRequiredProjectBootstrapProjection(root);
-
-      send(`📦 正在部署 FCoP 协议骨架 (${selectMode === "solo" ? "Solo " + selectRole : "dev-team"})...`);
-
-      // 1. 根据模式构建官方 Python SDK 初始化命令
-      const escapedRoot = root.replace(/\\/g, "\\\\");
-      let initPyCmd = "";
-      if (selectMode === "solo") {
-        initPyCmd =
-          `Project('${escapedRoot}').init_solo(role_code='${selectRole}', lang='zh', force=True, deploy_rules=True)`;
-      } else {
-        initPyCmd =
-          `Project('${escapedRoot}').init(team='${selectTeam}', lang='zh', force=True, deploy_rules=True)`;
+      const initRequest: CapabilityRequest = {
+        subject: { actor: "ADMIN", role: "ADMIN", project_id: root },
+        action: {
+          capability: "governance.project.initialize",
+          operation: "fcop.init.transaction",
+          executor: "fcop.init.transaction",
+        },
+        resource: {
+          type: "fcop_project",
+          targets: [root],
+          scope: {
+            plan_digest: initPlan.plan_digest,
+            mode: initPlan.mode,
+            initialization_profile: initPlan.initialization_profile,
+          },
+        },
+        context: {
+          workspace: root,
+          environment: "local",
+          initiated_by: "user",
+          authorization_source: "none",
+        },
+        effect: { governance_change: true, software_change: true },
+        snapshot: {
+          plan_digest: initPlan.plan_digest,
+          manifest_digest: initPlan.manifest.manifest_digest,
+          create: initPlan.create,
+          update: initPlan.update,
+          preserve: initPlan.preserve,
+          conflict: initPlan.conflict,
+          rollback_plan: initPlan.rollback_plan,
+        },
+      };
+      const approvalService = new OperationApprovalService({ projectRoot: root });
+      const prepared = approvalService.prepare({
+        request: initRequest,
+        reason: "ADMIN confirmed the exact FCoP initialization/takeover plan",
+        effects: ["NEG.GOVERNANCE.BYPASS", "project governance bootstrap files may change"],
+        non_effects: [
+          "formal ledgers and workspace artifacts are preserved",
+          "Runtime/Gateway identity material is excluded",
+        ],
+        recovery: "restore every per-file snapshot and retain the transaction journal",
+        rule_ids: ["NEG.GOVERNANCE.BYPASS"],
+        decision_mode: "ADMIN_MANUAL",
+      });
+      if (prepared.decision !== "REQUIRE_APPROVAL") {
+        throw new Error("FCOP_INIT_APPROVAL_RECORD_REQUIRED");
       }
-
-      const cmd = `"${pythonBin}" -c "from fcop.project import Project; ${initPyCmd}"`;
-      const { stdout, stderr } = await execAsync(cmd, { timeout: 120000 });
-      writeWorkspaceMode(root, requestedWorkspaceMode);
-
-      if (stderr?.trim()) {
-        for (const line of stderr.trim().split(/\r?\n/).slice(0, 8)) {
-          send(`  ↳ [python stderr] ${line}`);
-        }
+      const approvalId = prepared.approval.approval_id;
+      if (prepared.approval.status === "approved") {
+        throw new Error("FCOP_INIT_APPROVAL_ALREADY_CONSUMED");
       }
-      if (stdout?.trim()) {
-        for (const line of stdout.trim().split(/\r?\n/).slice(0, 4)) {
-          send(`  ↳ [python] ${line}`);
-        }
+      const approved = approvalService.approve(
+        approvalId,
+        "ADMIN",
+        `Confirmed FCoP init plan ${initPlan.plan_digest}`,
+      );
+      send(`Governance operation approval: ${approvalId}`);
+      const transactionHolder: { value?: FcopInitTransactionResult } = {};
+      const execution = await approvalService.execute(
+        approvalId,
+        approved.execution_token,
+        initRequest,
+        async () => {
+          const bootstrapTransaction = await deployRequiredProjectBootstrapProjection(
+            root,
+            initPlan,
+            () => {
+              const gatewayConfig = loadMobileGatewayConfig(root);
+              const result = verifyFcopProjectInit(root, {
+                installedFcopVersion: pyProbe.fcop,
+                installedFcopMcpVersion: pyProbe.fcopMcp,
+                bundledRulesVersion: pyProbe.bundledRulesVersion,
+                bundledProtocolVersion: pyProbe.bundledProtocolVersion,
+                ...(opts.runtimeInstance ? {
+                  identity: {
+                    hostRoot: opts.runtimeInstance.hostRoot,
+                    instanceId: opts.runtimeInstance.instanceId,
+                    instanceRole: opts.runtimeInstance.instanceRole,
+                    registryPath: opts.runtimeInstance.registryPath,
+                    dataRoot: opts.runtimeInstance.dataRoot,
+                    writerLockPaths: opts.runtimeInstance.writerLockPaths,
+                    gatewayOwnerRoot: opts.runtimeInstance.hostRoot,
+                    gatewayRuntimeInstanceId: gatewayConfig?.runtime_instance_id,
+                    gatewayEnabled: gatewayConfig?.enabled,
+                  },
+                } : {}),
+              });
+              return {
+                ok: result.ok,
+                failures: result.items
+                  .filter((item) => item.status === "fail")
+                  .map((item) => `${item.name}: ${item.detail}`),
+                evidence: result,
+              };
+            },
+          );
+          transactionHolder.value = bootstrapTransaction;
+          return {
+            status: "succeeded",
+            evidence: [{
+              transaction_id: bootstrapTransaction.transaction_id,
+              plan_digest: bootstrapTransaction.plan_digest,
+              manifest_digest: bootstrapTransaction.manifest_digest,
+              verification_digest: bootstrapTransaction.verification_digest,
+              changed: bootstrapTransaction.changed,
+              preserved: bootstrapTransaction.preserved,
+              rolled_back: bootstrapTransaction.rolled_back,
+            }],
+          };
+        },
+      );
+      const bootstrapTransaction = transactionHolder.value;
+      if (execution.status !== "succeeded" || !bootstrapTransaction) {
+        throw new Error(execution.execution.error || "FCOP_INIT_TRANSACTION_FAILED");
       }
+      send(`Bootstrap transaction committed: ${bootstrapTransaction.transaction_id}`);
 
       send("✅ FCoP 协议目录骨架部署完成！(fcop.json / _lifecycle / reports / shared)");
-
-      await deployPmPlanningProjectProjection(root);
-      const openProjection = await deployOpenEditionProjectProjection(root);
-      if (openProjection.applied) {
-        for (const rel of openProjection.copied) {
-          send(`  ↳ Open projection: ${rel}`);
-        }
-        for (const rel of openProjection.skipped) {
-          send(`  ↳ Open projection missing source: ${rel}`);
-        }
-      }
-
-      // 1b. 显式再跑 deploy_role_templates（init 内用 suppress 吞异常，这里要可观测）
-      const teamForTemplates = selectMode === "solo" ? "solo" : selectTeam;
-      const deployCmd =
-        `"${pythonBin}" -c "from fcop.project import Project; r=Project('${escapedRoot}').deploy_role_templates(team='${teamForTemplates}', lang='zh', force=True); print('deployed', len(r.deployed), 'skipped', len(r.skipped), 'archived', len(r.archived))"`;
-      try {
-        const { stdout: depOut, stderr: depErr } = await execAsync(deployCmd, {
-          timeout: 120000,
-        });
-        const depLine = (depOut || depErr || "").trim().split(/\r?\n/).pop() ?? "";
-        send(
-          depLine
-            ? `📚 团队角色模板已部署：${depLine}`
-            : "📚 团队角色模板 deploy_role_templates 已执行",
-        );
-      } catch (depErr: unknown) {
-        const msg = depErr instanceof Error ? depErr.message : String(depErr);
-        send(`  ↳ ❌ deploy_role_templates 失败：${msg}`);
-      }
 
       const postInitMeta = readFcopJsonMeta(root);
       const roleHealth = checkRoleTemplateHealth(root, {
@@ -5151,117 +5261,30 @@ export function buildWebPanelApp(
         send(`  ↳ ⚠️ Rule 4.5：${roleHealth.summary}`);
       }
 
-      // ★ 修复：Python SDK 生成的 fcop.json 只有 "version" 字段，没有 "protocol_version"
-      // 环境检测读的是 "protocol_version"，需要我们补写进去
-      const fcopJsonPath = join(root, "fcop", "fcop.json");
-      if (existsSync(fcopJsonPath)) {
-        try {
-          const { readFileSync, writeFileSync: wfs } = await import("node:fs");
-          const fcopMeta = JSON.parse(readFileSync(fcopJsonPath, "utf-8")) as Record<string, unknown>;
-          if (!fcopMeta["protocol_version"] && !fcopMeta["protocolVersion"]) {
-            fcopMeta["protocol_version"] = 3;
-            wfs(fcopJsonPath, JSON.stringify(fcopMeta, null, 2), "utf-8");
-            send("  ↳ 🔧 已注入 protocol_version: 3 到 fcop.json");
-          }
-        } catch (_) { /* 不阻断流程 */ }
-      }
-
-      send("📁 正在初始化 0002 工作目录与 ledger 布局...");
-      try {
-        await ensureLedgerLayout(root);
-        send("  ↳ ✅ fcop/tasks、reports、issues、attachments、ledger、_lifecycle/ 已就绪");
-      } catch (ledgerErr: unknown) {
-        const msg = ledgerErr instanceof Error ? ledgerErr.message : String(ledgerErr);
-        send(`  ↳ ⚠️ ensureLedgerLayout: ${msg}`);
-      }
-
-      send("📦 正在从 adoptedSource/ 初始化 fcop/adopted/（copy-if-missing）...");
-      try {
-        const adopted = await ensureAdoptedFromSource(root);
-        if (adopted.bootstrapped) {
-          send(
-            `  ↳ ✅ 已复制 ${adopted.copied} 个文件到 fcop/adopted/` +
-              (adopted.skipped > 0 ? `（${adopted.skipped} 个已存在，未覆盖）` : ""),
-          );
-        } else if (adopted.adoptedSourceMissing && adopted.adoptedWasEmpty) {
-          send(
-            "  ↳ ❌ fcop/adopted/ 为空且 adoptedSource/ 不存在 — 请恢复项目根 adoptedSource/ 后重试",
-          );
-        } else if (!adopted.adoptedWasEmpty) {
-          send("  ↳ ℹ️ fcop/adopted/ 已有内容，跳过 bootstrap");
-        }
-      } catch (adoptedErr: unknown) {
-        const msg = adoptedErr instanceof Error ? adoptedErr.message : String(adoptedErr);
-        send(`  ↳ ⚠️ ensureAdoptedFromSource: ${msg}`);
-      }
-
-      send("📁 正在为 CodeFlowMu 补齐专属运行态目录...");
-
-      // 2. ★ 核心加固：自动为 CodeFlowMu 补齐专属的应用运行态物理目录
-      const fcopDir = join(root, "fcop");
-      const codeflowDirs = [
-        { path: join(fcopDir, "logs"), label: "fcop/logs/ (运行日志)" },
-        { path: join(fcopDir, "logs", "thinking"), label: "fcop/logs/thinking/ (脑电波思考痕迹)" },
-        { path: join(fcopDir, "logs", "thinking", "chat"), label: "fcop/logs/thinking/chat/ (聊天思考流归档)" },
-        { path: join(fcopDir, "logs", "thinking", "task"), label: "fcop/logs/thinking/task/ (任务思考流归档)" },
-        { path: join(fcopDir, "logs", "usage"), label: "fcop/logs/usage/ (用量 JSONL 资产)" },
-        { path: join(fcopDir, "logs", "analytics"), label: "fcop/logs/analytics/ (统一分析账本)" },
-        { path: join(fcopDir, "logs", "runtime"), label: "fcop/logs/runtime/ (运维链路 runtime-events)" },
-        { path: join(fcopDir, "logs", "panel-api"), label: "fcop/logs/panel-api/ (面板 API 耗时 JSONL)" },
-        { path: join(fcopDir, "chat"), label: "fcop/chat/ (聊天控制台 Session)" },
-        { path: join(fcopDir, "attachments"), label: "fcop/attachments/ (图片附件目录)" },
-        { path: join(fcopDir, "internal"), label: "fcop/internal/ (后台调控缓存)" },
-        { path: join(fcopDir, "scripts"), label: "fcop/scripts/ (自动化脚本)" },
-      ];
-      const { mkdirSync, writeFileSync } = await import("node:fs");
-      for (const dir of codeflowDirs) {
-        if (!existsSync(dir.path)) {
-          mkdirSync(dir.path, { recursive: true });
-        }
-        send(`  ↳ 📂 已建立 ${dir.label}`);
-      }
-
-      // 写入专属 README.md 说明文档
-      const logsReadme = join(fcopDir, "logs", "README.md");
-      if (!existsSync(logsReadme)) {
-        writeFileSync(
-          logsReadme,
-          `# CodeFlowMu 日志目录 / Logs\n\n本目录用于存放 CodeFlowMu 专属运行态思考流与运行跟踪。\n\n- \`thinking/chat/\` — ADMIN 聊天会话的 sdk.thinking / tool_call 自动归档\n- \`thinking/task/\` — 派单 / 唤醒 / 巡查等任务会话的思考流归档\n`,
-          "utf-8",
-        );
-      }
-      const chatReadme = join(fcopDir, "chat", "README.md");
-      if (!existsSync(chatReadme)) {
-        writeFileSync(chatReadme, `# CodeFlowMu 聊天室 / Chat Sessions\n\n本目录用于持久化 Agent 与 ADMIN 的聊天对话 Session 历史。\n`, "utf-8");
-      }
-
-      // 重置探测缓存，使得下次探测瞬间返回最新合规状态
+      // 初始化事务已经完成目录、投影与 manifest 写入；此处仅刷新只读探测缓存。
       __resetFcopProbeCacheForTests();
 
-      send("📋 正在补种 Skills manifest（PM 内置 + Agent Playbook 投影）...");
-      try {
-        const pmPlanted = await plantPmSkillManifestIfMissing(root);
-        send(
-          pmPlanted
-            ? "  ↳ ✅ 已写入 .codeflowmu/pm-skills.manifest.json"
-            : "  ↳ ℹ️ PM skills manifest 已存在，跳过",
-        );
-        const hostRoot = resolveMonorepoRootFromShellPkg(SHELL_PKG_ROOT);
-        const agentPlanted = await plantAgentSkillsManifestIfMissing(root, {
-          sourceRoot: hostRoot ?? root,
-        });
-        send(
-          agentPlanted.planted
-            ? "  ↳ ✅ 已从 docs/skills 恢复 .codeflowmu/agent-skills.manifest.json"
-            : "  ↳ ℹ️ Agent Playbook manifest 已存在，跳过",
-        );
-      } catch (plantErr: unknown) {
-        const plantMsg = plantErr instanceof Error ? plantErr.message : String(plantErr);
-        send(`  ↳ ⚠️ Skills manifest 补种异常（验收仍会继续）：${plantMsg}`);
-      }
-
       send("🔎 正在验收初始化结果（磁盘只读检查）...");
-      const verification = verifyFcopProjectInit(root);
+      const gatewayConfig = loadMobileGatewayConfig(root);
+      const verification = verifyFcopProjectInit(root, {
+        installedFcopVersion: pyProbe.fcop,
+        installedFcopMcpVersion: pyProbe.fcopMcp,
+        bundledRulesVersion: pyProbe.bundledRulesVersion,
+        bundledProtocolVersion: pyProbe.bundledProtocolVersion,
+        ...(opts.runtimeInstance ? {
+          identity: {
+            hostRoot: opts.runtimeInstance.hostRoot,
+            instanceId: opts.runtimeInstance.instanceId,
+            instanceRole: opts.runtimeInstance.instanceRole,
+            registryPath: opts.runtimeInstance.registryPath,
+            dataRoot: opts.runtimeInstance.dataRoot,
+            writerLockPaths: opts.runtimeInstance.writerLockPaths,
+            gatewayOwnerRoot: opts.runtimeInstance.hostRoot,
+            gatewayRuntimeInstanceId: gatewayConfig?.runtime_instance_id,
+            gatewayEnabled: gatewayConfig?.enabled,
+          },
+        } : {}),
+      });
       for (const item of verification.items) {
         const icon = item.status === "ok" ? "✅" : item.status === "warn" ? "⚠️" : "❌";
         send(`  ↳ ${icon} ${item.name}: ${item.detail}`);
@@ -5284,22 +5307,23 @@ export function buildWebPanelApp(
         opts.failuresDir = join(root, "fcop", "internal", "failures");
       }
 
-      // One-click initialization can happen after Runtime bootstrap. Rebind
-      // persisted agent workspaces immediately so PM/DEV/QA/OPS inspect the
-      // selected development project, never codeflowmu-shell or the user-level
-      // .codeflowmu runtime-data directory.
-      const registeredAgents = await runtime.registry.list();
-      for (const agent of registeredAgents) {
-        await runtime.registry.updateWorkspace(agent.protocol.agent_id, root);
-      }
-
       if (verification.ok) {
         send(
           verification.warnings.length > 0
             ? `🎉 初始化验收通过（${verification.warnings.length} 项警告，见上方）`
             : "🎉 初始化验收通过！CodeFlowMu 工作区已就绪",
           true,
-          { success: true, verification, projectRoot: root },
+          {
+            success: true,
+            verification,
+            projectRoot: root,
+            transaction_id: bootstrapTransaction.transaction_id,
+            manifest_digest: bootstrapTransaction.manifest_digest,
+            verification_digest: bootstrapTransaction.verification_digest,
+            changed: bootstrapTransaction.changed,
+            preserved: bootstrapTransaction.preserved,
+            rolled_back: bootstrapTransaction.rolled_back,
+          },
         );
       } else {
         send(`❌ 初始化验收未通过 — ${verification.summary}`, true, {
@@ -5419,113 +5443,118 @@ export function buildWebPanelApp(
   }
 
   /**
-   * GET /api/v2/config/api-settings — load active API configuration with key masking.
-   */
-  async function deployOpenEditionProjectProjection(root: string): Promise<{
-    applied: boolean;
-    copied: string[];
-    skipped: string[];
-  }> {
-    const hostRoot = resolveMonorepoRootFromShellPkg(SHELL_PKG_ROOT);
-    if (process.env["CODEFLOW_OPEN_EDITION"] !== "1" || !hostRoot) {
-      return { applied: false, copied: [], skipped: [] };
-    }
-    if (isOpenEditionProtectedPath(root)) {
-      return { applied: false, copied: [], skipped: [] };
-    }
-    const fsPromises = await import("node:fs/promises");
-    const mappings = [
-      [join(hostRoot, ".codeflowmu", "edition-ui.json"), join(root, ".codeflowmu", "edition-ui.json")],
-      [join(hostRoot, "docs", "open"), join(root, "docs", "open")],
-      [join(hostRoot, "docs", "skills"), join(root, "docs", "skills")],
-      [join(hostRoot, "adoptedSource"), join(root, "adoptedSource")],
-    ] as const;
-    const copied: string[] = [];
-    const skipped: string[] = [];
-    for (const [src, dest] of mappings) {
-      if (!existsSync(src)) {
-        skipped.push(path.relative(hostRoot, src));
-        continue;
-      }
-      await fsPromises.mkdir(dirname(dest), { recursive: true });
-      await fsPromises.cp(src, dest, {
-        recursive: true,
-        force: false,
-        errorOnExist: false,
-      });
-      copied.push(path.relative(root, dest));
-    }
-    if (await plantPmSkillManifestIfMissing(root)) {
-      copied.push(".codeflowmu/pm-skills.manifest.json");
-    }
-    const skillSync = await syncAgentPlaybookAssets(root, { sourceRoot: hostRoot });
-    if (skillSync.docsManifestChanged) {
-      copied.push("docs/skills/agent-skills.manifest.json");
-    }
-    if (skillSync.projectionManifestChanged) {
-      copied.push(".codeflowmu/agent-skills.manifest.json");
-    }
-    copied.push(...skillSync.copiedSkillPackages.map((skillPackage) => dirname(skillPackage)));
-    return { applied: true, copied, skipped };
-  }
-
-  /**
    * Project-local adoptedSource is mandatory: FCoP protocol files are frozen,
    * while adoptedSource carries the mother application's continuing runtime
    * governance updates into every registered product project.
    */
-  async function deployRequiredProjectBootstrapProjection(root: string): Promise<void> {
+  async function deployRequiredProjectBootstrapProjection(
+    root: string,
+    approvedPlan?: FcopInitPlan,
+    postflight?: () => { ok: boolean; failures?: string[]; evidence?: unknown },
+  ) {
     const hostRoot = resolveMonorepoRootFromShellPkg(SHELL_PKG_ROOT);
     if (!hostRoot) {
       throw new Error("CODEFLOW_MOTHER_ROOT_NOT_FOUND");
     }
     const source = join(hostRoot, "adoptedSource");
-    const destination = join(root, "adoptedSource");
-    if (!existsSync(source)) {
-      throw new Error(`ADOPTED_SOURCE_MISSING: ${source}`);
+    if (!existsSync(source)) throw new Error(`ADOPTED_SOURCE_MISSING: ${source}`);
+    const plan = approvedPlan ?? buildFcopInitPlan({ sourceRoot: hostRoot, targetRoot: root });
+    if (!samePath(plan.source_root, hostRoot) || !samePath(plan.target_root, root)) {
+      throw new Error("FCOP_INIT_PLAN_SCOPE_MISMATCH");
     }
-    if (!samePath(source, destination)) {
-      const fsPromises = await import("node:fs/promises");
-      await fsPromises.mkdir(dirname(destination), { recursive: true });
-      await fsPromises.cp(source, destination, {
-        recursive: true,
-        force: true,
-        errorOnExist: false,
-      });
-    }
-    const adopted = await ensureAdoptedFromSource(root);
-    if (adopted.adoptedSourceMissing) {
-      throw new Error(`ADOPTED_SOURCE_PROJECTION_FAILED: ${destination}`);
-    }
+    return new FcopInitTransaction(plan).execute(plan.plan_digest, postflight);
   }
 
-  async function deployPmPlanningProjectProjection(root: string): Promise<void> {
-    const hostRoot = resolveMonorepoRootFromShellPkg(SHELL_PKG_ROOT);
-    if (!hostRoot || isProtectedOpenEditionAppRoot(root)) return;
-    const fsPromises = await import("node:fs/promises");
-    const source = join(hostRoot, "docs", "skills", "pm-planning-governance.md");
-    const destination = join(root, "docs", "skills", "pm-planning-governance.md");
-    if (existsSync(source)) {
-      await fsPromises.mkdir(dirname(destination), { recursive: true });
-      await fsPromises.copyFile(source, destination);
+  function buildFcopInitOperationRequest(root: string, plan: FcopInitPlan): CapabilityRequest {
+    return {
+      subject: { actor: "ADMIN", role: "ADMIN", project_id: root },
+      action: {
+        capability: "governance.project.initialize",
+        operation: "fcop.init.transaction",
+        executor: "fcop.init.transaction",
+      },
+      resource: {
+        type: "fcop_project",
+        targets: [root],
+        scope: {
+          plan_digest: plan.plan_digest,
+          mode: plan.mode,
+          initialization_profile: plan.initialization_profile,
+        },
+      },
+      context: {
+        workspace: root,
+        environment: "local",
+        initiated_by: "user",
+        authorization_source: "none",
+      },
+      effect: { governance_change: true, software_change: true },
+      snapshot: {
+        plan_digest: plan.plan_digest,
+        manifest_digest: plan.manifest.manifest_digest,
+        create: plan.create,
+        update: plan.update,
+        preserve: plan.preserve,
+        conflict: plan.conflict,
+        rollback_plan: plan.rollback_plan,
+      },
+    };
+  }
+
+  async function executeAdminConfirmedFcopInitPlan(
+    root: string,
+    plan: FcopInitPlan,
+    postflight?: () => { ok: boolean; failures?: string[]; evidence?: unknown },
+  ): Promise<{ approval_id: string; transaction: FcopInitTransactionResult }> {
+    const request = buildFcopInitOperationRequest(root, plan);
+    const service = new OperationApprovalService({ projectRoot: root });
+    const prepared = service.prepare({
+      request,
+      reason: "ADMIN confirmed the exact FCoP initialization/takeover plan",
+      effects: ["NEG.GOVERNANCE.BYPASS", "project governance bootstrap files may change"],
+      non_effects: [
+        "formal ledgers and workspace artifacts are preserved",
+        "Runtime/Gateway identity material is excluded",
+      ],
+      recovery: "restore every per-file snapshot and retain the transaction journal",
+      rule_ids: ["NEG.GOVERNANCE.BYPASS"],
+      decision_mode: "ADMIN_MANUAL",
+    });
+    if (prepared.decision !== "REQUIRE_APPROVAL" || prepared.approval.status === "approved") {
+      throw new Error("FCOP_INIT_APPROVAL_RECORD_REQUIRED");
     }
-    const marker = "## CodeFlowMu Dev-Team PM Planning Governance";
-    const notice = [
-      "",
-      marker,
-      "",
-      "This is a CodeFlowMu development-team workflow above FCoP, not an FCoP core-protocol rule.",
-      "PM must follow `docs/skills/pm-planning-governance.md` and complete the matching Level 0-3 plan before creating the first DEV/QA/OPS implementation task.",
-      "",
-    ].join("\n");
-    for (const target of [
-      join(root, "AGENTS.md"),
-      join(root, "fcop", "shared", "roles", "PM.md"),
-    ]) {
-      if (!existsSync(target)) continue;
-      const raw = await fsPromises.readFile(target, "utf8");
-      if (!raw.includes(marker)) await fsPromises.appendFile(target, notice, "utf8");
+    const approvalId = prepared.approval.approval_id;
+    const approved = service.approve(
+      approvalId,
+      "ADMIN",
+      `Confirmed FCoP init plan ${plan.plan_digest}`,
+    );
+    const holder: { value?: FcopInitTransactionResult } = {};
+    const execution = await service.execute(
+      approvalId,
+      approved.execution_token,
+      request,
+      async () => {
+        const transaction = await deployRequiredProjectBootstrapProjection(root, plan, postflight);
+        holder.value = transaction;
+        return {
+          status: "succeeded",
+          evidence: [{
+            transaction_id: transaction.transaction_id,
+            plan_digest: transaction.plan_digest,
+            manifest_digest: transaction.manifest_digest,
+            verification_digest: transaction.verification_digest,
+            changed: transaction.changed,
+            preserved: transaction.preserved,
+            rolled_back: transaction.rolled_back,
+          }],
+        };
+      },
+    );
+    if (execution.status !== "succeeded" || !holder.value) {
+      throw new Error(execution.execution.error || "FCOP_INIT_TRANSACTION_FAILED");
     }
+    return { approval_id: approvalId, transaction: holder.value };
   }
 
   let apiSettingsRestartRequired = false;
@@ -5564,7 +5593,19 @@ export function buildWebPanelApp(
 
   app.get("/api/v2/config/pm-heartbeat", (_req: Request, res: Response) => {
     try {
-      res.json({ ok: true, config: readPmHeartbeatConfig(resolveProjectRoot()) });
+      const root = resolveProjectRoot();
+      const state = readPmHeartbeatState(root);
+      res.json({
+        ok: true,
+        config: readPmHeartbeatConfig(root),
+        health: {
+          config_loaded: true,
+          scheduler_running: pmHeartbeatIntervalRef !== null,
+          last_tick: state.ticks.at(-1) ?? null,
+          last_successful_wake: [...state.wakes].reverse().find((wake) => Boolean(wake.session_id)) ?? null,
+          open_fuses: Object.values(state.fuses).filter((fuse) => fuse.open),
+        },
+      });
     } catch (err) {
       sendError(res, 500, "GET_PM_HEARTBEAT_CONFIG_FAILED", String(err));
     }
@@ -9355,15 +9396,15 @@ export function buildWebPanelApp(
         if (alreadyRecovered) return;
         const priorState = String(fm["prior_state"] ?? "active").trim() || "active";
         writeFileSync(taskHit.path, _wpPatchFmFields(raw, {
-          state: outcome === "succeeded" ? priorState : "needs_replan",
-          dispatch_state: outcome === "succeeded" ? "ready" : "blocked",
+          state: priorState,
+          dispatch_state: "ready",
           approval_id: row.approval_id,
           approval_outcome: outcome,
           failure_code: outcome === "succeeded" ? "none" : `APPROVAL_${outcome.toUpperCase()}`,
           retry_policy: "none",
           resume_strategy: outcome === "succeeded"
             ? "continue_after_controlled_execution"
-            : "replan_without_replaying_operation",
+            : "agent_decides_next_step_after_approval_decision",
         }), "utf8");
       } catch (error) {
         console.warn("[operation-approval] failed to persist task recovery:", error);
@@ -9382,7 +9423,7 @@ export function buildWebPanelApp(
           wake_id: wakeId,
           message: outcome === "succeeded"
             ? `Approved operation ${row.approval_id} completed through its controlled executor. Continue from the next safe step; do not replay the original raw command.`
-            : `Operation approval ${row.approval_id} ended as ${outcome}. Replan from the recorded safe next step; do not replay the rejected operation.`,
+            : `Operation approval ${row.approval_id} ended as ${outcome}. The prior task state is restored; decide the next step without replaying the original operation.`,
           intent: "wake",
           operator_role: "ADMIN",
           task_id: taskId,
@@ -9484,8 +9525,8 @@ export function buildWebPanelApp(
       summary: row.effects.join("；"),
       trigger_reason: row.reason,
       admin_question: `是否${row.reason}？`,
-      can_approve: row.status === "pending_approval",
-      gate_status: row.status === "pending_approval" ? "valid" : row.status,
+      can_approve: isPendingApprovalStatus(row.status),
+      gate_status: isPendingApprovalStatus(row.status) ? "valid" : row.status,
       executor: row.request.action.executor,
       policy_rule_ids: approvalScope["policy_rule_ids"] ?? [],
       preview: snapshot,
@@ -9505,7 +9546,8 @@ export function buildWebPanelApp(
   app.get("/api/v2/approvals", async (req: Request, res: Response) => {
     try {
       const taskId = String(req.query["task_id"] ?? "").trim();
-      const pendingOperations = operationApprovalService().list({ status: "pending_approval", limit: 1000 })
+      const pendingOperations = operationApprovalService().list({ limit: 1000 })
+        .filter((row) => isPendingApprovalStatus(row.status))
         .filter((row) => !taskId || row.task_id === taskId)
         .map(operationApprovalPanelRow);
       const pendingGovernance = governanceApprovalService()
@@ -9524,7 +9566,7 @@ export function buildWebPanelApp(
   app.get("/api/v2/approvals/history", async (req: Request, res: Response) => {
     try {
       const limit = Math.min(Number((req.query["limit"] as string) ?? 50), 200);
-      const rows = operationApprovalService().list({ limit: 1000 }).filter((row) => row.status !== "pending_approval");
+      const rows = operationApprovalService().list({ limit: 1000 }).filter((row) => !isPendingApprovalStatus(row.status));
       const governanceRows = governanceApprovalService()
         .list({ limit: 1000 })
         .filter((row) => !["draft", "pending_approval"].includes(row.status));
@@ -13247,21 +13289,76 @@ export function buildWebPanelApp(
       });
     }
 
-    mkdirSync(root, { recursive: true });
     try {
-      await deployRequiredProjectBootstrapProjection(root);
       const pyProbe = await probeFcopPythonPackages(undefined, opts.fcopRuntime);
-      const pythonBin = pyProbe.pythonExecutable || "python";
-      const initPyCmd = [
-        "import sys",
-        "from fcop.project import Project",
-        "Project(sys.argv[1]).init(team='dev-team', lang='zh', force=True, deploy_rules=True)",
-      ].join("; ");
-      await execFile(pythonBin, ["-c", initPyCmd, root], { timeout: 120000 });
-      writeWorkspaceMode(root, workspaceMode);
-      await deployRequiredProjectBootstrapProjection(root);
-      await deployPmPlanningProjectProjection(root);
-      await deployOpenEditionProjectProjection(root);
+      const sourceRoot = resolveMonorepoRootFromShellPkg(SHELL_PKG_ROOT) ?? resolveBootstrapProjectRoot();
+      const plan = buildFcopInitPlan({
+        sourceRoot,
+        targetRoot: root,
+        initializationProfile: {
+          mode: "project",
+          team: "dev-team",
+          workspaceMode,
+        },
+        installedFcopVersion: pyProbe.fcop,
+        installedFcopMcpVersion: pyProbe.fcopMcp,
+        bundledRulesVersion: pyProbe.bundledRulesVersion,
+        bundledProtocolVersion: pyProbe.bundledProtocolVersion,
+      });
+      if (plan.conflict.length > 0) {
+        return res.status(409).json({
+          ok: false,
+          error: "FCOP_INIT_PLAN_CONFLICT",
+          plan,
+          upgrade_actions: plan.package_upgrade_actions,
+        });
+      }
+      const confirmed = await trustedForegroundConfirmation({
+        title: "CodeFlowMu 新项目初始化确认",
+        message: [
+          `项目根目录：${root}`,
+          `Plan digest：${plan.plan_digest}`,
+          `创建：${plan.create.length}，更新：${plan.update.length}，保留：${plan.preserve.length}`,
+          "确认后将生成治理操作审批记录并执行绑定事务。",
+        ].join("\n"),
+      });
+      if (!confirmed) {
+        return res.status(409).json({
+          ok: false,
+          error: "GOVERNANCE_CHANGE_CONFIRMATION_CANCELLED",
+          plan_digest: plan.plan_digest,
+        });
+      }
+      const initialized = await executeAdminConfirmedFcopInitPlan(root, plan, () => {
+        const result = verifyFcopProjectInit(root, {
+          installedFcopVersion: pyProbe.fcop,
+          installedFcopMcpVersion: pyProbe.fcopMcp,
+          bundledRulesVersion: pyProbe.bundledRulesVersion,
+          bundledProtocolVersion: pyProbe.bundledProtocolVersion,
+        });
+        return {
+          ok: result.ok,
+          failures: result.items
+            .filter((item) => item.status === "fail")
+            .map((item) => `${item.name}: ${item.detail}`),
+          evidence: result,
+        };
+      });
+      const verification = verifyFcopProjectInit(root, {
+        installedFcopVersion: pyProbe.fcop,
+        installedFcopMcpVersion: pyProbe.fcopMcp,
+        bundledRulesVersion: pyProbe.bundledRulesVersion,
+        bundledProtocolVersion: pyProbe.bundledProtocolVersion,
+      });
+      if (!verification.ok) {
+        return res.status(500).json({
+          ok: false,
+          error: "PROJECT_FCOP_POSTFLIGHT_FAILED",
+          approval_id: initialized.approval_id,
+          transaction: initialized.transaction,
+          verification,
+        });
+      }
     } catch (err) {
       return res.status(500).json({
         ok: false,
@@ -13275,9 +13372,6 @@ export function buildWebPanelApp(
     const id = `proj_${Date.now()}`;
     const project: Project = { id, name: normalizedName, root, active: false };
     projectStore.set(id, project);
-    if (existsSync(join(root, "fcop", "fcop.json"))) {
-      writeWorkspaceMode(root, workspaceMode);
-    }
     persistProjectStore();
     return res.json({
       ok: true,
@@ -13314,9 +13408,6 @@ export function buildWebPanelApp(
           "Open edition cannot switch to its own CodeFlowMu-open source directory as a development project.",
       });
     }
-    await deployPmPlanningProjectProjection(target.root);
-    await deployOpenEditionProjectProjection(target.root);
-
     // Runtime owns cwd, MCP subprocess configuration and filesystem watchers.
     // They are constructed as one project-scoped unit, so a safe hot switch is
     // an atomic stop -> persist new root -> automatic process reload.
@@ -17677,23 +17768,78 @@ export function buildWebPanelApp(
     if (!cfg.enabled) return;
     const root = resolveProjectRoot();
     const heartbeatState = readPmHeartbeatState(root);
+    const observedAt = new Date().toISOString();
+    const tickId = `PM-TICK-${observedAt.replace(/[-:.TZ]/g, "").slice(0, 17)}`;
+    let observedActiveSession = "";
+    let observedQueueGuard: Record<string, unknown> | undefined;
+    const persistTick = (
+      status: "accepted" | "skipped" | "failed",
+      skipReason?: string,
+      extra: { taskId?: string; inputDigest?: string; wakeId?: string; wakeHttpStatus?: string | number; sessionId?: string; detail?: string } = {},
+    ): void => {
+      registerPmHeartbeatTick(heartbeatState, {
+        tick_id: tickId,
+        observed_at: observedAt,
+        project_root: root,
+        status,
+        decision: status,
+        ...(skipReason ? { skip_reason: skipReason } : {}),
+        ...(extra.taskId ? { task_id: extra.taskId } : {}),
+        ...(extra.inputDigest ? { input_digest: extra.inputDigest } : {}),
+        ...(extra.wakeId ? { wake_id: extra.wakeId } : {}),
+        ...(observedActiveSession ? { active_session: observedActiveSession } : {}),
+        ...(observedQueueGuard ? { queue_guard: observedQueueGuard } : {}),
+        ...(extra.wakeHttpStatus != null ? { wake_http_status: extra.wakeHttpStatus } : {}),
+        ...(extra.sessionId ? { session_id: extra.sessionId } : {}),
+        ...(extra.detail ? { detail: extra.detail } : {}),
+      });
+      writePmHeartbeatState(root, heartbeatState);
+    };
     const activeSessions = await runtime.sessionManager.listActive();
-    if (
-      activeSessions.some(
-        (session) =>
-          String(session.protocol.agent_id ?? "").toUpperCase() === "PM-01",
-      )
-    ) {
+    const activePmSession = activeSessions.find(
+      (session) => String(session.protocol.agent_id ?? "").toUpperCase() === "PM-01",
+    );
+    if (activePmSession) {
+      observedActiveSession = activePmSession.protocol.session_id;
+      const lastActivityMs = Date.parse(
+        activePmSession.runtime_last_event_at ?? activePmSession.protocol.started_at ?? "",
+      );
+      const stalled = Number.isFinite(lastActivityMs) &&
+        Date.now() - lastActivityMs >= cfg.longTaskAfterMin * 60_000;
+      const alreadyAlerted = heartbeatState.ticks.some(
+        (tick) => tick.active_session === observedActiveSession && tick.skip_reason === "pm_session_stuck",
+      );
+      if (stalled && !alreadyAlerted) {
+        sseEmit("codeflowmu.session_stuck", {
+          code: "PM_SESSION_PROGRESS_STALLED",
+          session_id: observedActiveSession,
+          agent_id: "PM-01",
+          last_activity_at: new Date(lastActivityMs).toISOString(),
+          session_cancelled: false,
+          concurrent_session_started: false,
+          required_action: "AGENT_OR_ADMIN_INSPECTION",
+        });
+      }
+      persistTick("skipped", stalled ? "pm_session_stuck" : "pm_session_active", {
+        sessionId: observedActiveSession,
+        ...(stalled ? { detail: "stalled session retained; inspection notification emitted" } : {}),
+      });
       return;
     }
     const pmQueue = runtime.pmQueueGuard.snapshot();
+    observedQueueGuard = { ...pmQueue };
     if (pmQueue.pm_busy || pmQueue.in_flight || pmQueue.phase === "executing") {
+      persistTick("skipped", "pm_queue_busy");
       return;
     }
     const snap = await buildPmHeartbeatSnapshot().catch(() => null);
-    if (!snap || snap.activeRoots.length === 0) {
+    if (!snap) {
+      persistTick("failed", "snapshot_failed");
+      return;
+    }
+    if (snap.activeRoots.length === 0) {
       heartbeatState.last_digest = "";
-      writePmHeartbeatState(root, heartbeatState);
+      persistTick("skipped", "no_active_root", { inputDigest: snap.digest });
       return;
     }
     let stateChanged = false;
@@ -17717,21 +17863,6 @@ export function buildWebPanelApp(
       });
       stateChanged = stateChanged || settlement.settled;
       if (settlement.alertRequired) {
-        const taskHit = findTaskFileByIdPrefix(root, wake.task_id);
-        if (taskHit?.path) {
-          try {
-            const raw = readFileSync(taskHit.path, "utf8");
-            writeFileSync(taskHit.path, _wpPatchFmFields(raw, {
-              state: "needs_replan",
-              dispatch_state: "blocked",
-              failure_code: "PM_HEARTBEAT_NO_PROGRESS",
-              failure_category: "governance",
-              retry_policy: "none",
-            }), "utf8");
-          } catch (error) {
-            console.warn("[pm-heartbeat] failed to persist no-progress fuse:", error);
-          }
-        }
         sseEmit("codeflowmu.failure", {
           code: "PM_HEARTBEAT_NO_PROGRESS",
           task_id: wake.task_id,
@@ -17745,9 +17876,46 @@ export function buildWebPanelApp(
     const now = Date.now();
     const focusTaskId = rowText(snap.focusTask ?? {}, "task_id");
     const focusThreadKey = rowText(snap.focusTask ?? {}, "thread_key");
-    const focusState = rowText(snap.focusTask ?? {}, "state").toLowerCase();
-    const focusFailureCode = rowText(snap.focusTask ?? {}, "failure_code").toUpperCase();
+    let focusState = rowText(snap.focusTask ?? {}, "state").toLowerCase();
+    let focusFailureCode = rowText(snap.focusTask ?? {}, "failure_code").toUpperCase();
+    const focusRetryPolicy = rowText(snap.focusTask ?? {}, "retry_policy").toLowerCase();
+    if (
+      focusTaskId &&
+      focusState === "waiting_admin_decision" &&
+      focusFailureCode === "CODEFLOWMU_POLICY_BLOCKED" &&
+      focusRetryPolicy === "manual"
+    ) {
+      const hasRealApproval = operationApprovalService().list({ limit: 1000 }).some(
+        (row) => row.task_id === focusTaskId && isPendingApprovalStatus(row.status),
+      );
+      const recoveryKey = `${focusTaskId}::CODEFLOWMU_POLICY_BLOCKED`;
+      if (!hasRealApproval && !heartbeatState.recovered_policy_freezes[recoveryKey]) {
+        const taskHit = findTaskFileByIdPrefix(root, focusTaskId);
+        if (taskHit?.path) {
+          const raw = readFileSync(taskHit.path, "utf8");
+          writeFileSync(taskHit.path, _wpPatchFmFields(raw, {
+            state: rowText(snap.focusTask ?? {}, "prior_state") || "active",
+            dispatch_state: "ready",
+            failure_code: "INVALID_POLICY_FREEZE_RECOVERED",
+            failure_category: "recovery",
+            retry_policy: "auto",
+          }), "utf8");
+        }
+        heartbeatState.recovered_policy_freezes[recoveryKey] = observedAt;
+        clearPmHeartbeatTaskFuses(heartbeatState, focusTaskId);
+        stateChanged = true;
+        focusState = "active";
+        focusFailureCode = "INVALID_POLICY_FREEZE_RECOVERED";
+        sseEmit("codeflowmu.failure", {
+          code: "INVALID_POLICY_FREEZE",
+          task_id: focusTaskId,
+          recovered: true,
+          deduplicated: true,
+        });
+      }
+    }
     if (focusState === "waiting_approval" || focusFailureCode === "OPERATION_APPROVAL_REQUIRED") {
+      persistTick("skipped", "waiting_approval", { taskId: focusTaskId, inputDigest: snap.digest });
       return;
     }
     const fuse = evaluatePmHeartbeatFuse({
@@ -17757,7 +17925,7 @@ export function buildWebPanelApp(
       nowMs: now,
     });
     if (!fuse.allow) {
-      writePmHeartbeatState(root, heartbeatState);
+      persistTick("skipped", `fuse_${fuse.reason}`, { taskId: focusTaskId, inputDigest: snap.digest });
       return;
     }
     const decision = decidePmHeartbeatPolicy({
@@ -17771,7 +17939,10 @@ export function buildWebPanelApp(
       oldestRootAtMs: snap.oldestRootAt,
       digest: snap.digest,
     });
-    if (!decision.shouldRun) return;
+    if (!decision.shouldRun) {
+      persistTick("skipped", decision.reason, { taskId: focusTaskId, inputDigest: snap.digest });
+      return;
+    }
     const wakeId = newPmHeartbeatWakeId(new Date(now));
     const focusTitle =
       rowText(snap.focusTask ?? {}, "subject") ||
@@ -17803,10 +17974,20 @@ export function buildWebPanelApp(
       );
       return null;
     });
-    if (!response?.ok) return;
+    if (!response) {
+      persistTick("failed", "wake_http_failed", { taskId: focusTaskId, inputDigest: snap.digest, wakeId, wakeHttpStatus: "network_error" });
+      return;
+    }
+    if (!response.ok) {
+      persistTick("failed", `wake_http_${response.status}`, { taskId: focusTaskId, inputDigest: snap.digest, wakeId, wakeHttpStatus: response.status });
+      return;
+    }
     const accepted = await response.json().catch(() => null) as Record<string, unknown> | null;
     const sessionId = String(accepted?.["session_id"] ?? "").trim();
-    if (accepted?.["ok"] !== true || !sessionId) return;
+    if (accepted?.["ok"] !== true || !sessionId) {
+      persistTick("failed", "wake_response_invalid", { taskId: focusTaskId, inputDigest: snap.digest, wakeId, wakeHttpStatus: response.status });
+      return;
+    }
     registerAcceptedPmHeartbeatWake(heartbeatState, {
       wake_id: wakeId,
       task_id: focusTaskId,
@@ -17817,7 +17998,7 @@ export function buildWebPanelApp(
       started_at: new Date(now).toISOString(),
       business_progress_digest_before: snap.digest,
     });
-    writePmHeartbeatState(root, heartbeatState);
+    persistTick("accepted", undefined, { taskId: focusTaskId, inputDigest: snap.digest, wakeId, wakeHttpStatus: response.status, sessionId });
   }
 
   function restartPmHeartbeatScheduler(): void {
@@ -18415,54 +18596,61 @@ export function buildWebPanelApp(
     }
   });
 
-  // ── Zombie session cleanup — startup + periodic ───────────────────────
-  // Sessions stuck in "running" too long are cancelled via SessionManager
-  // so registry reconciler + SSE session_cancelled refresh the team UI.
+  // ── Stuck-session diagnostics — startup + periodic ────────────────────
+  // Liveness suspicion is observable, but never sufficient authority to
+  // cancel a logical Session or start a concurrent writer session.
   {
     const ZOMBIE_MAX_AGE_MS = 20 * 60 * 1000; // 20 minutes
-    const runZombieSessionCleanup = async (): Promise<number> => {
+    const alertedSessions = new Set<string>();
+    const runStuckSessionDiagnostics = async (): Promise<number> => {
       const all = await runtime.sessionStore?.listAll?.() ?? [];
-      let cleaned = 0;
+      let alerted = 0;
       const now = Date.now();
       for (const rec of all) {
         if (rec.protocol.status !== "running") continue;
-        const startedAt = rec.protocol.started_at
-          ? new Date(rec.protocol.started_at).getTime()
+        const lastActivityAt = rec.runtime_last_event_at
+          ? new Date(rec.runtime_last_event_at).getTime()
+          : rec.protocol.started_at
+            ? new Date(rec.protocol.started_at).getTime()
           : 0;
-        if (!startedAt || now - startedAt < ZOMBIE_MAX_AGE_MS) continue;
-        const sessionId = rec.protocol.session_id;
-        try {
-          await runtime.sessionManager.cancelSession(
-            sessionId,
-            "zombie_cleanup: stuck running >20m",
-          );
-          cleaned++;
-        } catch (cancelErr) {
-          console.warn(
-            `[ZombieCleanup] cancelSession failed for ${sessionId}:`,
-            cancelErr,
-          );
+        if (!lastActivityAt || now - lastActivityAt < ZOMBIE_MAX_AGE_MS) {
+          alertedSessions.delete(rec.protocol.session_id);
+          continue;
         }
+        const sessionId = rec.protocol.session_id;
+        if (alertedSessions.has(sessionId)) continue;
+        alertedSessions.add(sessionId);
+        alerted += 1;
+        sseEmit("codeflowmu.session_stuck", {
+          code: "SESSION_PROGRESS_STALLED",
+          session_id: sessionId,
+          agent_id: rec.protocol.agent_id,
+          task_id: rec.protocol.task_id,
+          last_activity_at: new Date(lastActivityAt).toISOString(),
+          operation_executed: false,
+          session_cancelled: false,
+          concurrent_session_started: false,
+          required_action: "AGENT_OR_ADMIN_INSPECTION",
+        });
       }
-      if (cleaned > 0) {
+      if (alerted > 0) {
         console.info(
-          `[ZombieCleanup] cancelled ${cleaned} stuck session(s) (>20m running)`,
+          `[StuckSession] alerted ${alerted} stalled session(s); no session was cancelled`,
         );
-        sseEmit("codeflowmu.zombie_cleanup", { cleaned, ts: Date.now() });
       }
-      return cleaned;
+      return alerted;
     };
 
     zombieStartupTimer = setTimeout(() => {
-      runZombieSessionCleanup().catch((e) =>
-        console.warn("[ZombieCleanup] error:", e),
+      runStuckSessionDiagnostics().catch((e) =>
+        console.warn("[StuckSession] diagnostics error:", e),
       );
     }, 5_000);
     zombieStartupTimer.unref();
 
     zombieIntervalTimer = setInterval(() => {
-      runZombieSessionCleanup().catch((e) =>
-        console.warn("[ZombieCleanup] error:", e),
+      runStuckSessionDiagnostics().catch((e) =>
+        console.warn("[StuckSession] diagnostics error:", e),
       );
     }, 5 * 60 * 1000);
     zombieIntervalTimer.unref();

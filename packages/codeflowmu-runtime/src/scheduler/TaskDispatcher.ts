@@ -133,7 +133,11 @@ import {
   SdkCooldownActiveError,
 } from "../_internal/SdkCooldownRegistry.ts";
 import { zeroToolcallCircuitBreaker } from "../_internal/ZeroToolcallCircuitBreaker.ts";
-import { OPERATION_APPROVAL_REQUIRED } from "../approval/index.ts";
+import {
+  OPERATION_APPROVAL_REQUIRED,
+  OperationApprovalService,
+  isPendingApprovalStatus,
+} from "../approval/index.ts";
 import {
   enqueueAgentTask,
   isTaskPaused,
@@ -2078,6 +2082,7 @@ export class TaskDispatcher {
           operation_fingerprint?: string;
           next_safe_action?: string;
           report_required?: boolean;
+          operation_outcome?: Record<string, unknown>;
         }
       | undefined;
     if (payload?.failure_code === TRANSIENT_SDK_DELAYED) {
@@ -2089,20 +2094,66 @@ export class TaskDispatcher {
     const taskId = resolveCanonicalTaskId(filename, { task_id: rawTaskId });
     const failureCode = String(payload?.failure_code ?? "").trim().toUpperCase();
     const failureCategory = String(payload?.failure_category ?? "").trim().toLowerCase();
-    const operationApprovalWait = failureCode === OPERATION_APPROVAL_REQUIRED;
-    const governanceApprovalWait =
-      failureCode === "APPROVAL_REQUIRED" ||
-      failureCode === "APPROVAL_PENDING";
-    const governanceApprovalStopped =
-      failureCode.startsWith("APPROVAL_") && !governanceApprovalWait;
-    const operationPolicyDenied =
-      failureCode === "OPERATION_BOUNDARY_DENIED" ||
-      failureCode === "ABSOLUTELY_PROHIBITED";
+    let taskThreadKey = "";
+    try {
+      const taskText = await fs.readFile(filepath, "utf8");
+      taskThreadKey = taskText.match(/^thread_key:\s*([^\r\n]+)$/m)?.[1]?.trim() ?? "";
+    } catch {
+      taskThreadKey = "";
+    }
+    const candidateApprovalId = String(payload?.operation_outcome?.["approval_id"] ?? "").trim();
+    let operationApprovalWait =
+      failureCode === OPERATION_APPROVAL_REQUIRED &&
+      st === "waiting_approval" &&
+      Boolean(candidateApprovalId) &&
+      Boolean(this._projectRoot);
+    if (operationApprovalWait) {
+      try {
+        const approval = new OperationApprovalService({ projectRoot: this._projectRoot! }).get(candidateApprovalId);
+        operationApprovalWait =
+          isPendingApprovalStatus(approval.status) &&
+          approval.agent_notice_delivered === true &&
+          resolve(approval.project_root) === resolve(this._projectRoot!) &&
+          approval.project_id === String(payload?.operation_outcome?.["project_id"] ?? "") &&
+          String(approval.task_id ?? "") === taskId &&
+          String(approval.task_id ?? "") === String(payload?.operation_outcome?.["task_id"] ?? "") &&
+          String(approval.thread_key ?? "") === String(payload?.operation_outcome?.["thread_key"] ?? "") &&
+          Boolean(taskThreadKey) &&
+          String(approval.thread_key ?? "") === taskThreadKey &&
+          String(approval.request.subject.role ?? "").toUpperCase() === String(evt.agent_id ?? "").split(/[-_:]/, 1)[0]!.toUpperCase() &&
+          String(approval.request.subject.role ?? "").toUpperCase() === String(payload?.operation_outcome?.["role"] ?? "").toUpperCase() &&
+          String(approval.operation_fingerprint ?? "") === String(payload?.operation_fingerprint ?? "");
+      } catch {
+        operationApprovalWait = false;
+      }
+    }
+    const invalidLegacyPolicyFreeze =
+      !operationApprovalWait &&
+      [
+        OPERATION_APPROVAL_REQUIRED,
+        "APPROVAL_REQUIRED",
+        "APPROVAL_PENDING",
+        "OPERATION_BOUNDARY_DENIED",
+        "ABSOLUTELY_PROHIBITED",
+        "CODEFLOWMU_POLICY_BLOCKED",
+      ].includes(failureCode);
+    if (invalidLegacyPolicyFreeze) {
+      this._logger.warn(
+        `[TaskDispatcher] INVALID_POLICY_FREEZE recovered for ${filename}: ${failureCode || "missing approval fact"}`,
+      );
+      this._panelEvents?.emit("codeflowmu.task_blocked", {
+        event: "INVALID_POLICY_FREEZE",
+        agent_id: evt.agent_id,
+        session_id: evt.session_id,
+        task_id: taskId,
+        original_failure_code: failureCode,
+        original_operation_executed: false,
+        state_restored: true,
+      });
+      return;
+    }
     if (
       !operationApprovalWait &&
-      !governanceApprovalWait &&
-      !governanceApprovalStopped &&
-      !operationPolicyDenied &&
       st !== "failed" &&
       st !== "timeout"
     ) return;
@@ -2110,9 +2161,6 @@ export class TaskDispatcher {
     const isGovernanceBlock =
       failureCode === "CODEFLOWMU_POLICY_BLOCKED" ||
       operationApprovalWait ||
-      governanceApprovalWait ||
-      governanceApprovalStopped ||
-      operationPolicyDenied ||
       failureCategory === "policy_blocked" ||
       failureCategory === "policy_denied" ||
       failureCategory === "approval_required" ||
@@ -2129,29 +2177,10 @@ export class TaskDispatcher {
           payload?.reason ??
           "governance policy rejected this action",
       );
-      let approvalId = "";
-      if (operationApprovalWait) {
-        try {
-          const parsed = JSON.parse(reason) as Record<string, unknown>;
-          approvalId = String(parsed["approval_id"] ?? "").trim();
-        } catch {
-          approvalId =
-            reason.match(/"approval_id"\s*:\s*"([^"]+)"/)?.[1] ?? "";
-        }
-      }
-      const governanceState = operationApprovalWait || governanceApprovalWait
-        ? "waiting_approval"
-        : operationPolicyDenied || governanceApprovalStopped
-          ? "needs_replan"
-          : "waiting_admin_decision";
-      const retryPolicy =
-        operationPolicyDenied || governanceApprovalStopped ? "none" : "manual";
-      const normalizedFailureCategory =
-        operationApprovalWait || governanceApprovalWait
-        ? "approval_required"
-        : operationPolicyDenied || governanceApprovalStopped
-          ? "policy_denied"
-          : "policy_blocked";
+      const approvalId = candidateApprovalId;
+      const governanceState = "waiting_approval" as const;
+      const retryPolicy = "none";
+      const normalizedFailureCategory = "approval_required";
       const rec = this._dispatchRetryRegistry.recordFailure(
         retryKey,
         new Error(reason),
@@ -2175,23 +2204,17 @@ export class TaskDispatcher {
           resolved,
           _patchFmScalarFields(raw, {
             state: governanceState,
-            dispatch_state:
-              operationPolicyDenied || governanceApprovalStopped
-                ? "blocked"
-                : "waiting_admin",
-            failure_code: failureCode || "CODEFLOWMU_POLICY_BLOCKED",
+            dispatch_state: "waiting_approval",
+            failure_code: OPERATION_APPROVAL_REQUIRED,
             failure_category: normalizedFailureCategory,
             retry_policy: retryPolicy,
             guard_worked: true,
             runtime_crashed: false,
             prior_state:
-              currentState === "waiting_approval" || currentState === "needs_replan"
+              currentState === "waiting_approval"
                 ? "dispatched"
                 : currentState,
-            resume_strategy:
-              operationApprovalWait || governanceApprovalWait
-                ? "execute_approved_structured_operation_then_wake_role"
-                : "replan_without_replaying_operation",
+            resume_strategy: "wait_for_approval_decision_event",
             ...(operationFingerprint
               ? { operation_fingerprint: operationFingerprint }
               : {}),

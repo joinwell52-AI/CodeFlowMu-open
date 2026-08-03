@@ -86,6 +86,9 @@ function normalizedInput(input: WorkspaceOperationInput) {
   if (targets.length === 0 && input.executor !== "workspace.patch.apply") {
     throw new Error("OPERATION_BOUNDARY_DENIED:target_missing");
   }
+  if (targets.length !== 1 && input.executor !== "workspace.patch.apply") {
+    throw new Error("WORKSPACE_APPROVAL_REQUIRES_ONE_EXACT_TARGET");
+  }
   if (input.executor === "workspace.patch.apply" && (!input.patch || allowedPaths.length === 0)) {
     throw new Error("OPERATION_BOUNDARY_DENIED:patch_or_allowed_paths_missing");
   }

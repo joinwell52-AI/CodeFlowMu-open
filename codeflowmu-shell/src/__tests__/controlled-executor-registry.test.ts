@@ -113,7 +113,7 @@ describe("controlled executor registry", () => {
       });
       const decision = evaluateUnifiedOperationPolicy({
         toolName: "workspace.fs.write",
-        args: { path: "src/unified.txt", content: "unified approved content\n" },
+        args: { path: "packages/codeflowmu-runtime/src/approval/unified.txt", content: "unified approved content\n" },
         projectRoot: root,
         projectId: root,
         agentId: "PM-01",
@@ -133,7 +133,7 @@ describe("controlled executor registry", () => {
         (current) => value.execute(current),
       );
       assert.equal(completed.status, "succeeded");
-      assert.equal(readFileSync(join(root, "src", "unified.txt"), "utf8"), "unified approved content\n");
+      assert.equal(readFileSync(join(root, "packages", "codeflowmu-runtime", "src", "approval", "unified.txt"), "utf8"), "unified approved content\n");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

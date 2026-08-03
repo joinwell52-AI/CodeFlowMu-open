@@ -13,6 +13,8 @@ import {
 import { createHash, randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 
+import type { OperationFacts } from "./OperationFacts.ts";
+
 export const OPERATION_APPROVAL_KINDS = [
   "destructive_operation",
   "external_write",
@@ -25,8 +27,11 @@ export const OPERATION_APPROVAL_KINDS = [
 ] as const;
 
 export type OperationApprovalKind = (typeof OPERATION_APPROVAL_KINDS)[number];
-export type CapabilityDecision = "ALLOW" | "REQUIRE_APPROVAL" | "DENY";
+export type CapabilityDecision = "ALLOW" | "REQUIRE_APPROVAL";
 export type OperationApprovalStatus =
+  | "pending"
+  | "pending_information"
+  | "pending_executor"
   | "pending_approval"
   | "approved"
   | "rejected"
@@ -36,7 +41,10 @@ export type OperationApprovalStatus =
   | "executing"
   | "succeeded"
   | "partial_failed"
-  | "failed";
+  | "failed"
+  | "revoked"
+  | "executed"
+  | "execution_failed";
 
 export type OperationEffects = {
   destructive?: boolean;
@@ -103,6 +111,17 @@ export type OperationApprovalRecord = {
   requested_at: string;
   expires_at: string;
   status: OperationApprovalStatus;
+  approval_type?: "OPERATION_APPROVAL";
+  decision_mode?: "AUTO" | "ADMIN_MANUAL";
+  rule_ids?: string[];
+  operation_facts?: OperationFacts;
+  operation_fingerprint?: string;
+  thread_key?: string;
+  missing_information?: string[];
+  executor_status?: "ready" | "missing" | "incompatible";
+  suggested_executor?: string;
+  agent_notice_delivered?: boolean;
+  agent_notice_delivered_at?: string | null;
   request: CapabilityRequest;
   operation_digest: string;
   reason: string;
@@ -141,6 +160,14 @@ export type PrepareOperationInput = {
   recovery: string;
   expires_in_seconds?: number;
   comment_required?: boolean;
+  rule_ids?: string[];
+  operation_facts?: OperationFacts;
+  operation_fingerprint?: string;
+  thread_key?: string;
+  missing_information?: string[];
+  executor_status?: "ready" | "missing" | "incompatible";
+  suggested_executor?: string;
+  decision_mode?: "AUTO" | "ADMIN_MANUAL";
 };
 
 export type HumanConfirmationVerifier = (input: {
@@ -224,10 +251,20 @@ export function classifyCapabilityRequest(request: CapabilityRequest): {
     !normalizeString(request.context?.workspace) ||
     targets.length === 0
   ) {
-    return { decision: "DENY", risk_tags: [], reason: "impact_unknown_or_request_incomplete" };
+    return {
+      decision: "REQUIRE_APPROVAL",
+      primary_kind: "governance_boundary_change",
+      risk_tags: ["governance_boundary_change"],
+      reason: "impact_unknown_or_request_incomplete",
+    };
   }
   if (request.effect?.unknown) {
-    return { decision: "DENY", risk_tags: [], reason: "impact_unknown" };
+    return {
+      decision: "REQUIRE_APPROVAL",
+      primary_kind: "governance_boundary_change",
+      risk_tags: ["governance_boundary_change"],
+      reason: "impact_unknown",
+    };
   }
   for (const [field, reason] of [
     ["prohibited", "operation_permanently_prohibited"],
@@ -238,7 +275,15 @@ export function classifyCapabilityRequest(request: CapabilityRequest): {
     ["out_of_scope", "operation_out_of_scope"],
   ] as const) {
     if (request.effect?.[field]) {
-      return { decision: "DENY", risk_tags: [], reason };
+      const tags = matchedKinds(request.effect ?? {});
+      const primary = KIND_PRIORITY.find((kind) => tags.includes(kind)) ??
+        "governance_boundary_change";
+      return {
+        decision: "REQUIRE_APPROVAL",
+        primary_kind: primary,
+        risk_tags: tags.length > 0 ? tags : [primary],
+        reason,
+      };
     }
   }
   const tags = matchedKinds(request.effect ?? {});
@@ -275,6 +320,13 @@ function cloneRecord(record: OperationApprovalRecord): OperationApprovalRecord {
   const copy = JSON.parse(JSON.stringify(record)) as OperationApprovalRecord;
   delete copy.token_hash;
   return copy;
+}
+
+export function isPendingApprovalStatus(
+  status: OperationApprovalStatus | undefined,
+): status is "pending" | "pending_information" | "pending_executor" | "pending_approval" {
+  return status === "pending" || status === "pending_information" ||
+    status === "pending_executor" || status === "pending_approval";
 }
 
 export type OperationApprovalServiceOptions = {
@@ -317,15 +369,6 @@ export class OperationApprovalService {
       requested_by: input.request.subject.actor,
       request: input.request,
     });
-    if (classification.decision === "DENY") {
-      this.audit("operation.denied", {
-        operation_digest: operationDigest,
-        reason: classification.reason,
-        request: input.request,
-      });
-      throw new OperationApprovalError("OPERATION_DENIED", classification.reason, 403);
-    }
-
     const confirmationId = normalizeString(input.request.context.human_confirmation_id);
     if (
       input.request.context.initiated_by === "user" &&
@@ -366,7 +409,7 @@ export class OperationApprovalService {
     const prior = this.list({ limit: 1000 }).find(
       (row) => row.project_id === input.request.subject.project_id && row.operation_digest === operationDigest,
     );
-    if (prior?.status === "pending_approval" || prior?.status === "approved") {
+    if (isPendingApprovalStatus(prior?.status) || prior?.status === "approved") {
       this.audit("approval.request_deduplicated", {
         approval_id: prior.approval_id,
         operation_digest: operationDigest,
@@ -405,7 +448,22 @@ export class OperationApprovalService {
       human_confirmation_id: input.request.context.human_confirmation_id,
       requested_at: now.toISOString(),
       expires_at: new Date(now.getTime() + expiresSeconds * 1000).toISOString(),
-      status: "pending_approval",
+      status: input.missing_information?.length
+        ? "pending_information"
+        : input.executor_status === "missing" || input.executor_status === "incompatible"
+          ? "pending_executor"
+          : "pending",
+      approval_type: "OPERATION_APPROVAL",
+      decision_mode: input.decision_mode ?? "ADMIN_MANUAL",
+      rule_ids: [...new Set(input.rule_ids ?? input.effects.filter((item) => item.startsWith("NEG.")))],
+      ...(input.operation_facts ? { operation_facts: input.operation_facts } : {}),
+      ...(input.operation_fingerprint ? { operation_fingerprint: input.operation_fingerprint } : {}),
+      ...(input.thread_key ? { thread_key: input.thread_key } : {}),
+      missing_information: [...new Set(input.missing_information ?? [])],
+      executor_status: input.executor_status ?? "ready",
+      ...(input.suggested_executor ? { suggested_executor: input.suggested_executor } : {}),
+      agent_notice_delivered: false,
+      agent_notice_delivered_at: null,
       request: input.request,
       operation_digest: operationDigest,
       reason: normalizeString(input.reason) || classification.reason,
@@ -465,6 +523,41 @@ export class OperationApprovalService {
       status: current.status,
     });
     return cloneRecord(current);
+  }
+
+  markAgentNoticeDelivered(approvalId: string, context: {
+    project_id: string;
+    task_id: string;
+    thread_key: string;
+    role: string;
+    operation_fingerprint: string;
+  }): OperationApprovalRecord {
+    return this.withLock(approvalId, () => {
+      const record = this.requirePending(approvalId);
+      const mismatches = [
+        record.project_id === context.project_id ? "" : "project_id",
+        String(record.task_id ?? "") === context.task_id ? "" : "task_id",
+        String(record.thread_key ?? "") === context.thread_key ? "" : "thread_key",
+        String(record.request.subject.role ?? "").toUpperCase() === context.role.toUpperCase() ? "" : "role",
+        String(record.operation_fingerprint ?? "") === context.operation_fingerprint ? "" : "operation_fingerprint",
+      ].filter(Boolean);
+      if (mismatches.length > 0) {
+        throw new OperationApprovalError(
+          "APPROVAL_SCOPE_MISMATCH",
+          `approval context mismatch: ${mismatches.join(", ")}`,
+        );
+      }
+      const now = this.now().toISOString();
+      record.agent_notice_delivered = true;
+      record.agent_notice_delivered_at = now;
+      record.updated_at = now;
+      this.writeRecord(record);
+      this.audit("approval.agent_notice_delivered", {
+        approval_id: record.approval_id,
+        operation_fingerprint: record.operation_fingerprint,
+      });
+      return cloneRecord(record);
+    });
   }
 
   approve(approvalId: string, actor: string, reason: string): {
@@ -657,7 +750,7 @@ export class OperationApprovalService {
   private requirePending(approvalId: string): OperationApprovalRecord {
     const record = this.getMutable(approvalId);
     this.expireIfNeeded(record);
-    if (record.status !== "pending_approval") {
+    if (!isPendingApprovalStatus(record.status)) {
       throw new OperationApprovalError("APPROVAL_NOT_PENDING", `approval is ${record.status}`);
     }
     return record;
@@ -671,7 +764,7 @@ export class OperationApprovalService {
 
   private expireIfNeeded(record: OperationApprovalRecord): OperationApprovalRecord {
     if (
-      (record.status === "pending_approval" || record.status === "approved") &&
+      (isPendingApprovalStatus(record.status) || record.status === "approved") &&
       this.now().getTime() >= Date.parse(record.expires_at)
     ) {
       const now = this.now().toISOString();

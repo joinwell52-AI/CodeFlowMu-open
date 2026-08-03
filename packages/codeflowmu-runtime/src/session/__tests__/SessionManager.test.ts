@@ -20,6 +20,7 @@ import { test } from "node:test";
 
 import type { Agent } from "@codeflowmu/protocol";
 
+import { UniversalApprovalStore } from "../../approval/UniversalApprovalStore.ts";
 import { AgentRegistry } from "../../registry/AgentRegistry.ts";
 import {
   InMemoryRunHandle,
@@ -192,6 +193,7 @@ test("TS-4.2a: resolveMcpServers receives the minted Runtime session id", async 
           sessionId: "session-pm-planning-001",
           currentTaskId: "TASK-20260712-002",
         });
+        await manager.awaitSettled(handle.session_id);
       } finally {
         await transcriptWriter.closeAll().catch(() => undefined);
       }
@@ -819,21 +821,72 @@ test("operation approval wait settles the session without marking the task run f
         endedPayload = event.payload as Record<string, unknown>;
       }
     });
-    const handle = await manager.startSession("DEV-01", "TASK-waiting-approval", {
+    const taskId = "TASK-waiting-approval";
+    const threadKey = "thread-waiting-approval";
+    const handle = await manager.startSession("DEV-01", taskId, {
       text: "push candidate",
+      context: { thread_key: threadKey },
     });
+    const fingerprint = "sha256:waiting-approval-test";
+    const approvalStore = new UniversalApprovalStore(rootDir);
+    const created = approvalStore.createPending({
+      request: {
+        subject: {
+          actor: "DEV-01",
+          role: "DEV",
+          project_id: "session-manager-test",
+          agent_id: "DEV-01",
+          session_id: handle.session_id,
+          task_id: taskId,
+        },
+        action: { capability: "git.push", operation: "push", executor: "git.push" },
+        resource: { type: "git_remote", targets: ["origin/main"] },
+        context: {
+          workspace: rootDir,
+          environment: "test",
+          initiated_by: "agent",
+          authorization_source: "none",
+        },
+        effect: { external_write: true },
+        snapshot: {},
+      },
+      reason: "test approval wait",
+      effects: ["remote write"],
+      non_effects: ["no task lifecycle mutation"],
+      recovery: "resume prior task state",
+      rule_ids: ["NEG.EXTERNAL.SIDE_EFFECT"],
+      operation_fingerprint: fingerprint,
+      thread_key: threadKey,
+    });
+    assert.equal(created.outcome, "APPROVAL_REQUIRED");
+    if (created.outcome !== "APPROVAL_REQUIRED") throw new Error("approval fixture failed");
+    approvalStore.deliverAgentNotice(created.notice);
     (handle.activeRun as InMemoryRunHandle).settle({
       status: "finished",
-      sdkError:
-        '{"code":"OPERATION_APPROVAL_REQUIRED","approval_id":"APPROVAL-20260731-test"}',
       failureCode: "OPERATION_APPROVAL_REQUIRED",
+      operationFingerprint: fingerprint,
+      operationClassification: "approval_required",
+      retryPolicy: "none",
+      nextSafeAction: "wait_for_approval_decision_event",
+      reportRequired: false,
+      operationOutcome: {
+        approval_id: created.approval.approval_id,
+        approval_status: created.approval.status,
+        operation_executed: false,
+        agent_notice_delivered: true,
+        project_id: created.notice.project_id,
+        task_id: created.notice.task_id,
+        thread_key: created.notice.thread_key,
+        role: created.notice.role,
+        operation_fingerprint: created.notice.operation_fingerprint,
+      },
     });
     await manager.awaitSettled(handle.session_id);
 
     const persisted = await sessionStore.load(handle.session_id);
-    assert.equal(persisted?.protocol.status, "completed");
+    assert.equal(persisted?.protocol.status, "waiting_approval");
     assert.ok(endedPayload);
-    assert.equal((endedPayload as Record<string, unknown>)["status"], "completed");
+    assert.equal((endedPayload as Record<string, unknown>)["status"], "waiting_approval");
     assert.equal(
       (endedPayload as Record<string, unknown>)["settlement_reason"],
       "waiting_operation_approval",
@@ -845,7 +898,7 @@ test("operation approval wait settles the session without marking the task run f
   });
 });
 
-test("operation policy denial settles as needs-replan evidence instead of a crashed session", async () => {
+test("historical operation policy denial is recovered without freezing or replanning the task", async () => {
   await withTempSessionDir(async ({ sessionStore, transcriptWriter, agentStore, rootDir }) => {
     const sdk = new InMemorySdkAdapter();
     sdk.sendHandleFactory = (spec) =>
@@ -886,11 +939,11 @@ test("operation policy denial settles as needs-replan evidence instead of a cras
     assert.ok(endedPayload);
     assert.equal(
       (endedPayload as Record<string, unknown>)["settlement_reason"],
-      "operation_policy_denied",
+      "invalid_policy_freeze_recovered",
     );
     assert.equal(
       (endedPayload as Record<string, unknown>)["failure_code"],
-      "OPERATION_BOUNDARY_DENIED",
+      undefined,
     );
   });
 });

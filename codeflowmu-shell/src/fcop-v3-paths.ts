@@ -18,6 +18,8 @@ import {
 } from "node:fs";
 import { join, resolve as pathResolve } from "node:path";
 
+import { verifyFcopBootstrapManifest } from "./fcop-bootstrap-transaction.ts";
+
 /** v2-only dirs that indicate old five-bucket topology — NOT 0002 work folders. */
 export const FCOP_V2_ONLY_LEGACY_DIRS = ["log"] as const;
 
@@ -520,6 +522,26 @@ export interface FcopInitVerification {
   failures: string[];
   warnings: string[];
   summary: string;
+  manifestDigest?: string;
+  verificationDigest?: string;
+}
+
+export interface FcopInitVerificationContext {
+  installedFcopVersion?: string | null;
+  installedFcopMcpVersion?: string | null;
+  bundledRulesVersion?: string | null;
+  bundledProtocolVersion?: string | null;
+  identity?: {
+    hostRoot: string;
+    instanceId: string;
+    instanceRole: string;
+    registryPath: string;
+    dataRoot: string;
+    writerLockPaths: string[];
+    gatewayOwnerRoot?: string;
+    gatewayRuntimeInstanceId?: string;
+    gatewayEnabled?: boolean;
+  };
 }
 
 /** Agent / PM skills manifest 磁盘验收（只读，供 init SSE / env/check）。 */
@@ -744,12 +766,105 @@ function readProtocolVersionFromDisk(projectRoot: string): number | null {
  * 验收 FCoP 一键初始化结果（只读磁盘，不调用 MCP）。
  * fail 项阻塞 ok；warn 项（如 adopted 空）不阻塞，但写入 warnings。
  */
-export function verifyFcopProjectInit(projectRoot: string): FcopInitVerification {
+export function verifyFcopProjectInit(
+  projectRoot: string,
+  context: FcopInitVerificationContext = {},
+): FcopInitVerification {
   const items: FcopInitVerifyItem[] = [];
   const failures: string[] = [];
   const warnings: string[] = [];
   const fcopJsonPath = join(projectRoot, "fcop", "fcop.json");
   const paths = fcopV3Paths(projectRoot);
+
+  const bootstrap = verifyFcopBootstrapManifest(projectRoot);
+  if (bootstrap.ok && bootstrap.manifest) {
+    items.push({
+      id: "bootstrap_manifest",
+      name: "FCoP Bootstrap Manifest",
+      status: "ok",
+      detail: `source=${bootstrap.manifest.source_release_sha} digest=${bootstrap.manifest.manifest_digest}`,
+    });
+  } else {
+    const detail = `FCoP bootstrap manifest verification failed: ${bootstrap.failures.join("; ")}`;
+    items.push({ id: "bootstrap_manifest", name: "FCoP Bootstrap Manifest", status: "fail", detail });
+    failures.push(detail);
+  }
+
+  const semver = (value: string | null | undefined): number[] | null => {
+    const match = value?.match(/(\d+)\.(\d+)\.(\d+)/);
+    return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+  };
+  const atLeast = (value: string | null | undefined, minimum: string): boolean => {
+    const left = semver(value);
+    const right = semver(minimum);
+    if (!left || !right) return false;
+    for (let index = 0; index < 3; index += 1) {
+      if (left[index]! !== right[index]!) return left[index]! > right[index]!;
+    }
+    return true;
+  };
+  if (bootstrap.manifest) {
+    const versionChecks = [
+      ["installed fcop", context.installedFcopVersion, bootstrap.manifest.rules_version],
+      ["installed fcop-mcp", context.installedFcopMcpVersion, bootstrap.manifest.rules_version],
+      ["bundled rules", context.bundledRulesVersion, bootstrap.manifest.rules_version],
+      ["bundled protocol", context.bundledProtocolVersion, bootstrap.manifest.protocol_version],
+    ] as const;
+    for (const [label, actual, minimum] of versionChecks) {
+      if (actual === undefined) continue;
+      const ok = atLeast(actual, minimum);
+      const detail = `${label}=${actual ?? "missing"}, required>=${minimum}`;
+      items.push({ id: `package_${label.replace(/\s+/g, "_")}`, name: label, status: ok ? "ok" : "fail", detail });
+      if (!ok) failures.push(detail);
+    }
+  }
+
+  if (context.identity) {
+    const identity = context.identity;
+    const resolvedProject = pathResolve(projectRoot);
+    const resolvedHost = pathResolve(identity.hostRoot);
+    const externalProject = resolvedProject.toLowerCase() !== resolvedHost.toLowerCase();
+    const copiedIdentityFiles = externalProject
+      ? [".codeflowmu/instance.json", ".codeflowmu/mobile-gateway.json"]
+          .filter((rel) => existsSync(join(resolvedProject, rel)))
+      : [];
+    const lockFailures: string[] = [];
+    for (const lockPath of identity.writerLockPaths) {
+      if (!existsSync(lockPath)) {
+        lockFailures.push(`${lockPath}: missing`);
+        continue;
+      }
+      try {
+        const lock = JSON.parse(readFileSync(lockPath, "utf8")) as Record<string, unknown>;
+        if (String(lock["instance_id"] ?? "") !== identity.instanceId) lockFailures.push(`${lockPath}: instance_id mismatch`);
+      } catch {
+        lockFailures.push(`${lockPath}: invalid JSON`);
+      }
+    }
+    const ownerFailures = [
+      ...copiedIdentityFiles.map((rel) => `${rel}: project bootstrap copied host identity material`),
+      ...(identity.gatewayOwnerRoot && pathResolve(identity.gatewayOwnerRoot).toLowerCase() !== resolvedHost.toLowerCase()
+        ? ["Gateway owner root does not match canonical host_root"]
+        : []),
+      ...(identity.gatewayRuntimeInstanceId && identity.gatewayRuntimeInstanceId !== identity.instanceId
+        ? ["Gateway runtime_instance_id does not match Runtime instance_id"]
+        : []),
+      ...(identity.instanceRole.toLowerCase() !== "stable" && identity.gatewayEnabled === true
+        ? ["candidate/non-stable instance must default Gateway to disabled"]
+        : []),
+      ...lockFailures,
+    ];
+    const identityDetail = ownerFailures.length > 0
+      ? ownerFailures.join("; ")
+      : `host_root=${resolvedHost}; instance_id=${identity.instanceId}; registry=${identity.registryPath}; data_root=${identity.dataRoot}`;
+    items.push({
+      id: "runtime_identity_isolation",
+      name: "Runtime/Gateway identity isolation",
+      status: ownerFailures.length > 0 ? "fail" : "ok",
+      detail: identityDetail,
+    });
+    failures.push(...ownerFailures);
+  }
 
   if (existsSync(fcopJsonPath)) {
     items.push({
@@ -915,6 +1030,8 @@ export function verifyFcopProjectInit(projectRoot: string): FcopInitVerification
     failures,
     warnings,
     summary,
+    ...(bootstrap.manifest?.manifest_digest ? { manifestDigest: bootstrap.manifest.manifest_digest } : {}),
+    verificationDigest: bootstrap.verification_digest,
   };
 }
 

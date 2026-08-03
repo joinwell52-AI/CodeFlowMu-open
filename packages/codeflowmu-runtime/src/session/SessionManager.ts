@@ -16,7 +16,7 @@
  */
 
 import type { AgentLayer, Session, SessionRun } from "@codeflowmu/protocol";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import type { AgentRegistry } from "../registry/AgentRegistry.ts";
 import type {
@@ -70,8 +70,10 @@ import {
   type SessionRunWithSdkFailure,
 } from "./sdk-failure-classifier.ts";
 import {
+  OperationApprovalService,
   OPERATION_APPROVAL_REQUIRED,
   OPERATION_BOUNDARY_DENIED,
+  isPendingApprovalStatus,
 } from "../approval/index.ts";
 import type { SessionRunWithOperationBoundary } from "./SdkRunHandle.ts";
 
@@ -376,6 +378,10 @@ export class SessionManager {
         : undefined;
     const ctxPinned =
       typeof ctx?.pinned_task_id === "string" ? ctx.pinned_task_id : undefined;
+    const pinnedThreadKey =
+      typeof ctx?.thread_key === "string" && ctx.thread_key.trim()
+        ? ctx.thread_key.trim()
+        : undefined;
     const pmSelfReportOnly = ctx?.pm_self_report_only === true;
     const pinnedFromSession =
       normalizeWriteReportTaskIdPrefix(ctxPinned) ||
@@ -395,6 +401,7 @@ export class SessionManager {
       agentId,
       text: sessionText,
       ...(pinnedFromSession ? { pinnedTaskId: pinnedFromSession } : {}),
+      ...(pinnedThreadKey ? { pinnedThreadKey } : {}),
       ...(taskFilepath ? { taskFilepath } : {}),
       ...(frontmatterTaskId ? { frontmatterTaskId } : {}),
       ...(runMode ? { runMode } : {}),
@@ -1036,17 +1043,48 @@ export class SessionManager {
     const settledWithSdkError =
       typeof (settledRun as SessionRun & { sdk_error?: unknown }).sdk_error === "string" &&
       String((settledRun as SessionRun & { sdk_error?: unknown }).sdk_error).trim().length > 0;
-    const actionPausedForApproval =
-      settledRun.failure_code === OPERATION_APPROVAL_REQUIRED ||
-      settledRun.failure_code === "APPROVAL_REQUIRED" ||
-      settledRun.failure_code === "APPROVAL_PENDING";
-    const actionStoppedByPolicy =
-      settledRun.failure_code === OPERATION_BOUNDARY_DENIED ||
-      settledRun.failure_code === "ABSOLUTELY_PROHIBITED" ||
-      String(settledRun.failure_code ?? "").startsWith("APPROVAL_");
+    const runOperation = settledRun as SessionRun & SessionRunWithOperationBoundary;
+    const approvalId = String(runOperation.operation_outcome?.["approval_id"] ?? "").trim();
+    let actionPausedForApproval = false;
+    if (
+      settledRun.failure_code === OPERATION_APPROVAL_REQUIRED &&
+      approvalId &&
+      this._opts.projectRoot
+    ) {
+      try {
+        const approval = new OperationApprovalService({ projectRoot: this._opts.projectRoot }).get(approvalId);
+        actionPausedForApproval =
+          isPendingApprovalStatus(approval.status) &&
+          approval.agent_notice_delivered === true &&
+          resolve(approval.project_root) === resolve(this._opts.projectRoot) &&
+          approval.project_id === String(runOperation.operation_outcome?.["project_id"] ?? "") &&
+          String(approval.task_id ?? "") === record.protocol.task_id &&
+          String(approval.task_id ?? "") === String(runOperation.operation_outcome?.["task_id"] ?? "") &&
+          String(approval.thread_key ?? "") === String(runOperation.operation_outcome?.["thread_key"] ?? "") &&
+          String(approval.thread_key ?? "") === String(record.runtime_thread_key ?? "") &&
+          String(approval.request.subject.role ?? "").toUpperCase() === reporter &&
+          String(approval.request.subject.role ?? "").toUpperCase() ===
+            String(runOperation.operation_outcome?.["role"] ?? "").toUpperCase() &&
+          String(approval.operation_fingerprint ?? "") === String(runOperation.operation_fingerprint ?? "");
+      } catch {
+        actionPausedForApproval = false;
+      }
+    }
+    const approvalCreationPending =
+      settledRun.failure_code === "APPROVAL_CREATION_PENDING" &&
+      runOperation.operation_classification === "approval_creation_pending";
+    const invalidPolicyFreeze =
+      !actionPausedForApproval &&
+      (settledRun.failure_code === OPERATION_APPROVAL_REQUIRED ||
+        settledRun.failure_code === "APPROVAL_REQUIRED" ||
+        settledRun.failure_code === "APPROVAL_PENDING" ||
+        settledRun.failure_code === OPERATION_BOUNDARY_DENIED ||
+        settledRun.failure_code === "ABSOLUTELY_PROHIBITED" ||
+        settledRun.failure_code === "CODEFLOWMU_POLICY_BLOCKED");
     const settledWithFailure =
       !actionPausedForApproval &&
-      !actionStoppedByPolicy &&
+      !approvalCreationPending &&
+      !invalidPolicyFreeze &&
       (settledRun.status === "failed" ||
         Boolean(settledRun.failure_code) ||
         settledWithSdkError ||
@@ -1064,15 +1102,31 @@ export class SessionManager {
           ? { failure_code: TRANSIENT_SDK_DELAYED }
           : {}),
       };
-    } else if (actionPausedForApproval || actionStoppedByPolicy) {
-      // Cursor SDK cannot suspend one in-flight native tool call. The run is
-      // cancelled before side effects, but the durable session/task remains a
-      // recoverable approval wait instead of being recorded as a failure.
-      protocolStatus = "completed";
+    } else if (actionPausedForApproval) {
+      protocolStatus = "waiting_approval";
       finalRun = {
         ...finalRun,
         status: "finished",
       };
+    } else if (approvalCreationPending) {
+      protocolStatus = "approval_creation_pending";
+      finalRun = { ...finalRun, status: "finished" };
+    } else if (invalidPolicyFreeze) {
+      protocolStatus = "completed";
+      finalRun = {
+        ...finalRun,
+        status: "finished",
+        failure_code: undefined,
+        operation_classification: "role_capability_denied",
+        operation_outcome: {
+          ...(runOperation.operation_outcome ?? {}),
+          recovery_code: "INVALID_POLICY_FREEZE",
+          original_failure_code: settledRun.failure_code,
+          original_operation_executed: false,
+        },
+        next_safe_action: "resume_agent_reasoning_without_replaying_the_original_operation",
+        retry_policy: "none",
+      } as SessionRun & SessionRunWithOperationBoundary;
     } else if (reportOnDisk) {
       protocolStatus = "completed";
       finalRun = {
@@ -1094,7 +1148,10 @@ export class SessionManager {
       protocol: {
         ...record.protocol,
         status: protocolStatus,
-        ended_at: endedAt,
+        ended_at:
+          protocolStatus === "waiting_approval" || protocolStatus === "approval_creation_pending"
+            ? null
+            : endedAt,
         runs: record.protocol.runs.map((r, i, arr) =>
           i === arr.length - 1 ? finalRun : r,
         ),
@@ -1139,8 +1196,10 @@ export class SessionManager {
     let settlement_reason: string;
     if (actionPausedForApproval) {
       settlement_reason = "waiting_operation_approval";
-    } else if (actionStoppedByPolicy) {
-      settlement_reason = "operation_policy_denied";
+    } else if (approvalCreationPending) {
+      settlement_reason = "approval_creation_pending";
+    } else if (invalidPolicyFreeze) {
+      settlement_reason = "invalid_policy_freeze_recovered";
     } else if (reportOnDisk && protocolStatus === "completed") {
       settlement_reason = "completed-with-report";
     } else if (reportOnDisk && protocolStatus === "cancelled") {

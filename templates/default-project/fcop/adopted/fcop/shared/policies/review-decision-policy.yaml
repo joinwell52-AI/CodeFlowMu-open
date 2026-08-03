@@ -1,0 +1,117 @@
+team_name: 开发团队
+team_type: software_dev
+approval_mode: semi_auto
+version: 1
+
+description: >
+  开发团队 AI 审批规则。用于指导 REVIEW agent 判断哪些开发动作需要 ADMIN 人工审批。
+  这些规则属于 CodeFlowMu 团队能力配置，不属于 FCoP 协议本体。
+
+system_invariants:
+  configurable: false
+  description: 系统底线规则，只读展示，不允许团队关闭。
+  rules:
+    - id: reviewer_not_found
+      name: REVIEW agent 不存在
+      action: fallback_to_human
+      description: Runtime 找不到 REVIEW agent，提交 ADMIN 人工处理。
+
+    - id: reviewer_start_failed
+      name: REVIEW agent 启动失败
+      action: fallback_to_human
+      description: REVIEW agent session 启动失败，提交 ADMIN 人工处理。
+
+    - id: verdict_parse_failed
+      name: REVIEW 输出解析失败
+      action: fallback_to_human
+      description: REVIEW agent 输出格式不符合 verdict 协议，提交 ADMIN 人工处理。
+
+    - id: reviewer_cancelled
+      name: REVIEW session 被取消
+      action: fallback_to_human
+      description: REVIEW session 被取消，提交 ADMIN 人工处理。
+
+    - id: missing_report
+      name: 缺少报告
+      action: invalid
+      description: 缺少必要 REPORT，属于流程或材料生成异常，不进入正常审批。
+
+    - id: missing_evidence
+      name: 缺少证据
+      action: invalid
+      description: 缺少必要 evidence，属于流程或材料生成异常，不进入正常审批。
+
+    - id: evidence_conflict
+      name: 证据冲突
+      action: invalid_or_needs_human
+      description: REPORT / REVIEW / EVAL / log 结论冲突，属于系统质量门禁，不允许关闭。
+
+team_rules:
+  configurable: true
+  description: 开发团队可配置审批规则。enabled=true 的规则会注入 REVIEW agent prompt。
+  rules:
+    - id: core_source_change
+      name: 核心源码修改
+      enabled: true
+      action: needs_human
+      description: 修改核心运行逻辑、公共 API、跨模块调用关系、全局工具函数或会改变系统默认行为的代码。
+
+    - id: config_environment_change
+      name: 配置与环境变更
+      enabled: true
+      action: needs_human
+      description: 修改 .env、环境变量、启动脚本、构建脚本、部署脚本、端口、路径、默认模型、默认 provider、超时、重试、并发或队列设置。
+
+    - id: dependency_install_change
+      name: 依赖与安装变更
+      enabled: true
+      action: needs_human
+      description: 修改 package.json、lockfile、requirements.txt、安装脚本，或新增、删除、升级第三方依赖、SDK、框架、构建工具。
+
+    - id: persistent_state_write
+      name: 持久化数据写入
+      enabled: true
+      action: needs_human
+      description: 写入数据库、本地持久化文件、ledger、snapshot、history、state 文件，或批量重写任务、报告、审计记录。
+
+    - id: destructive_operation
+      name: 破坏性操作
+      enabled: true
+      action: needs_human
+      description: 删除、覆盖、清空、批量移动文件，重写历史记录，执行 git reset、git clean、rm、del、rmdir、drop、truncate 等不可逆操作。
+
+    - id: external_side_effect
+      name: 外部副作用
+      enabled: true
+      action: needs_human
+      description: 调用外部 API 并产生写入，发送邮件、消息、通知，上传文件，推送代码，创建或合并 PR，关闭 issue，修改外部资源。
+
+    - id: release_or_production_action
+      name: 发布与生产环境操作
+      enabled: true
+      action: needs_human
+      description: 部署应用、发布版本、打 tag、推送主分支、合并主分支、修改 CI/CD、修改生产配置、操作生产数据库或重启生产服务。
+
+    - id: security_permission_privacy
+      name: 权限、安全与隐私
+      enabled: true
+      action: needs_human
+      description: 读取或修改 token、API key、secret，修改鉴权、权限校验、访问控制，放宽文件访问、shell 执行、网络访问，读取敏感数据。
+
+    - id: protocol_lifecycle_governance
+      name: 协议、生命周期与治理逻辑
+      enabled: true
+      action: needs_human
+      description: 修改 FCoP 状态机、任务迁移规则、REVIEW / EVAL / REPORT / ISSUE 生成规则、ledger 统计口径、角色职责、审批、归档、返工、失败重试、熔断规则、frontmatter 或文件命名规范。
+
+    - id: cost_or_long_running_action
+      name: 高成本或长时间运行任务
+      enabled: true
+      action: needs_human
+      description: 调用高成本模型、大 token 上下文、多 Agent 并发、长时间运行、循环重试、批量分析图片/PDF/日志/历史记录，或可能产生明显 API 费用的操作。
+
+    - id: ai_uncertain_impact
+      name: AI 无法判断影响范围
+      enabled: true
+      action: needs_human
+      description: AI 无法确认动作是否会写入、删除、影响生产、产生成本、影响协议、影响生命周期，或判断继续自动执行可能造成错误闭环。
