@@ -1,18 +1,11 @@
-import { isAbsolute, relative, resolve } from "node:path";
-
-import {
-  buildGitPushApprovalInput,
-  type GitPushSubject,
-} from "./GitPushApproval.ts";
 import {
   GovernanceApprovalError,
   GovernanceApprovalService,
   type GovernanceAuthorizationReference,
 } from "./GovernanceApprovalService.ts";
-import type { PrepareOperationInput } from "./OperationApprovalService.ts";
+import { OperationApprovalService, type PrepareOperationInput } from "./OperationApprovalService.ts";
 import {
   assessFilesystemCleanupRisk,
-  buildFilesystemCleanupApprovalInput,
 } from "./FilesystemCleanupApproval.ts";
 import { validateWindowsShellCommand } from "./WindowsShellDialect.ts";
 import { evaluateUnifiedOperationPolicy } from "./UnifiedOperationPolicy.ts";
@@ -31,7 +24,8 @@ export type NativeOperationBoundaryDecision =
         reason:
           | "task_temporary_untracked_file"
           | "already_absent"
-          | "governance_authorization_consumed";
+          | "governance_authorization_consumed"
+          | "operation_approval_consumed";
         targets: string[];
         classification:
           | "allowed_cleanup"
@@ -67,14 +61,6 @@ function extractCommand(args: Record<string, unknown>): string {
   return "";
 }
 
-function resolveCommandCwd(projectRoot: string, args: Record<string, unknown>): string | null {
-  const raw = [args["cwd"], args["workingDirectory"], args["workdir"]]
-    .find((value) => typeof value === "string" && value.trim());
-  const cwd = raw ? resolve(projectRoot, String(raw)) : resolve(projectRoot);
-  const rel = relative(resolve(projectRoot), cwd);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel)) ? cwd : null;
-}
-
 function governanceAuthorizationReference(args: Record<string, unknown>): GovernanceAuthorizationReference | null {
   const raw = args["governance_authorization"];
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -92,23 +78,6 @@ function governanceAuthorizationReference(args: Record<string, unknown>): Govern
   return Object.values(reference).every(Boolean) && Number.isSafeInteger(reference.revision)
     ? reference
     : null;
-}
-
-function structuredMetadata(
-  base: PrepareOperationInput,
-  unified: ReturnType<typeof evaluateUnifiedOperationPolicy>,
-): PrepareOperationInput {
-  if (unified.decision !== "REQUIRE_APPROVAL") return base;
-  return {
-    ...base,
-    rule_ids: unified.rule_ids,
-    operation_facts: unified.facts,
-    operation_fingerprint: unified.operation_fingerprint,
-    thread_key: unified.facts.context.thread_key,
-    missing_information: unified.facts.confidence.unresolved_fields,
-    executor_status: "ready",
-    suggested_executor: base.request.action.executor,
-  };
 }
 
 /**
@@ -203,61 +172,33 @@ export async function evaluateNativeOperationBoundary(input: {
       if (assessment.decision === "ALLOW") {
         return { decision: "ALLOW", outcome: { ok: true, changed: true, reason: "task_temporary_untracked_file", targets: assessment.resolved_targets, classification: "allowed_cleanup" } };
       }
-      const unified = evaluateUnifiedOperationPolicy(unifiedInput);
-      if (unified.decision === "ALLOW") return { decision: "ALLOW" };
-      if (assessment.decision === "REQUIRE_APPROVAL") {
-        try {
-          const prepared = buildFilesystemCleanupApprovalInput({
-            projectRoot: input.projectRoot,
-            targets: assessment.resolved_targets.filter((target) => assessment.git_status[target] !== "absent"),
-            subject: {
-              actor: input.agentId,
-              role: roleFromAgentId(input.agentId),
-              project_id: input.projectId,
-              agent_id: input.agentId,
-              ...(input.sessionId ? { session_id: input.sessionId } : {}),
-              ...(input.taskId ? { task_id: input.taskId } : {}),
-            },
-            mode: String(input.args["mode"] ?? "quarantine") === "permanent_delete" ? "permanent_delete" : "quarantine",
-            retentionDays: Number(input.args["retention_days"] ?? 14),
-            reason: String(input.args["reason"] ?? "").trim() || undefined,
-          });
-          return { decision: "REQUIRE_APPROVAL", input: structuredMetadata(prepared, unified) };
-        } catch {
-          // Universal approval below still creates a pending_information or
-          // pending_executor record; preflight failure never bypasses storage.
-        }
-      }
-      return { decision: "REQUIRE_APPROVAL", input: unified.input };
     }
-  }
-
-  if (/\bgit(?:\.exe)?\s+push\b/i.test(command)) {
-    const unified = evaluateUnifiedOperationPolicy(unifiedInput);
-    if (unified.decision === "ALLOW") return { decision: "ALLOW" };
-    const match = command.match(/^\s*git(?:\.exe)?\s+push\s+(?:(?:-u|--set-upstream)\s+)?origin\s+([A-Za-z0-9._/-]+)\s*$/i);
-    const cwd = resolveCommandCwd(input.projectRoot, input.args);
-    if (match && cwd) {
-      const subject: GitPushSubject = {
-        actor: input.agentId,
-        role: roleFromAgentId(input.agentId),
-        project_id: input.projectId,
-        agent_id: input.agentId,
-        ...(input.sessionId ? { session_id: input.sessionId } : {}),
-        ...(input.taskId ? { task_id: input.taskId } : {}),
-      };
-      try {
-        const prepared = await buildGitPushApprovalInput({ cwd, branch: match[1]!, subject });
-        return { decision: "REQUIRE_APPROVAL", input: structuredMetadata(prepared, unified) };
-      } catch {
-        // The generic record remains valid and records missing executor facts.
-      }
-    }
-    return { decision: "REQUIRE_APPROVAL", input: { ...unified.input, executor_status: "missing", suggested_executor: "git.push with one exact origin branch" } };
   }
 
   const unified = evaluateUnifiedOperationPolicy(unifiedInput);
-  return unified.decision === "ALLOW"
-    ? { decision: "ALLOW" }
-    : { decision: "REQUIRE_APPROVAL", input: unified.input };
+  if (unified.decision === "ALLOW") return { decision: "ALLOW" };
+  const consumed = new OperationApprovalService({ projectRoot: input.projectRoot })
+    .consumeApprovedAuthorization(unified.input.request, {
+      operation_fingerprint: unified.operation_fingerprint,
+      project_id: input.projectId,
+      task_id: input.taskId ?? "",
+      thread_key: input.threadKey ?? "",
+      agent_id: input.agentId,
+      role: roleFromAgentId(input.agentId),
+      session_id: input.sessionId ?? "",
+    });
+  if (consumed) {
+    return {
+      decision: "ALLOW",
+      outcome: {
+        ok: true,
+        changed: true,
+        reason: "operation_approval_consumed",
+        targets: unified.facts.operation.canonical_targets,
+        classification: "governance_authorized",
+        governance_id: consumed.approval_id,
+      },
+    };
+  }
+  return { decision: "REQUIRE_APPROVAL", input: unified.input };
 }

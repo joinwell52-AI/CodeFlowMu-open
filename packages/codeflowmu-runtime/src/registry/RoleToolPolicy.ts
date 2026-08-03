@@ -21,8 +21,8 @@ import {
 
 import { fcopLogsRuntimeDir } from "../logs/actionLogPaths.ts";
 import { recordSkillInvocation } from "../pm/SkillInvocationJournal.ts";
-import { evaluateUnifiedOperationPolicy } from "../approval/UnifiedOperationPolicy.ts";
 import { resolveRoleFromAgentId, type ToolGuardRole } from "./ToolAuthorityGuard.ts";
+import { evaluateRoleToolCapability } from "./RoleToolCapabilityGate.ts";
 
 export type ToolIntent = "read" | "write" | "shell" | "edit" | "mcp" | "unknown";
 
@@ -802,47 +802,19 @@ function evaluatePmToolCall(input: EvaluateRoleToolCallInput): RoleToolDecision 
   return { allow: true };
 }
 
-/**
- * Compatibility projection only. Runtime hosts must call
- * evaluateNativeOperationBoundary(), which is the sole final decision gate.
- */
 export function evaluateRoleToolCall(
   input: EvaluateRoleToolCallInput,
 ): RoleToolDecision {
-  if (!input.projectRoot) {
-    return {
-      allow: false,
-      severity: "block",
-      reason: "Active project root is required for effect-based policy",
-    };
-  }
-  const toolNorm = normalizeToolName(input.toolName);
-  const command = extractShellCommand(input.args);
-  if (
-    PM_FCOP_MCP_ALLOW.has(toolNorm) ||
-    isPmGovernanceSkill(input.toolName) ||
-    shellLooksAllowedFcopOneShot(command)
-  ) {
-    return { allow: true };
-  }
-  const decision = evaluateUnifiedOperationPolicy({
+  const decision = evaluateRoleToolCapability({
+    role: resolveRoleFromAgentId(input.agentId),
     toolName: input.toolName,
     args: input.args ?? {},
-    projectRoot: input.projectRoot,
-    projectId:
-      input.projectRoot.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ||
-      "project",
-    agentId: input.agentId,
-    taskId:
-      typeof input.args?.["task_id"] === "string"
-        ? String(input.args["task_id"])
-        : undefined,
   });
-  if (decision.decision === "ALLOW") return { allow: true };
+  if (decision.decision === "TOOL_ALLOWED") return { allow: true };
   return {
     allow: false,
-    severity: "warn",
-    reason: `OPERATION_APPROVAL_REQUIRED:${decision.executor}`,
+    severity: "block",
+    reason: `ROLE_CAPABILITY_DENIED:${decision.canonical_tool_id}:${decision.reason}`,
   };
 }
 

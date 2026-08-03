@@ -3643,18 +3643,11 @@
       return;
     }
     try {
-      var approved = await api("/api/v2/mobile/approvals/" + encodeURIComponent(item.filename) + "/approve", {
+      await api("/api/v2/mobile/approvals/" + encodeURIComponent(item.filename) + "/approve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: { reason: reason },
       });
-      if (approved && approved.execution_token) {
-        await api("/api/v2/mobile/approvals/" + encodeURIComponent(item.filename) + "/execute", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: { execution_token: approved.execution_token },
-        });
-      }
       showToast(t("approvalApprovedToast"));
       closeTaskDetail();
       await loadApprovals();

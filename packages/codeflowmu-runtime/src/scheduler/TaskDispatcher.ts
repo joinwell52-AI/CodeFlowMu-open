@@ -2127,7 +2127,7 @@ export class TaskDispatcher {
         operationApprovalWait = false;
       }
     }
-    const invalidLegacyPolicyFreeze =
+    const legacyPolicyInterruption =
       !operationApprovalWait &&
       [
         OPERATION_APPROVAL_REQUIRED,
@@ -2137,18 +2137,18 @@ export class TaskDispatcher {
         "ABSOLUTELY_PROHIBITED",
         "CODEFLOWMU_POLICY_BLOCKED",
       ].includes(failureCode);
-    if (invalidLegacyPolicyFreeze) {
+    if (legacyPolicyInterruption) {
       this._logger.warn(
-        `[TaskDispatcher] INVALID_POLICY_FREEZE recovered for ${filename}: ${failureCode || "missing approval fact"}`,
+        `[TaskDispatcher] ignored legacy terminal policy event for ${filename}: ${failureCode || "missing approval fact"}`,
       );
-      this._panelEvents?.emit("codeflowmu.task_blocked", {
-        event: "INVALID_POLICY_FREEZE",
+      this._panelEvents?.emit("codeflowmu.operation_policy_event_ignored", {
+        event: "LEGACY_TERMINAL_POLICY_EVENT_IGNORED",
         agent_id: evt.agent_id,
         session_id: evt.session_id,
         task_id: taskId,
         original_failure_code: failureCode,
         original_operation_executed: false,
-        state_restored: true,
+        task_lifecycle_changed: false,
       });
       return;
     }
@@ -2169,51 +2169,31 @@ export class TaskDispatcher {
       const operationFingerprint = String(
         payload?.operation_fingerprint ?? "",
       ).trim();
-      const retryKey = `${evt.agent_id}:${taskId}${
-        operationFingerprint ? `:${operationFingerprint}` : ""
-      }`;
       const reason = String(
         payload?.error ??
           payload?.reason ??
           "governance policy rejected this action",
       );
       const approvalId = candidateApprovalId;
-      const governanceState = "waiting_approval" as const;
       const retryPolicy = "none";
       const normalizedFailureCategory = "approval_required";
-      const rec = this._dispatchRetryRegistry.recordFailure(
-        retryKey,
-        new Error(reason),
-        {
-          filepath,
-          task_id: taskId,
-          retryable: false,
-          rawCode: failureCode || "CODEFLOWMU_POLICY_BLOCKED",
-          operationFingerprint: operationFingerprint || undefined,
-          retryPolicy,
-          nextSafeAction: String(payload?.next_safe_action ?? "").trim() || undefined,
-          recoveryState: governanceState,
-          reportRequired: payload?.report_required === true,
-        },
-      );
+      let taskLifecycleState = "active";
       try {
         const resolved = await resolveTaskFileForMutation(filepath);
         const raw = await fs.readFile(resolved, "utf-8");
         const currentState = raw.match(/^state:\s*([^\r\n]+)$/m)?.[1]?.trim() || "dispatched";
+        taskLifecycleState = currentState === "waiting_approval" ? "active" : currentState;
         await fs.writeFile(
           resolved,
           _patchFmScalarFields(raw, {
-            state: governanceState,
+            state: taskLifecycleState,
             dispatch_state: "waiting_approval",
             failure_code: OPERATION_APPROVAL_REQUIRED,
             failure_category: normalizedFailureCategory,
             retry_policy: retryPolicy,
             guard_worked: true,
             runtime_crashed: false,
-            prior_state:
-              currentState === "waiting_approval"
-                ? "dispatched"
-                : currentState,
+            prior_state: taskLifecycleState,
             resume_strategy: "wait_for_approval_decision_event",
             ...(operationFingerprint
               ? { operation_fingerprint: operationFingerprint }
@@ -2238,8 +2218,8 @@ export class TaskDispatcher {
       await this._appendHistory(filepath, {
         at: toLocalIsoString(this._now()),
         by: "runtime",
-        from: "dispatched",
-        to: governanceState,
+        from: taskLifecycleState,
+        to: taskLifecycleState,
         note: `${failureCode || "CODEFLOWMU_POLICY_BLOCKED"}: ${
           approvalId ? `approval_id=${approvalId}; ` : ""
         }guard worked; retry_policy=${retryPolicy}${
@@ -2248,8 +2228,8 @@ export class TaskDispatcher {
             : ""
         }`,
       }).catch(() => undefined);
-      this._panelEvents?.emit("codeflowmu.task_blocked", {
-        event: "TASK_GOVERNANCE_BLOCKED",
+      this._panelEvents?.emit("codeflowmu.operation_waiting_approval", {
+        event: "OPERATION_WAITING_APPROVAL",
         agent_id: evt.agent_id,
         session_id: evt.session_id,
         task_id: taskId,
@@ -2257,10 +2237,10 @@ export class TaskDispatcher {
         category: normalizedFailureCategory,
         severity: "warning",
         retry_policy: retryPolicy,
-        state: governanceState,
+        state: taskLifecycleState,
         guard_worked: true,
         runtime_crashed: false,
-        decision_required: rec.decisionRequired,
+        decision_required: true,
         ...(operationFingerprint
           ? { operation_fingerprint: operationFingerprint }
           : {}),

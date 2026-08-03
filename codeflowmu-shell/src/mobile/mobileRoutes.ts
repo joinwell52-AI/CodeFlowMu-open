@@ -1290,11 +1290,17 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
       });
       return;
     }
-    const service = mobileApprovalService(ctx);
-    const result = decision === "approve"
-      ? service.approve(approvalId, "ADMIN", reason)
-      : { approval: service.reject(approvalId, "ADMIN", reason) };
-    res.json({ ok: true, ...result });
+    if (ctx.decideOperationApproval) {
+      const decided = await ctx.decideOperationApproval(approvalId, decision, reason);
+      res.status(decided.status).json(decided.body);
+      return;
+    }
+    const proxied = await proxyPanelPost(
+      ctx.panelPort,
+      `/api/v2/operation-approvals/${encodeURIComponent(approvalId)}/${decision === "approve" ? "approve" : "reject"}`,
+      { reason },
+    );
+    res.status(proxied.status).json(proxied.body);
   };
 
   const sendMobileApprovalError = (res: Response, error: unknown) => {
@@ -1349,22 +1355,11 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
   });
 
   router.post("/approvals/:filename/execute", async (req, res) => {
-    const approvalId = String(req.params["filename"] ?? "");
-    const executionToken = String((req.body as { execution_token?: string }).execution_token ?? "");
-    if (!executionToken) {
-      res.status(400).json({ ok: false, error: "EXECUTION_TOKEN_REQUIRED" });
-      return;
-    }
-    try {
-      const proxied = await proxyPanelPost(
-        ctx.panelPort,
-        `/api/v2/operation-approvals/${encodeURIComponent(approvalId)}/execute`,
-        { execution_token: executionToken },
-      );
-      res.status(proxied.status).json(proxied.body);
-    } catch (err) {
-      sendMobileApprovalError(res, err);
-    }
+    res.status(410).json({
+      ok: false,
+      error: "AGENT_CONTROLLED_EXECUTOR_RETIRED",
+      detail: "approval decision is delivered to the original Agent, which retries the exact operation itself",
+    });
   });
 
   router.get("/alerts", (_req: Request, res: Response) => {

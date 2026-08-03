@@ -115,6 +115,7 @@ function buildMobilePanel(
     projectRoot: root,
     fcopReviewsDir: reviews,
     dataDir,
+    trustedForegroundConfirmation: async () => true,
   });
 }
 
@@ -157,6 +158,7 @@ function buildMobilePanelWithPort(
     fcopReviewsDir: reviews,
     dataDir,
     panelPort,
+    trustedForegroundConfirmation: async () => true,
   });
 }
 
@@ -442,7 +444,7 @@ Task: TASK-20260617-001
       .set("Authorization", `Bearer ${token}`)
       .send({ reason: "ADMIN 在已绑定移动端确认精确摘要" });
     assert.equal(approved.status, 200);
-    assert.equal(typeof approved.body.execution_token, "string");
+    assert.equal("execution_token" in approved.body, false);
     assert.equal(approved.body.approval.status, "approved");
 
     writeFileSync(

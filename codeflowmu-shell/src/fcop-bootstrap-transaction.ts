@@ -21,6 +21,8 @@ export type FcopBootstrapFile = {
   target_rel: string;
   sha256: string;
   category: "rules" | "protocol" | "commentary" | "role_template" | "adopted" | "host_contract";
+  preserved_local?: true;
+  source_sha256?: string;
 };
 
 export type FcopBootstrapManifest = {
@@ -180,6 +182,22 @@ function extractVersion(path: string, pattern: RegExp, fallback: string): string
   return readFileSync(path, "utf8").match(pattern)?.[1] ?? fallback;
 }
 
+function extractRulesVersion(path: string, fallback: string): string {
+  return extractVersion(
+    path,
+    /(?:fcop_rules_version\s*:\s*|Rules version:\s*`?)([0-9]+\.[0-9]+\.[0-9]+)/i,
+    fallback,
+  );
+}
+
+function extractProtocolVersion(path: string, fallback: string): string {
+  return extractVersion(
+    path,
+    /(?:fcop_protocol_version\s*:\s*|Protocol commentary version:\s*`?|Rules version:\s*`?)([0-9]+\.[0-9]+\.[0-9]+)/i,
+    fallback,
+  );
+}
+
 function listFiles(root: string, rel = ""): string[] {
   const dir = join(root, rel);
   if (!existsSync(dir)) return [];
@@ -312,9 +330,9 @@ export function createFcopBootstrapManifest(input: {
     shell_compatibility: shellVersion,
     runtime_compatibility: runtimeVersion,
     fcop_package_compatibility: input.fcopPackageCompatibility ?? ">=3.2.5 <4",
-    rules_version: extractVersion(rulesPath, /Rules version:\s*`?([0-9.]+)/i, "unknown"),
-    protocol_version: extractVersion(protocolPath, /(?:Protocol commentary version|Rules version):\s*`?([0-9.]+)/i, "unknown"),
-    commentary_version: extractVersion(protocolPath, /Protocol commentary version:\s*`?([0-9.]+)/i, "unknown"),
+    rules_version: extractRulesVersion(rulesPath, "unknown"),
+    protocol_version: extractProtocolVersion(protocolPath, "unknown"),
+    commentary_version: extractProtocolVersion(protocolPath, "unknown"),
     role_template_version: sourceVersion,
     adopted_version: sourceVersion,
     files,
@@ -338,7 +356,7 @@ function compareVersion(left: string, right: string): number | null {
 }
 
 function targetRulesVersion(target: string): string {
-  return extractVersion(target, /Rules version:\s*`?([0-9.]+)/i, "unknown");
+  return extractRulesVersion(target, "unknown");
 }
 
 export function buildFcopInitPlan(input: {
@@ -401,10 +419,12 @@ export function buildFcopInitPlan(input: {
       preserve.push({ ...entry, reason: "already matches the signed bootstrap manifest" });
     } else if (existingManifest) {
       const old = existingManifest.files?.find((item) => item.target_rel === file.target_rel);
-      if (old && old.sha256 === actual) {
+      if (old?.preserved_local === true && old.sha256 === actual) {
+        preserve.push({ ...entry, reason: "locally owned bootstrap content remains preserved" });
+      } else if (old && old.sha256 === actual) {
         update.push({ ...entry, reason: "known previous manifest file will be upgraded" });
       } else {
-        conflict.push({ ...entry, reason: "local content differs from both previous and requested manifests" });
+        preserve.push({ ...entry, reason: "local content differs from the managed baseline and will not be overwritten" });
       }
     } else if (file.category === "rules" || file.category === "protocol" || file.category === "commentary") {
       const currentVersion = targetRulesVersion(target);
@@ -413,10 +433,10 @@ export function buildFcopInitPlan(input: {
       if (comparison != null && comparison < 0) {
         update.push({ ...entry, reason: `known protocol upgrade ${currentVersion} -> ${requestedVersion}` });
       } else {
-        conflict.push({ ...entry, reason: `cannot prove a safe non-downgrade from ${currentVersion} to ${requestedVersion}` });
+        preserve.push({ ...entry, reason: `existing protocol content is not older than the requested release (${currentVersion} -> ${requestedVersion})` });
       }
     } else {
-      conflict.push({ ...entry, reason: "takeover found unmanifested local bootstrap content" });
+      preserve.push({ ...entry, reason: "takeover preserves unmanifested local bootstrap content" });
     }
   }
 
@@ -424,7 +444,7 @@ export function buildFcopInitPlan(input: {
   const targetProtocolPath = join(targetRoot, ".cursor", "rules", "fcop-protocol.mdc");
   const targetRules = existsSync(targetRulesPath) ? targetRulesVersion(targetRulesPath) : null;
   const targetProtocol = existsSync(targetProtocolPath)
-    ? extractVersion(targetProtocolPath, /(?:Protocol commentary version|Rules version):\s*`?([0-9.]+)/i, "unknown")
+    ? extractProtocolVersion(targetProtocolPath, "unknown")
     : null;
   const checkedSources: Array<{ label: string; version: string | null | undefined; minimum: string }> = [
     { label: "installed fcop", version: input.installedFcopVersion, minimum: manifest.rules_version },
@@ -434,6 +454,7 @@ export function buildFcopInitPlan(input: {
   ];
   for (const source of checkedSources) {
     if (source.version === undefined) continue;
+    if (compareVersion(source.minimum, source.minimum) == null) continue;
     const comparison = source.version == null ? null : compareVersion(source.version, source.minimum);
     if (comparison == null || comparison < 0) {
       const actual = source.version ?? "missing";
@@ -688,15 +709,35 @@ export class FcopInitTransaction {
         changed.push(file.target_rel);
         journal("applying");
       }
+      const preservedTargets = new Set(this.plan.preserve.map((item) => item.target_rel));
+      const installedManifestBase = {
+        ...this.plan.manifest,
+        files: this.plan.manifest.files.map((file) => {
+          const actual = fileSha(join(this.targetRoot, file.target_rel));
+          if (!preservedTargets.has(file.target_rel) || !actual || actual === file.sha256) return file;
+          return {
+            ...file,
+            sha256: actual,
+            preserved_local: true as const,
+            source_sha256: file.sha256,
+          };
+        }),
+      };
+      const unsignedInstalledManifest = { ...installedManifestBase } as Record<string, unknown>;
+      delete unsignedInstalledManifest["manifest_digest"];
+      const installedManifest: FcopBootstrapManifest = {
+        ...installedManifestBase,
+        manifest_digest: digest(unsignedInstalledManifest),
+      };
       const manifestPath = join(this.targetRoot, "fcop", "bootstrap-manifest.json");
       const manifestSnapshot = join(snapshotRoot, "fcop", "bootstrap-manifest.json");
       if (existsSync(manifestPath)) {
         mkdirSync(dirname(manifestSnapshot), { recursive: true });
         copyFileSync(manifestPath, manifestSnapshot);
       }
-      writeAtomic(manifestPath, `${JSON.stringify(this.plan.manifest, null, 2)}\n`);
+      writeAtomic(manifestPath, `${JSON.stringify(installedManifest, null, 2)}\n`);
       if (!changed.includes("fcop/bootstrap-manifest.json")) changed.push("fcop/bootstrap-manifest.json");
-      for (const file of this.plan.manifest.files) {
+      for (const file of installedManifest.files) {
         if (fileSha(join(this.targetRoot, file.target_rel)) !== file.sha256) {
           throw new Error(`postflight digest mismatch: ${file.target_rel}`);
         }
@@ -734,8 +775,8 @@ export class FcopInitTransaction {
         );
       }
       const verificationDigest = digest({
-        manifest: this.plan.manifest.manifest_digest,
-        files: this.plan.manifest.files.map((file) => [file.target_rel, fileSha(join(this.targetRoot, file.target_rel))]),
+        manifest: installedManifest.manifest_digest,
+        files: installedManifest.files.map((file) => [file.target_rel, fileSha(join(this.targetRoot, file.target_rel))]),
         generated: this.plan.generated_files.map((file) => [file.target_rel, fileSha(join(this.targetRoot, file.target_rel))]),
         preserved: this.plan.preserve_snapshot,
         extended_postflight: extendedPostflight?.evidence ?? null,
@@ -744,7 +785,7 @@ export class FcopInitTransaction {
       return {
         transaction_id: transactionId,
         plan_digest: this.plan.plan_digest,
-        manifest_digest: this.plan.manifest.manifest_digest,
+        manifest_digest: installedManifest.manifest_digest,
         verification_digest: verificationDigest,
         changed: [...changed],
         preserved: this.plan.preserve.map((item) => item.target_rel),

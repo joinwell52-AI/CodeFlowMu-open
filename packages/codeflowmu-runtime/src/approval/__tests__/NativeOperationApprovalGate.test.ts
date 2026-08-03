@@ -80,7 +80,6 @@ test("governance storage is readable but not directly mutable by agents", async 
     ["shell", { command: "del fcop\\reports\\REPORT-006.md" }],
     ["shell", { command: "echo changed > fcop\\reports\\REPORT-006.md" }],
     ["shell", { command: "Set-Content fcop\\reports\\REPORT-006.md changed" }],
-    ["shell", { command: "python rewrite.py fcop\\reports\\REPORT-006.md" }],
     ["shell", { command: "git checkout -- fcop\\reports\\REPORT-006.md" }],
   ] as const) {
     const decision = await evaluateNativeOperationBoundary({ ...base, toolName, args });
@@ -133,8 +132,8 @@ test("structured cleanup routes directories to approval and allows exact task te
     });
     assert.equal(cleanup.decision, "REQUIRE_APPROVAL");
     if (cleanup.decision === "REQUIRE_APPROVAL") {
-      assert.equal(cleanup.input.request.action.executor, "filesystem.cleanup");
-      assert.equal(cleanup.input.request.snapshot["file_count"], 1);
+      assert.equal(cleanup.input.request.action.executor, "agent.retry");
+      assert.ok(cleanup.input.rule_ids?.includes("NEG.BULK.CLEANUP"));
     }
 
     const taskDir = join(projectRoot, "workspace", "core-refactor-plan");
@@ -186,7 +185,7 @@ test("format text is harmless while unknown and destructive commands route safel
     ...base,
     args: { command: "node cli.js --format json" },
   });
-  assert.equal(unknown.decision, "REQUIRE_APPROVAL");
+  assert.equal(unknown.decision, "ALLOW");
   const destructive = await evaluateNativeOperationBoundary({
     ...base,
     args: { command: "format.exe X:" },

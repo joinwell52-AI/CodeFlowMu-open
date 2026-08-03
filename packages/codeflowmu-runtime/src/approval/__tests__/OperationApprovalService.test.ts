@@ -106,7 +106,7 @@ test("classifier requires approval for every deterministic high-impact effect cl
     classifyCapabilityRequest(request({ effect: { external_write: false, high_cost: true } })).decision,
     "REQUIRE_APPROVAL",
   );
-  assert.equal(classifyCapabilityRequest(request({ effect: { external_write: false, unknown: true } })).decision, "REQUIRE_APPROVAL");
+  assert.equal(classifyCapabilityRequest(request({ effect: { external_write: false, unknown: true } })).decision, "ALLOW");
   for (const effect of [
     "prohibited",
     "target_unbounded",
@@ -380,6 +380,89 @@ test("an execution owned by a previous process is recovered as partial_failed wi
     assert.equal(recovered.execution.status, "partial_failed");
     assert.match(recovered.execution.error ?? "", /requires inspection/);
     assert.equal("token_hash" in recovered, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("approved Agent retry survives a resumed Session and consumes one matching authorization", () => {
+  const root = tempRoot();
+  try {
+    const service = new OperationApprovalService({
+      projectRoot: root,
+      idFactory: () => "APPROVAL-AGENT-RETRY-1",
+    });
+    const original = request();
+    const prepared = service.prepare({
+      request: original,
+      reason: "remote Git write requires ADMIN approval",
+      effects: ["NEG.REMOTE.GIT.WRITE"],
+      non_effects: ["operation not executed"],
+      recovery: "original Agent retries the exact call",
+      rule_ids: ["NEG.REMOTE.GIT.WRITE"],
+      operation_fingerprint: "sha256:exact-operation",
+      thread_key: "thread-1",
+    });
+    assert.equal(prepared.decision, "REQUIRE_APPROVAL");
+    if (prepared.decision !== "REQUIRE_APPROVAL") assert.fail("approval required");
+    const approved = service.approve(prepared.approval.approval_id, "ADMIN", "approved").approval;
+    assert.equal(approved.authorization?.status, "available");
+    service.markDecisionDelivered(approved.approval_id, {
+      event_id: "decision-event-1",
+      wake_id: "wake-1",
+      wake_session_id: "session-2",
+    });
+    const resumedRequest = request({ subject: { session_id: "session-2" } });
+    const consumed = service.consumeApprovedAuthorization(resumedRequest, {
+      project_id: "project-1",
+      operation_fingerprint: "sha256:exact-operation",
+      agent_id: "DEV-01",
+      session_id: "session-2",
+      task_id: "TASK-1",
+      thread_key: "thread-1",
+      role: "DEV",
+    });
+    assert.equal(consumed?.authorization?.status, "consumed");
+    assert.equal(consumed?.authorization?.consumed_by?.session_id, "session-2");
+    assert.throws(
+      () => service.consumeApprovedAuthorization(resumedRequest, {
+        project_id: "project-1",
+        operation_fingerprint: "sha256:exact-operation",
+        agent_id: "DEV-01",
+        session_id: "session-2",
+        task_id: "TASK-1",
+        thread_key: "thread-1",
+        role: "DEV",
+      }),
+      (error: unknown) => error instanceof OperationApprovalError && error.code === "APPROVAL_ALREADY_CONSUMED",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("legacy opaque approvals are revoked without deleting their audit record", () => {
+  const root = tempRoot();
+  try {
+    const approvalId = "APPROVAL-LEGACY-OPAQUE-1";
+    const service = new OperationApprovalService({ projectRoot: root, idFactory: () => approvalId });
+    const prepared = prepare(service);
+    if (prepared.decision !== "REQUIRE_APPROVAL") assert.fail("approval expected");
+
+    const recordPath = join(root, ".codeflowmu", "operation-approvals", "records", `${approvalId}.json`);
+    const raw = JSON.parse(readFileSync(recordPath, "utf-8")) as Record<string, unknown>;
+    raw["rule_ids"] = ["NEG.OPAQUE.EFFECT"];
+    writeFileSync(recordPath, `${JSON.stringify(raw, null, 2)}\n`, "utf-8");
+
+    const migrated = service.migrateLegacyRecords();
+    assert.equal(migrated.length, 1);
+    assert.equal(migrated[0]?.status, "revoked");
+    assert.equal(migrated[0]?.invalid_legacy_rule, true);
+    assert.equal(migrated[0]?.authorization?.status, "invalid");
+    assert.equal(migrated[0]?.decision_delivery?.status, "pending");
+    assert.equal(migrated[0]?.legacy_recovery?.original_status, "pending_approval");
+    assert.equal(service.migrateLegacyRecords().length, 0);
+    assert.equal(service.get(approvalId).approval_id, approvalId);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

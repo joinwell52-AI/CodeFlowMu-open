@@ -98,6 +98,51 @@ test("older installed or bundled packages produce a read-only conflict plan", ()
   }
 });
 
+test("frontmatter protocol versions are parsed and never become an unknown minimum", () => {
+  const source = sourceFixture();
+  const target = join(mkdtempSync(join(tmpdir(), "cfm-bootstrap-frontmatter-")), "target");
+  try {
+    write(source, ".cursor/rules/fcop-rules.mdc", "---\nfcop_rules_version: 3.2.5\n---\n");
+    write(source, ".cursor/rules/fcop-protocol.mdc", "---\nfcop_protocol_version: 3.2.5\n---\n");
+    const plan = buildFcopInitPlan({
+      sourceRoot: source,
+      targetRoot: target,
+      installedFcopVersion: "3.2.5",
+      installedFcopMcpVersion: "3.2.5",
+      bundledRulesVersion: "3.2.5",
+      bundledProtocolVersion: "3.2.5",
+    });
+    assert.equal(plan.source_versions.mother_rules, "3.2.5");
+    assert.equal(plan.source_versions.mother_protocol, "3.2.5");
+    assert.equal(plan.package_upgrade_actions.some((item) => item.includes("unknown")), false);
+  } finally {
+    rmSync(source, { recursive: true, force: true });
+    rmSync(dirname(target), { recursive: true, force: true });
+  }
+});
+
+test("partial uninitialized project preserves local bootstrap files and completes initialization", () => {
+  const source = sourceFixture();
+  const target = mkdtempSync(join(tmpdir(), "cfm-bootstrap-partial-"));
+  try {
+    write(target, "AGENTS.md", "local project instructions must survive\n");
+    write(target, "fcop/shared/TEAM-README.md", "local team notes must survive\n");
+    write(target, ".cursor/rules/fcop-rules.mdc", "---\nfcop_rules_version: 3.2.5\n---\nlocal rules\n");
+    const plan = compatiblePlan(source, target);
+    assert.equal(plan.mode, "new");
+    assert.deepEqual(plan.conflict, []);
+    assert.ok(plan.preserve.some((row) => row.target_rel === "AGENTS.md"));
+    new FcopInitTransaction(plan).execute(plan.plan_digest);
+    assert.equal(readFileSync(join(target, "AGENTS.md"), "utf8"), "local project instructions must survive\n");
+    assert.equal(readFileSync(join(target, "fcop/shared/TEAM-README.md"), "utf8"), "local team notes must survive\n");
+    assert.equal(verifyFcopBootstrapManifest(target).ok, true);
+    assert.equal(JSON.parse(readFileSync(join(target, "fcop/fcop.json"), "utf8")).protocol_version, 3);
+  } finally {
+    rmSync(source, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
 test("takeover preserves formal ledgers, workspace products, approvals, and host identity", () => {
   const source = sourceFixture();
   const target = mkdtempSync(join(tmpdir(), "cfm-bootstrap-takeover-"));

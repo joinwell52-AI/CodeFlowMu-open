@@ -445,7 +445,7 @@ describe("TaskDispatcher dispatch-retry (P0)", () => {
           effects: ["remote write"],
           non_effects: ["no task lifecycle mutation"],
           recovery: "resume prior task state",
-          rule_ids: ["NEG.EXTERNAL.SIDE_EFFECT"],
+          rule_ids: ["NEG.EXTERNAL.WRITE"],
           operation_fingerprint: fingerprint,
           thread_key: threadKey,
         });
@@ -499,7 +499,7 @@ describe("TaskDispatcher dispatch-retry (P0)", () => {
         );
 
         const text = await readFile(filepath, "utf-8");
-        assert.match(text, /^state: waiting_approval$/m);
+        assert.match(text, /^state: dispatched$/m);
         assert.match(text, /^dispatch_state: waiting_approval$/m);
         assert.match(text, /^failure_category: approval_required$/m);
         assert.match(text, new RegExp(`^approval_id: ${created.approval.approval_id}$`, "m"));

@@ -14037,13 +14037,8 @@ async function apApprove(id){
       method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason})
     });
     const approved=await r.json().catch(()=>({}));
-    if(!r.ok||!approved.execution_token) throw new Error(approved.error||('HTTP '+r.status));
-    const executed=await fetch(`/api/v2/operation-approvals/${encodeURIComponent(id)}/execute`,{
-      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({execution_token:approved.execution_token})
-    });
-    const result=await executed.json().catch(()=>({}));
-    if(!executed.ok||!result.ok)throw new Error(result.error||(result.approval&&result.approval.execution&&result.approval.execution.error)||('HTTP '+executed.status));
-    showToast('已批准并完成一次性执行','#4ade80');
+    if(!r.ok||!approved.ok) throw new Error(approved.error||('HTTP '+r.status));
+    showToast(approved.recovery?.delivered===false?'审批已批准，Agent 通知正在重试':'审批已批准，原 Agent 已恢复','#4ade80');
     await loadApprovals();
     await loadApprovalHistory();
     renderApprovals(document.getElementById('page-approvals'));

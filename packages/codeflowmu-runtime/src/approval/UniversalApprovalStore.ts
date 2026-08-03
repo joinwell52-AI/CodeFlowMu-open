@@ -15,7 +15,7 @@ export type AgentApprovalNotice = {
   outcome: "APPROVAL_REQUIRED";
   operation_executed: false;
   approval_id: string;
-  status: "pending" | "pending_information" | "pending_executor";
+  status: "pending_approval";
   rule_ids: string[];
   reason_zh: string;
   operation_summary_zh: string;
@@ -26,7 +26,8 @@ export type AgentApprovalNotice = {
   thread_key: string;
   role: string;
   operation_fingerprint: string;
-  task_execution_blocked: true;
+  current_operation_paused: true;
+  task_execution_blocked: false;
   required_agent_action: "WAIT_FOR_APPROVAL_RESULT";
   prohibited_while_waiting: string[];
   resume_on: "approval_decision_event";
@@ -55,19 +56,13 @@ function stableRequestId(input: PrepareOperationInput): string {
   return createHash("sha256").update(payload).digest("hex");
 }
 
-function noticeStatus(record: OperationApprovalRecord): AgentApprovalNotice["status"] {
-  if (record.status === "pending_information") return "pending_information";
-  if (record.status === "pending_executor") return "pending_executor";
-  return "pending";
-}
-
 function buildNotice(record: OperationApprovalRecord): AgentApprovalNotice {
   const facts = record.operation_facts;
   return {
     outcome: "APPROVAL_REQUIRED",
     operation_executed: false,
     approval_id: record.approval_id,
-    status: noticeStatus(record),
+    status: "pending_approval",
     rule_ids: record.rule_ids ?? [],
     reason_zh: record.reason,
     operation_summary_zh: `${facts?.operation.kind ?? record.request.action.operation}：${record.request.action.capability}`,
@@ -78,15 +73,13 @@ function buildNotice(record: OperationApprovalRecord): AgentApprovalNotice {
     thread_key: String(record.thread_key ?? ""),
     role: String(record.request.subject.role ?? "").toUpperCase(),
     operation_fingerprint: String(record.operation_fingerprint ?? ""),
-    task_execution_blocked: true,
+    current_operation_paused: true,
+    task_execution_blocked: false,
     required_agent_action: "WAIT_FOR_APPROVAL_RESULT",
     prohibited_while_waiting: [
       "retry_same_operation",
       "change_command_to_bypass_approval",
       "switch_channel_to_bypass_approval",
-      "dispatch_task",
-      "write_report",
-      "archive_or_advance_gate",
     ],
     resume_on: "approval_decision_event",
   };
@@ -176,7 +169,7 @@ export class UniversalApprovalStore {
       String(record.request.subject.role ?? "").toUpperCase() !== notice.role.toUpperCase() ||
       String(record.operation_fingerprint ?? "") !== notice.operation_fingerprint
     ) {
-      throw new Error("INVALID_POLICY_FREEZE: approval waiting projection is not backed by a matching pending record and delivered notice");
+      throw new Error("APPROVAL_PROJECTION_MISMATCH: waiting operation is not backed by a matching pending approval and delivered notice");
     }
     return record;
   }

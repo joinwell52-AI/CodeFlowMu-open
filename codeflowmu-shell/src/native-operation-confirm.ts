@@ -37,6 +37,8 @@ export async function confirmOperationDecisionNative(
   record: OperationApprovalRecord,
   decision: "approve" | "reject",
   reason: string,
+  confirm: (input: { title: string; message: string }) => Promise<boolean> =
+    confirmOperationImpactNative,
 ): Promise<boolean> {
   const verb = decision === "approve" ? "批准" : "拒绝";
   const message = [
@@ -52,5 +54,5 @@ export async function confirmOperationDecisionNative(
     "",
     decision === "approve" ? "确认后仅签发一次性执行凭证；此窗口不会直接执行操作。" : "确认后只拒绝本次操作，不会打回任务或作废报告。",
   ].join("\n");
-  return confirmOperationImpactNative({ title: `CodeFlowMu 操作${verb}`, message });
+  return confirm({ title: `CodeFlowMu 操作${verb}`, message });
 }

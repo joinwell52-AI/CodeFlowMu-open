@@ -55,24 +55,26 @@ function cloneFacts(mutator: (facts: OperationFacts) => void): OperationFacts {
 }
 
 const CASES: Array<[NegativeRuleId, OperationFacts]> = [
-  ["NEG.SCOPE.ESCAPE", cloneFacts((f) => { f.impact.external = true; f.target_state.lifecycle_class = "external"; })],
-  ["NEG.PROTECTED.BOUNDARY", cloneFacts((f) => { f.target_state.lifecycle_class = "protected"; })],
+  ["NEG.SCOPE.ESCAPE.WRITE", cloneFacts((f) => { f.operation.exact_targets = ["D:\\outside\\app.ts"]; f.operation.canonical_targets = ["D:\\outside\\app.ts"]; f.target_state.lifecycle_class = "external"; })],
+  ["NEG.PROTECTED.BOUNDARY.WRITE", cloneFacts((f) => { f.target_state.lifecycle_class = "protected"; })],
   ["NEG.GOVERNANCE.BYPASS", cloneFacts((f) => { f.impact.governance_change = true; f.target_state.lifecycle_class = "governance"; })],
-  ["NEG.SHARED.STATE", cloneFacts((f) => { f.impact.shared = true; f.target_state.lifecycle_class = "shared"; })],
+  ["NEG.SHARED.STATE.WRITE", cloneFacts((f) => { f.impact.shared = true; f.target_state.lifecycle_class = "shared"; })],
+  ["NEG.TRACKED.DELETE", cloneFacts((f) => { f.operation.kind = "delete"; f.target_state.git_tracked = true; })],
+  ["NEG.BULK.CLEANUP", cloneFacts((f) => { f.operation.kind = "delete"; f.operation.recursive = true; })],
   ["NEG.IRREVERSIBLE.EFFECT", cloneFacts((f) => { f.impact.reversible = false; delete f.impact.recovery_evidence; })],
-  ["NEG.BULK.DYNAMIC_TARGETS", cloneFacts((f) => { f.operation.dynamic_or_wildcard = true; f.operation.target_set_stable = false; })],
-  ["NEG.EXTERNAL.SIDE_EFFECT", cloneFacts((f) => { f.impact.external = true; f.operation.kind = "network_write"; })],
+  ["NEG.EXTERNAL.WRITE", cloneFacts((f) => { f.impact.external = true; f.operation.kind = "network_write"; })],
   ["NEG.SECURITY.AUTHORITY", cloneFacts((f) => { f.impact.privilege_change = true; })],
   ["NEG.RUNTIME.CONTROL", cloneFacts((f) => { f.impact.runtime_change = true; f.operation.kind = "process_control"; })],
-  ["NEG.REMOTE.RELEASE.PRODUCTION", cloneFacts((f) => { f.operation.kind = "remote_git"; })],
-  ["NEG.CONTRACT.CHANGE", cloneFacts((f) => { f.tool.canonical_tool_id = "change_task_scope"; })],
-  ["NEG.OPAQUE.EFFECT", cloneFacts((f) => { f.operation.kind = "unknown"; f.confidence.complete = false; f.confidence.unresolved_fields = ["operation.effects"]; })],
+  ["NEG.REMOTE.GIT.WRITE", cloneFacts((f) => { f.operation.kind = "remote_git"; })],
+  ["NEG.RELEASE.PRODUCTION", cloneFacts((f) => { f.operation.kind = "publish"; })],
+  ["NEG.SOFTWARE.SYSTEM.CHANGE", cloneFacts((f) => { f.confidence.detector_ids = ["structured.software_system_change"]; })],
+  ["NEG.TASK.CONTRACT.CHANGE", cloneFacts((f) => { f.tool.canonical_tool_id = "change_task_scope"; })],
   ["NEG.CONCURRENCY.CONFLICT", cloneFacts((f) => { f.target_state.locked_or_in_use = true; })],
 ];
 
-test("negative rule catalog is exactly the frozen 13-item order", () => {
-  assert.equal(NEGATIVE_RULE_IDS.length, 13);
-  assert.equal(NEGATIVE_PREDICATES.length, 13);
+test("negative rule catalog is exactly the frozen 15-item order", () => {
+  assert.equal(NEGATIVE_RULE_IDS.length, 15);
+  assert.equal(NEGATIVE_PREDICATES.length, 15);
   assert.deepEqual(CASES.map(([rule]) => rule), [...NEGATIVE_RULE_IDS]);
 });
 
@@ -92,7 +94,7 @@ for (const [ruleId, facts] of CASES) {
             session_id: facts.subject.session_id,
             task_id: facts.context.task_id,
           },
-          action: { capability: facts.tool.canonical_tool_id, operation: facts.operation.kind, executor: "unresolved.operation" },
+          action: { capability: facts.tool.canonical_tool_id, operation: facts.operation.kind, executor: "agent.retry" },
           resource: { type: facts.target_state.lifecycle_class, targets: facts.operation.canonical_targets },
           context: { workspace: root, environment: "test", initiated_by: "agent", authorization_source: "none" },
           effect: { governance_change: true },
@@ -106,15 +108,13 @@ for (const [ruleId, facts] of CASES) {
         operation_facts: facts,
         operation_fingerprint: `fingerprint:${ruleId}`,
         thread_key: facts.context.thread_key,
-        executor_status: "missing",
-        suggested_executor: "register exact controlled executor",
       };
       const store = new UniversalApprovalStore(root);
       const created = store.createPending(input);
       assert.equal(created.outcome, "APPROVAL_REQUIRED");
       if (created.outcome !== "APPROVAL_REQUIRED") assert.fail("approval record required");
       assert.ok(created.approval.approval_id);
-      assert.equal(created.approval.status, "pending_executor");
+      assert.equal(created.approval.status, "pending_approval");
       assert.ok(created.approval.rule_ids?.includes(ruleId));
       assert.equal(created.notice.operation_executed, false);
       assert.equal(created.notice.required_agent_action, "WAIT_FOR_APPROVAL_RESULT");
@@ -125,3 +125,12 @@ for (const [ruleId, facts] of CASES) {
     }
   });
 }
+
+test("unknown or incomplete facts are not a synthetic negative rule", () => {
+  const facts = cloneFacts((f) => {
+    f.operation.kind = "unknown";
+    f.confidence.complete = false;
+    f.confidence.unresolved_fields = ["operation.effects"];
+  });
+  assert.deepEqual(evaluateNegativePredicates(facts), []);
+});

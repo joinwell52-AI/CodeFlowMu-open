@@ -103,7 +103,7 @@ describe("controlled executor registry", () => {
     }
   });
 
-  it("executes an approval prepared by the unified Cursor/Google policy without digest drift", async () => {
+  it("keeps unified Agent approvals out of the controlled executor registry", async () => {
     const root = mkdtempSync(join(tmpdir(), "cf-unified-executor-write-"));
     try {
       const value = registry(root);
@@ -124,16 +124,18 @@ describe("controlled executor registry", () => {
       if (decision.decision !== "REQUIRE_APPROVAL") assert.fail("approval expected");
       const prepared = service.prepare(decision.input);
       if (prepared.decision !== "REQUIRE_APPROVAL") assert.fail("approval record expected");
-      const approved = service.approve(prepared.approval.approval_id, "ADMIN", "approve unified write");
+      service.approve(prepared.approval.approval_id, "ADMIN", "approve unified write");
       const record = service.get(prepared.approval.approval_id);
-      const completed = await service.execute(
-        record.approval_id,
-        approved.execution_token,
-        await value.recomputeRequest(record),
-        (current) => value.execute(current),
+      assert.equal(record.request.action.executor, "agent.retry");
+      assert.equal(record.authorization?.status, "available");
+      assert.equal(
+        existsSync(join(root, "packages", "codeflowmu-runtime", "src", "approval", "unified.txt")),
+        false,
       );
-      assert.equal(completed.status, "succeeded");
-      assert.equal(readFileSync(join(root, "packages", "codeflowmu-runtime", "src", "approval", "unified.txt"), "utf8"), "unified approved content\n");
+      await assert.rejects(
+        async () => value.recomputeRequest(record),
+        /EXECUTOR_NOT_REGISTERED:agent\.retry/,
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -15,7 +15,7 @@ const execFileAsync = promisify(execFile);
 const PROBE_CACHE_MS = 30_000;
 
 /** CodeFlowMu 示范体要求的 fcop / fcop-mcp Python 包最低版本（lockstep）。 */
-export const FCOP_MIN_PACKAGE_VERSION = "3.2.2";
+export const FCOP_MIN_PACKAGE_VERSION = "3.2.5";
 
 const FCOP_PYTHON_PROBE_SCRIPT = `
 import json
@@ -403,7 +403,7 @@ function readHostNeutralRuleVersions(projectRoot: string): {
   try {
     const head = readFileSync(agentsPath, "utf-8").slice(0, 1200);
     const m = head.match(
-      /Rules version:\s*`([^`]+)`\s*·\s*Protocol commentary version:\s*`([^`]+)`/,
+      /Rules version:\s*`([^`]+)`[\s\S]{0,80}?Protocol commentary version:\s*`([^`]+)`/,
     );
     return {
       rules: m?.[1]?.trim() ?? null,

@@ -72,7 +72,6 @@ import {
 import {
   OperationApprovalService,
   OPERATION_APPROVAL_REQUIRED,
-  OPERATION_BOUNDARY_DENIED,
   isPendingApprovalStatus,
 } from "../approval/index.ts";
 import type { SessionRunWithOperationBoundary } from "./SdkRunHandle.ts";
@@ -1073,18 +1072,9 @@ export class SessionManager {
     const approvalCreationPending =
       settledRun.failure_code === "APPROVAL_CREATION_PENDING" &&
       runOperation.operation_classification === "approval_creation_pending";
-    const invalidPolicyFreeze =
-      !actionPausedForApproval &&
-      (settledRun.failure_code === OPERATION_APPROVAL_REQUIRED ||
-        settledRun.failure_code === "APPROVAL_REQUIRED" ||
-        settledRun.failure_code === "APPROVAL_PENDING" ||
-        settledRun.failure_code === OPERATION_BOUNDARY_DENIED ||
-        settledRun.failure_code === "ABSOLUTELY_PROHIBITED" ||
-        settledRun.failure_code === "CODEFLOWMU_POLICY_BLOCKED");
     const settledWithFailure =
       !actionPausedForApproval &&
       !approvalCreationPending &&
-      !invalidPolicyFreeze &&
       (settledRun.status === "failed" ||
         Boolean(settledRun.failure_code) ||
         settledWithSdkError ||
@@ -1111,22 +1101,6 @@ export class SessionManager {
     } else if (approvalCreationPending) {
       protocolStatus = "approval_creation_pending";
       finalRun = { ...finalRun, status: "finished" };
-    } else if (invalidPolicyFreeze) {
-      protocolStatus = "completed";
-      finalRun = {
-        ...finalRun,
-        status: "finished",
-        failure_code: undefined,
-        operation_classification: "role_capability_denied",
-        operation_outcome: {
-          ...(runOperation.operation_outcome ?? {}),
-          recovery_code: "INVALID_POLICY_FREEZE",
-          original_failure_code: settledRun.failure_code,
-          original_operation_executed: false,
-        },
-        next_safe_action: "resume_agent_reasoning_without_replaying_the_original_operation",
-        retry_policy: "none",
-      } as SessionRun & SessionRunWithOperationBoundary;
     } else if (reportOnDisk) {
       protocolStatus = "completed";
       finalRun = {
@@ -1198,8 +1172,6 @@ export class SessionManager {
       settlement_reason = "waiting_operation_approval";
     } else if (approvalCreationPending) {
       settlement_reason = "approval_creation_pending";
-    } else if (invalidPolicyFreeze) {
-      settlement_reason = "invalid_policy_freeze_recovered";
     } else if (reportOnDisk && protocolStatus === "completed") {
       settlement_reason = "completed-with-report";
     } else if (reportOnDisk && protocolStatus === "cancelled") {

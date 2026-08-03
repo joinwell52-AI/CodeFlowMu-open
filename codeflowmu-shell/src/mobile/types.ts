@@ -57,6 +57,11 @@ export interface MobilePanelContext {
   gatewayOnline?: () => boolean;
   allocateTaskSeq?: (date: string) => string;
   getUiLang?: () => string;
+  decideOperationApproval?: (
+    approvalId: string,
+    decision: "approve" | "reject",
+    reason: string,
+  ) => Promise<{ status: number; body: Record<string, unknown> }>;
 }
 
 export interface MobileRoutesBundle {

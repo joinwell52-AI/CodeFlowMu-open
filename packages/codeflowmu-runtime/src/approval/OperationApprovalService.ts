@@ -13,7 +13,11 @@ import {
 import { createHash, randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 
-import type { OperationFacts } from "./OperationFacts.ts";
+import {
+  evaluateNegativePredicates,
+  type NegativeRuleId,
+  type OperationFacts,
+} from "./OperationFacts.ts";
 
 export const OPERATION_APPROVAL_KINDS = [
   "destructive_operation",
@@ -28,6 +32,20 @@ export const OPERATION_APPROVAL_KINDS = [
 
 export type OperationApprovalKind = (typeof OPERATION_APPROVAL_KINDS)[number];
 export type CapabilityDecision = "ALLOW" | "REQUIRE_APPROVAL";
+
+function approvalKindForNegativeRule(ruleId: NegativeRuleId): OperationApprovalKind {
+  if (/^(?:NEG\.TRACKED\.DELETE|NEG\.BULK\.CLEANUP|NEG\.IRREVERSIBLE\.EFFECT)$/.test(ruleId)) {
+    return "destructive_operation";
+  }
+  if (/^(?:NEG\.EXTERNAL\.WRITE|NEG\.REMOTE\.GIT\.WRITE)$/.test(ruleId)) {
+    return "external_write";
+  }
+  if (ruleId === "NEG.SECURITY.AUTHORITY") return "security_authority_change";
+  if (ruleId === "NEG.RUNTIME.CONTROL") return "process_control";
+  if (ruleId === "NEG.RELEASE.PRODUCTION") return "production_release";
+  if (ruleId === "NEG.SOFTWARE.SYSTEM.CHANGE") return "software_change";
+  return "governance_boundary_change";
+}
 export type OperationApprovalStatus =
   | "pending"
   | "pending_information"
@@ -122,6 +140,34 @@ export type OperationApprovalRecord = {
   suggested_executor?: string;
   agent_notice_delivered?: boolean;
   agent_notice_delivered_at?: string | null;
+  authorization?: {
+    status: "available" | "consumed" | "invalid";
+    issued_at: string | null;
+    consumed_at: string | null;
+    consumed_by?: {
+      agent_id: string;
+      session_id: string;
+      task_id: string;
+      thread_key: string;
+      role: string;
+    };
+  };
+  decision_delivery?: {
+    status: "pending" | "delivered";
+    event_id: string | null;
+    delivered_at: string | null;
+    wake_id: string | null;
+    wake_session_id: string | null;
+    attempts: number;
+    last_error?: string;
+  };
+  invalid_legacy_rule?: boolean;
+  legacy_recovery?: {
+    original_status: OperationApprovalStatus;
+    migrated_at: string;
+    migration_version: "agent-retry-v1";
+    reason: string;
+  };
   request: CapabilityRequest;
   operation_digest: string;
   reason: string;
@@ -135,7 +181,7 @@ export type OperationApprovalRecord = {
     expires_in_seconds: number;
   };
   decision: null | {
-    result: "approved" | "rejected" | "cancelled";
+    result: "approved" | "rejected" | "cancelled" | "expired" | "stale" | "revoked";
     actor: string;
     at: string;
     reason: string;
@@ -175,6 +221,16 @@ export type HumanConfirmationVerifier = (input: {
   operation_digest: string;
   request: CapabilityRequest;
 }) => boolean;
+
+export type OperationAuthorizationContext = {
+  project_id: string;
+  operation_fingerprint: string;
+  agent_id: string;
+  session_id: string;
+  task_id: string;
+  thread_key: string;
+  role: string;
+};
 
 export class OperationApprovalError extends Error {
   constructor(
@@ -216,7 +272,13 @@ function stable(value: unknown): unknown {
 }
 
 export function computeOperationDigest(request: CapabilityRequest): string {
-  const payload = JSON.stringify(stable(request));
+  const payload = JSON.stringify(stable({
+    ...request,
+    subject: {
+      ...request.subject,
+      session_id: undefined,
+    },
+  }));
   return `sha256:${createHash("sha256").update(payload).digest("hex")}`;
 }
 
@@ -251,20 +313,10 @@ export function classifyCapabilityRequest(request: CapabilityRequest): {
     !normalizeString(request.context?.workspace) ||
     targets.length === 0
   ) {
-    return {
-      decision: "REQUIRE_APPROVAL",
-      primary_kind: "governance_boundary_change",
-      risk_tags: ["governance_boundary_change"],
-      reason: "impact_unknown_or_request_incomplete",
-    };
+    return { decision: "ALLOW", risk_tags: [], reason: "no_positive_negative_rule_evidence" };
   }
   if (request.effect?.unknown) {
-    return {
-      decision: "REQUIRE_APPROVAL",
-      primary_kind: "governance_boundary_change",
-      risk_tags: ["governance_boundary_change"],
-      reason: "impact_unknown",
-    };
+    return { decision: "ALLOW", risk_tags: [], reason: "unknown_is_not_negative_evidence" };
   }
   for (const [field, reason] of [
     ["prohibited", "operation_permanently_prohibited"],
@@ -362,7 +414,19 @@ export class OperationApprovalService {
   prepare(input: PrepareOperationInput):
     | { decision: "ALLOW"; executed: false; operation_digest: string; reason: string }
     | { decision: "REQUIRE_APPROVAL"; executed: false; approval: OperationApprovalRecord } {
-    const classification = classifyCapabilityRequest(input.request);
+    let classification = classifyCapabilityRequest(input.request);
+    const verifiedRuleIds = input.operation_facts
+      ? evaluateNegativePredicates(input.operation_facts).map((item) => item.rule_id)
+      : [];
+    if (verifiedRuleIds.length > 0) {
+      const riskTags = [...new Set(verifiedRuleIds.map(approvalKindForNegativeRule))];
+      classification = {
+        decision: "REQUIRE_APPROVAL",
+        primary_kind: riskTags[0] ?? "governance_boundary_change",
+        risk_tags: riskTags,
+        reason: `verified_negative_rules:${verifiedRuleIds.join(",")}`,
+      };
+    }
     const operationDigest = computeOperationDigest(input.request);
     this.audit("operation.requested", {
       operation_digest: operationDigest,
@@ -409,13 +473,23 @@ export class OperationApprovalService {
     const prior = this.list({ limit: 1000 }).find(
       (row) => row.project_id === input.request.subject.project_id && row.operation_digest === operationDigest,
     );
-    if (isPendingApprovalStatus(prior?.status) || prior?.status === "approved") {
+    if (
+      isPendingApprovalStatus(prior?.status) ||
+      (prior?.status === "approved" && prior.authorization?.status === "available")
+    ) {
       this.audit("approval.request_deduplicated", {
         approval_id: prior.approval_id,
         operation_digest: operationDigest,
         status: prior.status,
       });
       return { decision: "REQUIRE_APPROVAL", executed: false, approval: cloneRecord(prior) };
+    }
+    if (prior?.status === "approved" && prior.authorization?.status === "consumed") {
+      throw new OperationApprovalError(
+        "APPROVAL_ALREADY_CONSUMED",
+        "the matching one-time authorization has already been consumed",
+        409,
+      );
     }
     if (prior?.status === "rejected") {
       this.audit("approval.rejected_replay_blocked", {
@@ -448,14 +522,12 @@ export class OperationApprovalService {
       human_confirmation_id: input.request.context.human_confirmation_id,
       requested_at: now.toISOString(),
       expires_at: new Date(now.getTime() + expiresSeconds * 1000).toISOString(),
-      status: input.missing_information?.length
-        ? "pending_information"
-        : input.executor_status === "missing" || input.executor_status === "incompatible"
-          ? "pending_executor"
-          : "pending",
+      status: "pending_approval",
       approval_type: "OPERATION_APPROVAL",
       decision_mode: input.decision_mode ?? "ADMIN_MANUAL",
-      rule_ids: [...new Set(input.rule_ids ?? input.effects.filter((item) => item.startsWith("NEG.")))],
+      rule_ids: verifiedRuleIds.length > 0
+        ? verifiedRuleIds
+        : [...new Set(input.rule_ids ?? input.effects.filter((item) => item.startsWith("NEG.")))],
       ...(input.operation_facts ? { operation_facts: input.operation_facts } : {}),
       ...(input.operation_fingerprint ? { operation_fingerprint: input.operation_fingerprint } : {}),
       ...(input.thread_key ? { thread_key: input.thread_key } : {}),
@@ -464,6 +536,14 @@ export class OperationApprovalService {
       ...(input.suggested_executor ? { suggested_executor: input.suggested_executor } : {}),
       agent_notice_delivered: false,
       agent_notice_delivered_at: null,
+      decision_delivery: {
+        status: "pending",
+        event_id: null,
+        delivered_at: null,
+        wake_id: null,
+        wake_session_id: null,
+        attempts: 0,
+      },
       request: input.request,
       operation_digest: operationDigest,
       reason: normalizeString(input.reason) || classification.reason,
@@ -525,6 +605,70 @@ export class OperationApprovalService {
     return cloneRecord(current);
   }
 
+  migrateLegacyRecords(): OperationApprovalRecord[] {
+    if (!existsSync(this.recordsDir)) return [];
+    const migrated: OperationApprovalRecord[] = [];
+    for (const name of readdirSync(this.recordsDir).filter((item) => item.endsWith(".json"))) {
+      const approvalId = name.slice(0, -5);
+      const current = this.readRecord(approvalId);
+      if (!current || current.legacy_recovery) continue;
+      const opaque = (current.rule_ids ?? []).includes("NEG.OPAQUE.EFFECT");
+      const executorBlocked = current.status === "approved" && (
+        current.executor_status === "missing" ||
+        current.executor_status === "incompatible" ||
+        /^(?:unresolved\.|missing\.|adapter_required)/i.test(current.request.action.executor)
+      );
+      if (!opaque && !executorBlocked) continue;
+      migrated.push(this.withLock(approvalId, () => {
+        const record = this.getMutable(approvalId);
+        if (record.legacy_recovery) return cloneRecord(record);
+        const now = this.now().toISOString();
+        const originalStatus = record.status;
+        const reason = opaque
+          ? "legacy NEG.OPAQUE.EFFECT is not a valid negative rule"
+          : "legacy approved record depended on a missing controlled executor";
+        record.invalid_legacy_rule = opaque;
+        record.legacy_recovery = {
+          original_status: originalStatus,
+          migrated_at: now,
+          migration_version: "agent-retry-v1",
+          reason,
+        };
+        record.status = "revoked";
+        record.decision = {
+          result: "revoked",
+          actor: "SYSTEM",
+          at: now,
+          reason,
+        };
+        record.authorization = {
+          status: "invalid",
+          issued_at: record.authorization?.issued_at ?? null,
+          consumed_at: null,
+        };
+        record.decision_delivery = {
+          status: "pending",
+          event_id: null,
+          delivered_at: null,
+          wake_id: null,
+          wake_session_id: null,
+          attempts: 0,
+        };
+        delete record.token_hash;
+        record.updated_at = now;
+        this.writeRecord(record);
+        this.audit("approval.legacy_record_revoked", {
+          approval_id: record.approval_id,
+          original_status: originalStatus,
+          invalid_legacy_rule: opaque,
+          reason,
+        });
+        return cloneRecord(record);
+      }));
+    }
+    return migrated;
+  }
+
   markAgentNoticeDelivered(approvalId: string, context: {
     project_id: string;
     task_id: string;
@@ -577,6 +721,19 @@ export class OperationApprovalService {
       const now = this.now().toISOString();
       record.status = "approved";
       record.decision = { result: "approved", actor: "ADMIN", at: now, reason: note };
+      record.authorization = {
+        status: "available",
+        issued_at: now,
+        consumed_at: null,
+      };
+      record.decision_delivery = {
+        status: "pending",
+        event_id: null,
+        delivered_at: null,
+        wake_id: null,
+        wake_session_id: null,
+        attempts: 0,
+      };
       record.token_hash = hashToken(token);
       record.updated_at = now;
       this.writeRecord(record);
@@ -597,6 +754,122 @@ export class OperationApprovalService {
 
   cancel(approvalId: string, actor: string, reason: string): OperationApprovalRecord {
     return this.decideTerminal(approvalId, actor, reason, "cancelled");
+  }
+
+  consumeApprovedAuthorization(
+    currentRequest: CapabilityRequest,
+    context: OperationAuthorizationContext,
+  ): OperationApprovalRecord | null {
+    const operationDigest = computeOperationDigest(currentRequest);
+    const candidate = this.list({ limit: 1000 }).find((row) =>
+      row.project_id === context.project_id &&
+      row.operation_digest === operationDigest &&
+      row.operation_fingerprint === context.operation_fingerprint &&
+      row.status === "approved"
+    );
+    if (!candidate) return null;
+    return this.withLock(candidate.approval_id, () => {
+      const record = this.getMutable(candidate.approval_id);
+      this.expireIfNeeded(record);
+      if (record.status !== "approved") return null;
+      if (record.authorization?.status === "consumed") {
+        throw new OperationApprovalError(
+          "APPROVAL_ALREADY_CONSUMED",
+          `approval ${record.approval_id} authorization has already been consumed`,
+        );
+      }
+      if (record.authorization?.status !== "available") return null;
+      const mismatches = [
+        record.project_id === context.project_id ? "" : "project_id",
+        String(record.operation_fingerprint ?? "") === context.operation_fingerprint ? "" : "operation_fingerprint",
+        String(record.agent_id ?? record.request.subject.agent_id ?? "") === context.agent_id ? "" : "agent_id",
+        String(record.task_id ?? "") === context.task_id ? "" : "task_id",
+        String(record.thread_key ?? "") === context.thread_key ? "" : "thread_key",
+        String(record.request.subject.role ?? "").toUpperCase() === context.role.toUpperCase() ? "" : "role",
+        String(record.session_id ?? "") && context.session_id ? "" : "session_binding",
+      ].filter(Boolean);
+      if (mismatches.length > 0) return null;
+      const now = this.now().toISOString();
+      record.authorization = {
+        status: "consumed",
+        issued_at: record.authorization.issued_at,
+        consumed_at: now,
+        consumed_by: {
+          agent_id: context.agent_id,
+          session_id: context.session_id,
+          task_id: context.task_id,
+          thread_key: context.thread_key,
+          role: context.role,
+        },
+      };
+      record.updated_at = now;
+      delete record.token_hash;
+      this.writeRecord(record);
+      this.audit("approval.authorization_consumed", {
+        approval_id: record.approval_id,
+        operation_digest: record.operation_digest,
+        operation_fingerprint: record.operation_fingerprint,
+        consumed_by: record.authorization.consumed_by,
+      });
+      return cloneRecord(record);
+    });
+  }
+
+  markDecisionDelivered(approvalId: string, input: {
+    event_id: string;
+    wake_id: string;
+    wake_session_id: string;
+  }): OperationApprovalRecord {
+    return this.withLock(approvalId, () => {
+      const record = this.getMutable(approvalId);
+      if (!record.decision) {
+        throw new OperationApprovalError("APPROVAL_NOT_DECIDED", `approval ${approvalId} has no decision`);
+      }
+      if (record.decision_delivery?.status === "delivered") return cloneRecord(record);
+      const now = this.now().toISOString();
+      record.decision_delivery = {
+        status: "delivered",
+        event_id: input.event_id,
+        delivered_at: now,
+        wake_id: input.wake_id,
+        wake_session_id: input.wake_session_id,
+        attempts: (record.decision_delivery?.attempts ?? 0) + 1,
+      };
+      record.updated_at = now;
+      this.writeRecord(record);
+      this.audit("approval.decision_delivered", {
+        approval_id: record.approval_id,
+        decision: record.decision.result,
+        event_id: input.event_id,
+        wake_id: input.wake_id,
+        wake_session_id: input.wake_session_id,
+      });
+      return cloneRecord(record);
+    });
+  }
+
+  markDecisionDeliveryFailed(approvalId: string, error: string): OperationApprovalRecord {
+    return this.withLock(approvalId, () => {
+      const record = this.getMutable(approvalId);
+      const now = this.now().toISOString();
+      record.decision_delivery = {
+        status: "pending",
+        event_id: record.decision_delivery?.event_id ?? null,
+        delivered_at: null,
+        wake_id: record.decision_delivery?.wake_id ?? null,
+        wake_session_id: null,
+        attempts: (record.decision_delivery?.attempts ?? 0) + 1,
+        last_error: normalizeString(error),
+      };
+      record.updated_at = now;
+      this.writeRecord(record);
+      this.audit("approval.decision_delivery_failed", {
+        approval_id: record.approval_id,
+        decision: record.decision?.result ?? null,
+        error: record.decision_delivery.last_error,
+      });
+      return cloneRecord(record);
+    });
   }
 
   async execute(
@@ -735,6 +1008,19 @@ export class OperationApprovalService {
         at: now,
         reason: normalizeString(reason),
       };
+      record.authorization = {
+        status: "invalid",
+        issued_at: null,
+        consumed_at: null,
+      };
+      record.decision_delivery = {
+        status: "pending",
+        event_id: null,
+        delivered_at: null,
+        wake_id: null,
+        wake_session_id: null,
+        attempts: 0,
+      };
       record.updated_at = now;
       delete record.token_hash;
       this.writeRecord(record);
@@ -769,6 +1055,25 @@ export class OperationApprovalService {
     ) {
       const now = this.now().toISOString();
       record.status = "expired";
+      record.decision = {
+        result: "expired",
+        actor: "SYSTEM",
+        at: now,
+        reason: "approval expired before authorization was consumed",
+      };
+      record.authorization = {
+        status: "invalid",
+        issued_at: record.authorization?.issued_at ?? null,
+        consumed_at: null,
+      };
+      record.decision_delivery = {
+        status: "pending",
+        event_id: record.decision_delivery?.event_id ?? null,
+        delivered_at: null,
+        wake_id: record.decision_delivery?.wake_id ?? null,
+        wake_session_id: null,
+        attempts: record.decision_delivery?.attempts ?? 0,
+      };
       record.updated_at = now;
       delete record.token_hash;
       this.writeRecord(record);

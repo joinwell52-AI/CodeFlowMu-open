@@ -89,7 +89,7 @@ test("caller self-attestation, governance mutation, and scope escape only route 
       },
       {
         call: { ...base(projectRoot), toolName: "write_file", args: { path: join(projectRoot, "..", "other-project", "src", "app.ts"), content: "x" } },
-        rule: "NEG.SCOPE.ESCAPE",
+        rule: "NEG.SCOPE.ESCAPE.WRITE",
       },
     ];
     for (const { call, rule } of cases) {
@@ -102,25 +102,20 @@ test("caller self-attestation, governance mutation, and scope escape only route 
   }
 });
 
-test("opaque encoded commands route to a pending-information approval", () => {
+test("opaque encoded commands do not create a fallback approval", () => {
   const projectRoot = mkdtempSync(join(tmpdir(), "cfm-policy-encoded-"));
   try {
     const result = evaluateUnifiedOperationPolicy({
       ...base(projectRoot),
       args: { command: "powershell -EncodedCommand ZgBvAHIAZwBlAGQ=" },
     });
-    assert.equal(result.decision, "REQUIRE_APPROVAL");
-    if (result.decision === "REQUIRE_APPROVAL") {
-      assert.ok(result.rule_ids.includes("NEG.OPAQUE.EFFECT"));
-      assert.equal(result.input.executor_status, "missing");
-      assert.ok((result.input.missing_information ?? []).length > 0);
-    }
+    assert.equal(result.decision, "ALLOW");
   } finally {
     rmSync(projectRoot, { recursive: true, force: true });
   }
 });
 
-test("feature rollback safely routes non-read effects to approval", () => {
+test("feature flag cannot manufacture a fallback negative rule", () => {
   const previous = process.env[UNIFIED_OPERATION_POLICY_FEATURE_FLAG];
   process.env[UNIFIED_OPERATION_POLICY_FEATURE_FLAG] = "0";
   try {
@@ -130,8 +125,7 @@ test("feature rollback safely routes non-read effects to approval", () => {
       toolName: "write_file",
       args: { path: "src/app.ts", content: "x" },
     });
-    assert.equal(result.decision, "REQUIRE_APPROVAL");
-    if (result.decision === "REQUIRE_APPROVAL") assert.deepEqual(result.rule_ids, ["NEG.OPAQUE.EFFECT"]);
+    assert.equal(result.decision, "ALLOW");
     rmSync(projectRoot, { recursive: true, force: true });
   } finally {
     if (previous === undefined) delete process.env[UNIFIED_OPERATION_POLICY_FEATURE_FLAG];
@@ -139,7 +133,7 @@ test("feature rollback safely routes non-read effects to approval", () => {
   }
 });
 
-test("a multi-target controlled write creates pending_executor instead of silently executing targets[0]", () => {
+test("a multi-target protected write creates one pending approval without an executor dependency", () => {
   const projectRoot = mkdtempSync(join(tmpdir(), "cfm-policy-multi-target-"));
   try {
     const result = evaluateUnifiedOperationPolicy({
@@ -155,13 +149,13 @@ test("a multi-target controlled write creates pending_executor instead of silent
     });
     assert.equal(result.decision, "REQUIRE_APPROVAL");
     if (result.decision !== "REQUIRE_APPROVAL") throw new Error("approval expected");
-    assert.equal(result.input.executor_status, "incompatible");
-    assert.match(result.input.suggested_executor ?? "", /ONE_EXACT_TARGET/);
+    assert.equal(result.input.request.action.executor, "agent.retry");
+    assert.equal(result.input.request.resource.targets.length, 2);
 
     const created = new UniversalApprovalStore(projectRoot).createPending(result.input);
     assert.equal(created.outcome, "APPROVAL_REQUIRED");
     if (created.outcome === "APPROVAL_REQUIRED") {
-      assert.equal(created.approval.status, "pending_executor");
+      assert.equal(created.approval.status, "pending_approval");
       assert.equal(created.approval.request.resource.targets.length, 2);
     }
   } finally {

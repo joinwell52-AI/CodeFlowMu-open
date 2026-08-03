@@ -13,6 +13,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { evaluateUnifiedOperationPolicy } from "../../approval/UnifiedOperationPolicy.ts";
+import { evaluateRoleToolCall } from "../RoleToolPolicy.ts";
 
 function input(projectRoot: string, overrides: Record<string, unknown> = {}) {
   return {
@@ -42,18 +43,14 @@ test("historical PM PowerShell directory probe is a normal read", () => {
   }
 });
 
-test("unknown shell is routed to a real approval input instead of command-list denial", () => {
+test("unknown shell with no positive negative evidence is allowed", () => {
   const root = mkdtempSync(join(tmpdir(), "cfm-role-policy-opaque-"));
   try {
     const result = evaluateUnifiedOperationPolicy({
       ...input(root),
       args: { command: "Get-Date" },
     });
-    assert.equal(result.decision, "REQUIRE_APPROVAL");
-    if (result.decision === "REQUIRE_APPROVAL") {
-      assert.ok(result.rule_ids.includes("NEG.OPAQUE.EFFECT"));
-      assert.equal(result.input.executor_status, "missing");
-    }
+    assert.equal(result.decision, "ALLOW");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -95,9 +92,19 @@ test("active-project write is allowed while a cross-project write is approval-ro
     });
     assert.equal(escaped.decision, "REQUIRE_APPROVAL");
     if (escaped.decision === "REQUIRE_APPROVAL") {
-      assert.ok(escaped.rule_ids.includes("NEG.SCOPE.ESCAPE"));
+      assert.ok(escaped.rule_ids.includes("NEG.SCOPE.ESCAPE.WRITE"));
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("role tool gate checks exact capability only and does not inspect effects", () => {
+  assert.deepEqual(
+    evaluateRoleToolCall({ agentId: "PM-01", toolName: "shell", args: { command: "Get-Date" } }),
+    { allow: true },
+  );
+  const denied = evaluateRoleToolCall({ agentId: "EVAL-01", toolName: "write_file", args: { path: "result.md" } });
+  assert.equal(denied.allow, false);
+  assert.match(denied.reason ?? "", /^ROLE_CAPABILITY_DENIED:/);
 });

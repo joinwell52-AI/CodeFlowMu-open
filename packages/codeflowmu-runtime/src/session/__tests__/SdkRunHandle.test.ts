@@ -290,7 +290,7 @@ test("SdkRunHandle: exact git push creates a pre-action approval and leaves remo
   const approvals = new OperationApprovalService({ projectRoot: repo }).list();
   assert.equal(approvals.length, 1);
   assert.equal(isPendingApprovalStatus(approvals[0]!.status), true);
-  assert.equal(approvals[0]!.request.action.executor, "git.push");
+  assert.equal(approvals[0]!.request.action.executor, "agent.retry");
   assert.equal(await git(repo, ["ls-remote", "origin", "refs/heads/main"]), "");
 });
 

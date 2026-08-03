@@ -898,7 +898,7 @@ test("operation approval wait settles the session without marking the task run f
   });
 });
 
-test("historical operation policy denial is recovered without freezing or replanning the task", async () => {
+test("historical terminal policy error is preserved as failure evidence, never disguised as completed", async () => {
   await withTempSessionDir(async ({ sessionStore, transcriptWriter, agentStore, rootDir }) => {
     const sdk = new InMemorySdkAdapter();
     sdk.sendHandleFactory = (spec) =>
@@ -935,15 +935,15 @@ test("historical operation policy denial is recovered without freezing or replan
     await manager.awaitSettled(handle.session_id);
 
     const persisted = await sessionStore.load(handle.session_id);
-    assert.equal(persisted?.protocol.status, "completed");
+    assert.equal(persisted?.protocol.status, "failed");
     assert.ok(endedPayload);
     assert.equal(
       (endedPayload as Record<string, unknown>)["settlement_reason"],
-      "invalid_policy_freeze_recovered",
+      "failed",
     );
     assert.equal(
       (endedPayload as Record<string, unknown>)["failure_code"],
-      undefined,
+      "OPERATION_BOUNDARY_DENIED",
     );
   });
 });

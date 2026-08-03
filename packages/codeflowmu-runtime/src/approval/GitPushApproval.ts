@@ -46,7 +46,7 @@ export async function buildGitPushApprovalInput(input: {
     context: {
       workspace: input.cwd,
       environment: "external_git_remote",
-      initiated_by: "agent",
+      initiated_by: /^PANEL(?:-|$)/i.test(input.subject.actor) ? "user" : "agent",
       authorization_source: "none",
       human_confirmation_id: null,
     },
