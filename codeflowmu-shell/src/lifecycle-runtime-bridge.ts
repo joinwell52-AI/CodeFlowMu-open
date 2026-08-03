@@ -12,7 +12,7 @@ import {
   AuthorityError,
   ChildTasksNotAcceptedError,
   ChildTasksOpenError,
-  LifecycleStateMachine,
+  LifecycleKernel,
   approveHotPathTaskReview,
   approveProjectedLifecycleTaskReview,
   archiveHotPathTask,
@@ -138,9 +138,9 @@ function findLatestReportIdForSubmit(
   return candidates[0]?.id ?? "";
 }
 
-export function createLifecycleStateMachine(projectRoot?: string): LifecycleStateMachine {
+export function createLifecycleStateMachine(projectRoot?: string): LifecycleKernel {
   const root = projectRoot ?? resolveLifecycleProjectRoot();
-  return new LifecycleStateMachine({
+  return new LifecycleKernel({
     lifecycleRoot: lifecycleRootFromProject(root),
   });
 }
@@ -161,6 +161,7 @@ export type LifecycleRuntimeResult =
         filename: string;
         bucket: string;
         display_status?: string;
+        reason?: string;
         reasons?: string[];
       }>;
     };

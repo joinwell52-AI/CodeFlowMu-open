@@ -30,6 +30,7 @@ import type { FSWatcher } from "chokidar";
 import { eventDedupeRegistry } from "../_internal/EventDedupeRegistry.ts";
 import { shouldIgnoreCoordinationWatchPath } from "../_internal/report-ephemeral.ts";
 import { isGovernanceReportToPm } from "../fcop/governance.ts";
+import { withProjectWriteLease } from "../project/ProjectWriteBarrier.ts";
 import type { ReportWatcherSeenStore } from "./ReportWatcherSeenStore.ts";
 
 /** A report file that arrived for the PM role. */
@@ -76,6 +77,7 @@ const REPORT_PM_TO_ADMIN_RE =
 
 export class ReportWatcher {
   private readonly _dir: string;
+  private readonly _projectRoot: string;
   private readonly _handler: ReportEventHandler;
   private readonly _seenStore: ReportWatcherSeenStore | null;
   private readonly _onIntegrityViolation: ReportWatcherOpts["onIntegrityViolation"];
@@ -88,6 +90,7 @@ export class ReportWatcher {
 
   constructor(opts: ReportWatcherOpts) {
     this._dir = resolvePath(opts.dir);
+    this._projectRoot = resolvePath(this._dir, "..", "..");
     this._handler = opts.onReport;
     this._seenStore = opts.seenStore ?? null;
     this._onIntegrityViolation = opts.onIntegrityViolation;
@@ -240,15 +243,21 @@ export class ReportWatcher {
     this._log.info?.(`[ReportWatcher] ${filename} — ${logHint}`);
 
     try {
-      const content = await readFile(fullPath, "utf-8");
-      await this._handler({
-        filepath: fullPath,
-        filename,
-        senderRole,
-        content,
-      });
-      this._dispatchedReports.add(filename);
-      this._seenStore?.mark(filename);
+      await withProjectWriteLease(
+        this._projectRoot,
+        "report-watcher.dispatch",
+        async () => {
+          const content = await readFile(fullPath, "utf-8");
+          await this._handler({
+            filepath: fullPath,
+            filename,
+            senderRole,
+            content,
+          });
+          this._dispatchedReports.add(filename);
+          this._seenStore?.mark(filename);
+        },
+      );
     } catch (err) {
       eventDedupeRegistry.forgetFileEvent(fullPath, st.mtimeMs, st.size);
       this._log.error?.(

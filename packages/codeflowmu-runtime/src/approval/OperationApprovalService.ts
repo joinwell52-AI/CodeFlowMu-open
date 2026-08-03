@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
+import { withProjectWriteLeaseSync } from "../project/ProjectWriteBarrier.ts";
 
 import {
   evaluateNegativePredicates,
@@ -216,6 +217,10 @@ export type PrepareOperationInput = {
   decision_mode?: "AUTO" | "ADMIN_MANUAL";
 };
 
+export type PrepareOperationResult =
+  | { decision: "ALLOW"; executed: false; operation_digest: string; reason: string }
+  | { decision: "REQUIRE_APPROVAL"; executed: false; approval: OperationApprovalRecord };
+
 export type HumanConfirmationVerifier = (input: {
   confirmation_id: string;
   operation_digest: string;
@@ -411,9 +416,12 @@ export class OperationApprovalService {
     this.verifyHumanConfirmation = options.verifyHumanConfirmation;
   }
 
-  prepare(input: PrepareOperationInput):
-    | { decision: "ALLOW"; executed: false; operation_digest: string; reason: string }
-    | { decision: "REQUIRE_APPROVAL"; executed: false; approval: OperationApprovalRecord } {
+  prepare(input: PrepareOperationInput): PrepareOperationResult {
+    return withProjectWriteLeaseSync(this.root, "operation-approval.prepare", () =>
+      this.prepareWithLease(input));
+  }
+
+  private prepareWithLease(input: PrepareOperationInput): PrepareOperationResult {
     let classification = classifyCapabilityRequest(input.request);
     const verifiedRuleIds = input.operation_facts
       ? evaluateNegativePredicates(input.operation_facts).map((item) => item.rule_id)
@@ -1124,43 +1132,49 @@ export class OperationApprovalService {
   }
 
   private writeRecord(record: OperationApprovalRecord, createOnly = false): void {
-    mkdirSync(this.recordsDir, { recursive: true });
-    const path = this.recordPath(record.approval_id);
-    if (createOnly && existsSync(path)) {
-      throw new OperationApprovalError("APPROVAL_ID_CONFLICT", record.approval_id, 500);
-    }
-    const tmp = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`, "utf-8");
-    renameSync(tmp, path);
+    withProjectWriteLeaseSync(this.root, "operation-approval.record", () => {
+      mkdirSync(this.recordsDir, { recursive: true });
+      const path = this.recordPath(record.approval_id);
+      if (createOnly && existsSync(path)) {
+        throw new OperationApprovalError("APPROVAL_ID_CONFLICT", record.approval_id, 500);
+      }
+      const tmp = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+      writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`, "utf-8");
+      renameSync(tmp, path);
+    });
   }
 
   private audit(event: string, payload: Record<string, unknown>): void {
-    mkdirSync(dirname(this.auditPath), { recursive: true });
-    appendFileSync(
-      this.auditPath,
-      `${JSON.stringify({ event, at: this.now().toISOString(), project_root: this.root, ...payload })}\n`,
-      "utf-8",
-    );
+    withProjectWriteLeaseSync(this.root, "operation-approval.audit", () => {
+      mkdirSync(dirname(this.auditPath), { recursive: true });
+      appendFileSync(
+        this.auditPath,
+        `${JSON.stringify({ event, at: this.now().toISOString(), project_root: this.root, ...payload })}\n`,
+        "utf-8",
+      );
+    });
   }
 
   private withLock<T>(approvalId: string, fn: () => T): T {
-    mkdirSync(this.locksDir, { recursive: true });
-    const lockPath = join(this.locksDir, `${sanitizeId(approvalId)}.lock`);
-    let fd: number;
-    try {
-      fd = openSync(lockPath, "wx");
-    } catch {
-      throw new OperationApprovalError("APPROVAL_BUSY", `approval ${approvalId} is being updated`, 423);
-    }
-    try {
-      return fn();
-    } finally {
-      closeSync(fd);
+    return withProjectWriteLeaseSync(this.root, "operation-approval.transaction", () => {
+      mkdirSync(this.locksDir, { recursive: true });
+      const lockPath = join(this.locksDir, `${sanitizeId(approvalId)}.lock`);
+      let fd: number;
       try {
-        unlinkSync(lockPath);
+        fd = openSync(lockPath, "wx");
       } catch {
-        // A stale lock is fail-closed and can be inspected by an operator.
+        throw new OperationApprovalError("APPROVAL_BUSY", `approval ${approvalId} is being updated`, 423);
       }
-    }
+      try {
+        return fn();
+      } finally {
+        closeSync(fd);
+        try {
+          unlinkSync(lockPath);
+        } catch {
+          // A stale lock is fail-closed and can be inspected by an operator.
+        }
+      }
+    });
   }
 }

@@ -3,16 +3,16 @@
   "productName": "CodeFlowMu Open Dev Team Edition",
   "positioning": "A multi-agent development team application governed by the FCoP protocol and driven through Cursor SDK interfaces.",
   "edition": "open-dev-team",
-  "version": "V1.2.13-open",
-  "npmVersion": "1.2.13-open",
+  "version": "V1.2.14-open",
+  "npmVersion": "1.2.14-open",
   "releaseChannel": "open",
   "status": "public-open",
   "sourceRepository": "joinwell52-AI/codeflowmu",
   "targetRepository": "joinwell52-AI/CodeFlowMu-open",
-  "builtAt": "2026-08-03T15:23:04.348Z",
-  "sourceGitCommit": "c6416ca28abb4c67d2120ad061b1afd2fc9572ea",
+  "builtAt": "2026-08-03T16:18:09.953Z",
+  "sourceGitCommit": "1db97ec55d46c4d948aec16d9e7c91c7ab947f34",
   "sourceDirty": false,
-  "motherVersion": "V1.2.13",
+  "motherVersion": "V1.2.14",
   "features": [
     {
       "id": "fcop-development-team",
@@ -70,6 +70,12 @@
       "name": "PM long-horizon planning and ADMIN Planning Gate",
       "status": "public",
       "publicSince": "V1.2.13-open"
+    },
+    {
+      "id": "fcop-init-write-barrier",
+      "name": "Recoverable FCoP initialization write barrier",
+      "status": "public",
+      "publicSince": "V1.2.14-open"
     }
   ],
   "boundary": {
@@ -186,6 +192,7 @@
       "product-delivery-governance-gate",
       "task-claim-redispatch-recovery",
       "pm-long-horizon-planning",
+      "fcop-init-write-barrier",
       "pre-action-approval-gate",
       "runtime-governance-remediation",
       "team-model-runtime-persistence"
@@ -540,6 +547,29 @@
           "skills/README.md",
           "skills/README.zh.md",
           "skills/pm-long-horizon-planning/**"
+        ]
+      },
+      {
+        "id": "fcop-init-write-barrier",
+        "productPolicy": "open-core",
+        "description": "Coordinates FCoP initialization with live Ledger, Lifecycle, ReportWatcher and approval writers; snapshots only exact bootstrap inputs and rebuilds derived projections after commit or rollback.",
+        "paths": [
+          "codeflowmu-shell/src/fcop-bootstrap-transaction.ts",
+          "codeflowmu-shell/src/lifecycle-runtime-bridge.ts",
+          "codeflowmu-shell/src/web-panel.ts",
+          "codeflowmu-shell/src/__tests__/fcop-bootstrap-transaction.test.ts",
+          "codeflowmu-desktop/panel/index.html",
+          "packages/codeflowmu-runtime/src/index.ts",
+          "packages/codeflowmu-runtime/src/project/ProjectWriteBarrier.ts",
+          "packages/codeflowmu-runtime/src/project/__tests__/ProjectWriteBarrier.test.ts",
+          "packages/codeflowmu-runtime/src/ledger/LedgerBuilder.ts",
+          "packages/codeflowmu-runtime/src/lifecycle/LifecycleKernel.ts",
+          "packages/codeflowmu-runtime/src/lifecycle/reconcileReworkSuperseded.ts",
+          "packages/codeflowmu-runtime/src/scheduler/ReportActionResolver.ts",
+          "packages/codeflowmu-runtime/src/scheduler/ReportWatcher.ts",
+          "packages/codeflowmu-runtime/src/scheduler/ReportWatcherSeenStore.ts",
+          "packages/codeflowmu-runtime/src/approval/GovernanceApprovalService.ts",
+          "packages/codeflowmu-runtime/src/approval/OperationApprovalService.ts"
         ]
       },
       {

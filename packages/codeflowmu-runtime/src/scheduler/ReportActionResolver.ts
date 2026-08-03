@@ -13,7 +13,7 @@ import { resolveLedgerLayout } from "../ledger/paths.ts";
 import type { PanelEventBridge } from "../panel/PanelEventBridge.ts";
 import { findTaskLocationById } from "../lifecycle/taskPathUtils.ts";
 import { TaskFrontmatterStore } from "../lifecycle/TaskFrontmatterStore.ts";
-import { LifecycleStateMachine } from "../lifecycle/LifecycleStateMachine.ts";
+import { LifecycleKernel } from "../lifecycle/LifecycleKernel.ts";
 import { bodyAfterFrontmatter } from "../ledger/leaderLedgerContextPack.ts";
 import { resolveReviewEvidence } from "../review/ReviewEvidenceResolver.ts";
 import { evaluateReviewFactGate } from "../review/ReviewFactGate.ts";
@@ -223,7 +223,11 @@ export class ReportActionResolver {
     }
 
     const references = listField(fm, "references").map(normalizeId);
+    const hasExplicitTaskLink = Boolean(
+      strField(fm, "source_task_id") || strField(fm, "task_id"),
+    );
     if (
+      !hasExplicitTaskLink &&
       references.length > 0 &&
       !references.some((ref) => ref === taskId || taskId.startsWith(`${ref}-`))
     ) {
@@ -596,7 +600,7 @@ export class ReportActionResolver {
       })}\n\n${bodyAfterFrontmatter(latestReportRaw)}\n`,
       "utf-8",
     );
-    await new LifecycleStateMachine({
+    await new LifecycleKernel({
       lifecycleRoot: this.#layout.lifecycleRoot,
     }).runtimeSupersedeForRework({
       taskId,
@@ -675,6 +679,22 @@ export class ReportActionResolver {
     });
     const body = `${renderFrontmatter(frontmatter)}\n\n${bodyMarkdown}`;
     await writeExclusive(path, body);
+    if (taskId) {
+      const located = await findTaskLocationById(
+        this.#layout.lifecycleRoot,
+        taskId,
+        { hotTasksDir: this.#layout.tasksDir },
+      );
+      if (located) {
+        const { fm: taskFm, body: taskBody } = await this.#store.read(located.path);
+        taskFm.display_status = "blocked";
+        taskFm.dispatch_state = "blocked";
+        taskFm.issue_blocking = true;
+        taskFm.blocking_issue_id = issueId;
+        taskFm.blocking_issue_reason = reason;
+        await this.#store.write(located.path, taskFm, taskBody);
+      }
+    }
     await new LedgerBuilder({ projectRoot: this.#projectRoot }).rebuild();
     this.#log.warn?.(
       `[ReportActionResolver] wrote issue ${basename(path)} for ${reportId}: ${reason}`,
@@ -685,6 +705,10 @@ export class ReportActionResolver {
       report_id: reportId,
       task_id: taskId,
       reason,
+      owner: "PM",
+      handling_role: "PM",
+      blocking: Boolean(taskId),
+      blocking_level: taskId ? "blocking" : "warning",
       ...(alertCode ? { alert_code: alertCode } : {}),
     });
     return "issue_created";

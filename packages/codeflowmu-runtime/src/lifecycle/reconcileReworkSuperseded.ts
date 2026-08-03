@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { parseMarkdownFrontmatter, strField } from "../ledger/frontmatter.ts";
 import { resolveLedgerLayout } from "../ledger/paths.ts";
 import { removeTaskFromAgentQueue } from "../pm/agentTaskQueue.ts";
-import { LifecycleStateMachine } from "./LifecycleStateMachine.ts";
+import { LifecycleKernel } from "./LifecycleKernel.ts";
 
 const STAGES = ["inbox", "active", "review", "done", "archive"] as const;
 
@@ -18,7 +18,7 @@ export async function reconcileReworkSupersededTasks(
   projectRoot: string,
 ): Promise<ReworkReconcileResult> {
   const layout = resolveLedgerLayout(projectRoot);
-  const machine = new LifecycleStateMachine({ lifecycleRoot: layout.lifecycleRoot });
+  const machine = new LifecycleKernel({ lifecycleRoot: layout.lifecycleRoot });
   const replacements: Array<{
     taskId: string;
     reworkOf: string;

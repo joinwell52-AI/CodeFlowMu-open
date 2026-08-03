@@ -14,6 +14,7 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { withProjectWriteLeaseSync } from "../project/ProjectWriteBarrier.ts";
 
 export const GOVERNANCE_RECORD_TYPES = [
   "DIRECTIVE",
@@ -475,6 +476,18 @@ export class GovernanceApprovalService {
   }
 
   writeDraft(
+    input: GovernanceRecordInput,
+    options: {
+      governanceId?: string;
+      revision?: number;
+      idempotencyKey?: string;
+    } = {},
+  ): GovernanceRecord {
+    return withProjectWriteLeaseSync(this.root, "governance-approval.draft", () =>
+      this.writeDraftWithLease(input, options));
+  }
+
+  private writeDraftWithLease(
     input: GovernanceRecordInput,
     options: {
       governanceId?: string;
@@ -1627,28 +1640,32 @@ export class GovernanceApprovalService {
   }
 
   private writeCreateOnly(path: string, content: string): void {
-    mkdirSync(dirname(path), { recursive: true });
-    let fd: number;
-    try {
-      fd = openSync(path, "wx");
-    } catch {
-      throw new GovernanceApprovalError(
-        "IMMUTABLE_FILE_CONFLICT",
-        `formal file already exists: ${path}`,
-      );
-    }
-    try {
-      writeFileSync(fd, content, "utf-8");
-    } finally {
-      closeSync(fd);
-    }
+    withProjectWriteLeaseSync(this.root, "governance-approval.create", () => {
+      mkdirSync(dirname(path), { recursive: true });
+      let fd: number;
+      try {
+        fd = openSync(path, "wx");
+      } catch {
+        throw new GovernanceApprovalError(
+          "IMMUTABLE_FILE_CONFLICT",
+          `formal file already exists: ${path}`,
+        );
+      }
+      try {
+        writeFileSync(fd, content, "utf-8");
+      } finally {
+        closeSync(fd);
+      }
+    });
   }
 
   private writeAtomic(path: string, content: string): void {
-    mkdirSync(dirname(path), { recursive: true });
-    const tmp = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-    writeFileSync(tmp, content, "utf-8");
-    renameSync(tmp, path);
+    withProjectWriteLeaseSync(this.root, "governance-approval.update", () => {
+      mkdirSync(dirname(path), { recursive: true });
+      const tmp = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+      writeFileSync(tmp, content, "utf-8");
+      renameSync(tmp, path);
+    });
   }
 
   private withLock<T>(
@@ -1656,32 +1673,34 @@ export class GovernanceApprovalService {
     revision: number,
     fn: () => T,
   ): T {
-    const lockDir = join(this.runtimeRoot, "locks");
-    mkdirSync(lockDir, { recursive: true });
-    const path = join(
-      lockDir,
-      `${sanitizeId(governanceId)}-r${revision}.lock`,
-    );
-    let fd: number;
-    try {
-      fd = openSync(path, "wx");
-    } catch {
-      throw new GovernanceApprovalError(
-        "APPROVAL_BUSY",
-        `${governanceId} revision ${revision} is being updated`,
-        423,
+    return withProjectWriteLeaseSync(this.root, "governance-approval.transaction", () => {
+      const lockDir = join(this.runtimeRoot, "locks");
+      mkdirSync(lockDir, { recursive: true });
+      const path = join(
+        lockDir,
+        `${sanitizeId(governanceId)}-r${revision}.lock`,
       );
-    }
-    try {
-      return fn();
-    } finally {
-      closeSync(fd);
+      let fd: number;
       try {
-        unlinkSync(path);
+        fd = openSync(path, "wx");
       } catch {
-        // A stale lock remains fail-closed and is visible to diagnostics.
+        throw new GovernanceApprovalError(
+          "APPROVAL_BUSY",
+          `${governanceId} revision ${revision} is being updated`,
+          423,
+        );
       }
-    }
+      try {
+        return fn();
+      } finally {
+        closeSync(fd);
+        try {
+          unlinkSync(path);
+        } catch {
+          // A stale lock remains fail-closed and is visible to diagnostics.
+        }
+      }
+    });
   }
 
   private idempotencyPath(key: string): string {
@@ -1807,26 +1826,28 @@ export class GovernanceApprovalService {
   }
 
   private audit(event: string, payload: Record<string, unknown>): void {
-    const path = join(this.runtimeRoot, "audit.jsonl");
-    mkdirSync(dirname(path), { recursive: true });
-    let previousHash = "GENESIS";
-    if (existsSync(path)) {
-      const lines = readFileSync(path, "utf-8").trim().split(/\r?\n/);
-      const last = lines.at(-1);
-      if (last) {
-        previousHash = normalizeText(
-          (JSON.parse(last) as Record<string, unknown>)["entry_hash"],
-        );
+    withProjectWriteLeaseSync(this.root, "governance-approval.audit", () => {
+      const path = join(this.runtimeRoot, "audit.jsonl");
+      mkdirSync(dirname(path), { recursive: true });
+      let previousHash = "GENESIS";
+      if (existsSync(path)) {
+        const lines = readFileSync(path, "utf-8").trim().split(/\r?\n/);
+        const last = lines.at(-1);
+        if (last) {
+          previousHash = normalizeText(
+            (JSON.parse(last) as Record<string, unknown>)["entry_hash"],
+          );
+        }
       }
-    }
-    const base = {
-      event,
-      at: this.now().toISOString(),
-      project_root: this.root,
-      previous_hash: previousHash,
-      ...payload,
-    };
-    const entry = { ...base, entry_hash: digest(base) };
-    appendFileSync(path, `${JSON.stringify(entry)}\n`, "utf-8");
+      const base = {
+        event,
+        at: this.now().toISOString(),
+        project_root: this.root,
+        previous_hash: previousHash,
+        ...payload,
+      };
+      const entry = { ...base, entry_hash: digest(base) };
+      appendFileSync(path, `${JSON.stringify(entry)}\n`, "utf-8");
+    });
   }
 }

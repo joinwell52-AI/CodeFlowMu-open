@@ -5,12 +5,15 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { withProjectWriteLeaseSync } from "../project/ProjectWriteBarrier.ts";
 
 export class ReportWatcherSeenStore {
   private readonly _path: string;
+  private readonly _projectRoot: string;
   private readonly _seen = new Set<string>();
 
   constructor(projectRoot: string) {
+    this._projectRoot = projectRoot;
     const dir = join(projectRoot, ".codeflowmu", "report-watcher");
     try {
       mkdirSync(dir, { recursive: true });
@@ -48,15 +51,17 @@ export class ReportWatcherSeenStore {
     if (this._seen.has(filename)) return;
     this._seen.add(filename);
     try {
-      appendFileSync(
-        this._path,
-        JSON.stringify({
-          ts: Date.now(),
-          at: new Date().toISOString(),
-          filename,
-        }) + "\n",
-        "utf-8",
-      );
+      withProjectWriteLeaseSync(this._projectRoot, "report-watcher.seen", () => {
+        appendFileSync(
+          this._path,
+          JSON.stringify({
+            ts: Date.now(),
+            at: new Date().toISOString(),
+            filename,
+          }) + "\n",
+          "utf-8",
+        );
+      });
     } catch {
       /* best-effort */
     }

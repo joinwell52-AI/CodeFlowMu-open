@@ -92,6 +92,19 @@ export {
 } from "./session/index.ts";
 
 export {
+  acquireProjectWriteLease,
+  acquireProjectWriteLeaseSync,
+  isProjectInitializationActive,
+  projectInitializationLockPath,
+  ProjectWriteBarrierError,
+  resetProjectWriteBarrierForTests,
+  waitForProjectWriteLeasesToDrain,
+  withProjectWriteLease,
+  withProjectWriteLeaseSync,
+  type ProjectWriteLease,
+} from "./project/ProjectWriteBarrier.ts";
+
+export {
   InboxWatcher,
   type InboxEvent,
   type InboxEventHandler,

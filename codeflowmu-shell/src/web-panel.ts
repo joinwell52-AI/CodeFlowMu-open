@@ -5347,7 +5347,12 @@ export function buildWebPanelApp(
 
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      send(`❌ 初始化失败：${msg}`, true, { success: false });
+      const code = msg.includes("PRESERVE_CONCURRENT_WRITE")
+        ? "PRESERVE_CONCURRENT_WRITE"
+        : msg.includes("FCOP_INIT_PLAN_STALE")
+          ? "FCOP_INIT_PLAN_STALE"
+          : "FCOP_INIT_FAILED";
+      send(`❌ 初始化失败：${msg}`, true, { success: false, code });
     } finally {
       res.end();
     }

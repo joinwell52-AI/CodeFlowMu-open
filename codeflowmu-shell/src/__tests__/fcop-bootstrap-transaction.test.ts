@@ -10,11 +10,25 @@ import {
   createFcopBootstrapManifest,
   verifyFcopBootstrapManifest,
 } from "../fcop-bootstrap-transaction.ts";
+import {
+  acquireProjectWriteLease,
+  projectInitializationLockPath,
+  withProjectWriteLease,
+} from "../../../packages/codeflowmu-runtime/src/project/ProjectWriteBarrier.ts";
+import { flushScheduledLedgerRebuild } from "../../../packages/codeflowmu-runtime/src/ledger/scheduleLedgerRebuild.ts";
 
 function write(root: string, rel: string, content: string): void {
   const target = join(root, rel);
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, content, "utf8");
+}
+
+async function waitUntil(check: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error("timed out waiting for test condition");
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 function sourceFixture(): string {
@@ -52,7 +66,7 @@ function compatiblePlan(sourceRoot: string, targetRoot: string) {
   });
 }
 
-test("new initialization writes only the confirmed signed plan and passes digest postflight", () => {
+test("new initialization writes only the confirmed signed plan and passes digest postflight", async () => {
   const source = sourceFixture();
   const target = join(mkdtempSync(join(tmpdir(), "cfm-bootstrap-parent-")), "new-project");
   try {
@@ -62,8 +76,8 @@ test("new initialization writes only the confirmed signed plan and passes digest
     const plan = compatiblePlan(source, target);
     assert.equal(plan.mode, "new");
     assert.deepEqual(plan.conflict, []);
-    assert.throws(() => new FcopInitTransaction(plan).execute("wrong-digest"), /FCOP_INIT_PLAN_STALE/);
-    const result = new FcopInitTransaction(plan).execute(plan.plan_digest);
+    await assert.rejects(() => new FcopInitTransaction(plan).execute("wrong-digest"), /FCOP_INIT_PLAN_STALE/);
+    const result = await new FcopInitTransaction(plan).execute(plan.plan_digest);
     assert.equal(result.plan_digest, plan.plan_digest);
     assert.equal(result.rolled_back.length, 0);
     assert.equal(verifyFcopBootstrapManifest(target).ok, true);
@@ -75,7 +89,7 @@ test("new initialization writes only the confirmed signed plan and passes digest
   }
 });
 
-test("older installed or bundled packages produce a read-only conflict plan", () => {
+test("older installed or bundled packages produce a read-only conflict plan", async () => {
   const source = sourceFixture();
   const target = join(mkdtempSync(join(tmpdir(), "cfm-bootstrap-preflight-")), "target");
   try {
@@ -90,7 +104,7 @@ test("older installed or bundled packages produce a read-only conflict plan", ()
     assert.equal(plan.conflict.filter((item) => item.target_rel.startsWith("@package/")).length, 4);
     assert.equal(plan.package_upgrade_actions.length, 4);
     assert.equal(existsSync(target), false);
-    assert.throws(() => new FcopInitTransaction(plan).execute(plan.plan_digest), /FCOP_INIT_PLAN_CONFLICT/);
+    await assert.rejects(() => new FcopInitTransaction(plan).execute(plan.plan_digest), /FCOP_INIT_PLAN_CONFLICT/);
     assert.equal(existsSync(target), false);
   } finally {
     rmSync(source, { recursive: true, force: true });
@@ -121,7 +135,7 @@ test("frontmatter protocol versions are parsed and never become an unknown minim
   }
 });
 
-test("partial uninitialized project preserves local bootstrap files and completes initialization", () => {
+test("partial uninitialized project preserves local bootstrap files and completes initialization", async () => {
   const source = sourceFixture();
   const target = mkdtempSync(join(tmpdir(), "cfm-bootstrap-partial-"));
   try {
@@ -132,7 +146,7 @@ test("partial uninitialized project preserves local bootstrap files and complete
     assert.equal(plan.mode, "new");
     assert.deepEqual(plan.conflict, []);
     assert.ok(plan.preserve.some((row) => row.target_rel === "AGENTS.md"));
-    new FcopInitTransaction(plan).execute(plan.plan_digest);
+    await new FcopInitTransaction(plan).execute(plan.plan_digest);
     assert.equal(readFileSync(join(target, "AGENTS.md"), "utf8"), "local project instructions must survive\n");
     assert.equal(readFileSync(join(target, "fcop/shared/TEAM-README.md"), "utf8"), "local team notes must survive\n");
     assert.equal(verifyFcopBootstrapManifest(target).ok, true);
@@ -143,7 +157,7 @@ test("partial uninitialized project preserves local bootstrap files and complete
   }
 });
 
-test("takeover preserves formal ledgers, workspace products, approvals, and host identity", () => {
+test("takeover preserves formal ledgers, workspace products, approvals, and host identity", async () => {
   const source = sourceFixture();
   const target = mkdtempSync(join(tmpdir(), "cfm-bootstrap-takeover-"));
   try {
@@ -165,7 +179,7 @@ test("takeover preserves formal ledgers, workspace products, approvals, and host
     const plan = compatiblePlan(source, target);
     assert.equal(plan.mode, "takeover");
     assert.deepEqual(plan.conflict, []);
-    new FcopInitTransaction(plan).execute(plan.plan_digest);
+    await new FcopInitTransaction(plan).execute(plan.plan_digest);
     for (const [rel, before] of preserved) assert.equal(readFileSync(join(target, rel), "utf8"), before, rel);
     assert.match(readFileSync(join(target, ".cursor/rules/fcop-rules.mdc"), "utf8"), /3\.2\.5/);
   } finally {
@@ -174,7 +188,7 @@ test("takeover preserves formal ledgers, workspace products, approvals, and host
   }
 });
 
-test("a staging digest failure rolls back every applied bootstrap file", () => {
+test("a staging digest failure rolls back every applied bootstrap file", async () => {
   const source = sourceFixture();
   const target = mkdtempSync(join(tmpdir(), "cfm-bootstrap-rollback-"));
   try {
@@ -186,7 +200,7 @@ test("a staging digest failure rolls back every applied bootstrap file", () => {
     const plan = compatiblePlan(source, target);
     assert.deepEqual(plan.conflict, []);
     write(source, "workspace/README.md", "tampered after confirmation\n");
-    assert.throws(() => new FcopInitTransaction(plan).execute(plan.plan_digest), /staging digest mismatch/);
+    await assert.rejects(() => new FcopInitTransaction(plan).execute(plan.plan_digest), /staging digest mismatch/);
     assert.equal(readFileSync(join(target, ".cursor/rules/fcop-rules.mdc"), "utf8"), originalRules);
     assert.equal(readFileSync(join(target, "fcop/tasks/TASK-ROLLBACK.md"), "utf8"), "must survive\n");
     assert.equal(existsSync(join(target, "fcop", "bootstrap-manifest.json")), false);
@@ -196,7 +210,7 @@ test("a staging digest failure rolls back every applied bootstrap file", () => {
   }
 });
 
-test("an extended postflight failure restores every bootstrap update and keeps formal artifacts", () => {
+test("an extended postflight failure restores every bootstrap update and keeps formal artifacts", async () => {
   const source = sourceFixture();
   const target = mkdtempSync(join(tmpdir(), "cfm-bootstrap-postflight-"));
   try {
@@ -208,7 +222,7 @@ test("an extended postflight failure restores every bootstrap update and keeps f
     const originalRules = readFileSync(join(target, ".cursor/rules/fcop-rules.mdc"), "utf8");
     const plan = compatiblePlan(source, target);
     assert.deepEqual(plan.conflict, []);
-    assert.throws(
+    await assert.rejects(
       () => new FcopInitTransaction(plan).execute(plan.plan_digest, () => ({
         ok: false,
         failures: ["injected identity-isolation postflight failure"],
@@ -219,6 +233,52 @@ test("an extended postflight failure restores every bootstrap update and keeps f
     assert.equal(readFileSync(join(target, "fcop/issues/ISSUE-KEEP.md"), "utf8"), "formal issue\n");
     assert.equal(readFileSync(join(target, "workspace/product/result.md"), "utf8"), "product\n");
     assert.equal(existsSync(join(target, "fcop", "bootstrap-manifest.json")), false);
+  } finally {
+    rmSync(source, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("initialization coordinates live writers and ignores rebuildable projections", async () => {
+  const source = sourceFixture();
+  const target = mkdtempSync(join(tmpdir(), "cfm-bootstrap-concurrent-"));
+  try {
+    write(target, "fcop/fcop.json", '{"mode":"preset","team":"dev-team","leader":"PM","roles":["PM","DEV","QA","OPS"]}\n');
+    write(target, ".cursor/rules/fcop-rules.mdc", "> Rules version: `3.2.3`\n");
+    write(target, ".cursor/rules/fcop-protocol.mdc", "> Rules version: `3.2.3` · Protocol commentary version: `3.2.3`\n");
+    write(target, "fcop/ledger/views/ADMIN.closed_parent_residue.md", "old projection\n");
+    write(target, "fcop/logs/runtime/runtime-events.jsonl", '{"event":"before"}\n');
+    const plan = compatiblePlan(source, target);
+    const activeLedger = await acquireProjectWriteLease(target, "ledger.rebuild");
+    const transactionPromise = new FcopInitTransaction(plan).execute(
+      plan.plan_digest,
+      () => {
+        write(target, "fcop/ledger/views/ADMIN.closed_parent_residue.md", "projection rebuilt during postflight\n");
+        write(target, "fcop/logs/runtime/runtime-events.jsonl", '{"event":"during"}\n');
+        return { ok: true };
+      },
+    );
+    await waitUntil(() => existsSync(projectInitializationLockPath(target)));
+
+    const taskWriter = withProjectWriteLease(target, "task-arrival", () => {
+      write(target, "fcop/tasks/TASK-20260803-999-ADMIN-to-PM.md", "---\ntask_id: TASK-20260803-999\nfrom: ADMIN\nto: PM\nstatus: pending\n---\n\nConcurrent task\n");
+    });
+    const reportWriter = withProjectWriteLease(target, "approval-and-report", () => {
+      write(target, "fcop/reports/REPORT-20260803-999-PM-to-ADMIN.md", "---\nreport_id: REPORT-20260803-999\ntask_id: TASK-20260803-999\nfrom: PM\nto: ADMIN\nstatus: done\n---\n\nConcurrent report\n");
+      write(target, ".codeflowmu/operation-approvals/records/APPROVAL-CONCURRENT.json", '{"status":"approved"}\n');
+    });
+    activeLedger.release();
+
+    const result = await transactionPromise;
+    await Promise.all([taskWriter, reportWriter]);
+    await flushScheduledLedgerRebuild(target);
+    assert.equal(result.rolled_back.length, 0);
+    assert.equal(existsSync(projectInitializationLockPath(target)), false);
+    assert.equal(existsSync(join(target, "fcop/tasks/TASK-20260803-999-ADMIN-to-PM.md")), true);
+    assert.equal(existsSync(join(target, "fcop/reports/REPORT-20260803-999-PM-to-ADMIN.md")), true);
+    assert.equal(existsSync(join(target, ".codeflowmu/operation-approvals/records/APPROVAL-CONCURRENT.json")), true);
+    assert.equal(readFileSync(join(target, "fcop/logs/runtime/runtime-events.jsonl"), "utf8"), '{"event":"during"}\n');
+    assert.match(readFileSync(join(target, "fcop/ledger/tasks.jsonl"), "utf8"), /TASK-20260803-999/);
   } finally {
     rmSync(source, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });

@@ -52,6 +52,7 @@ import type {
 } from "./types.ts";
 import { evaluateQaReportAcceptance } from "../pm/qaAcceptanceFromReport.ts";
 import { isDependencyPendingReport } from "./reportDependencyOutcome.ts";
+import { withProjectWriteLease } from "../project/ProjectWriteBarrier.ts";
 
 const TASK_FILE_RE = /^TASK-\d{8}-\d{3,}-/i;
 const REPORT_FILE_RE = /^REPORT-\d{8}-\d{3,}-/i;
@@ -536,6 +537,14 @@ export class LedgerBuilder {
   }
 
   async rebuild(): Promise<LedgerRebuildResult> {
+    return withProjectWriteLease(
+      this.#projectRoot,
+      "ledger.rebuild",
+      () => this.#rebuildWithLease(),
+    );
+  }
+
+  async #rebuildWithLease(): Promise<LedgerRebuildResult> {
     const layout = await ensureLedgerLayout(this.#projectRoot);
     const tasksJsonlPath = join(layout.ledgerDir, "tasks.jsonl");
     const priorLedger = await readLedgerTasksJsonl(tasksJsonlPath);

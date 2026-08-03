@@ -6062,7 +6062,9 @@ const LANGS={
     'env.deployFailLog':'❌ 补部署未通过磁盘验收 — 请查看上方 ❌ 项',
     'env.initInProgress':'⏳ 初始化进行中...',
     'env.initPass':'✅ 初始化验收通过',
-    'env.initFailLog':'❌ 初始化未完成或未通过磁盘验收 — 请查看上方 ❌ 项，必要时点「补部署角色文档」或重试 init',
+    'env.initFailLog':'❌ 初始化未完成或未通过磁盘验收 — 请根据上方错误代码处理，不要盲目重试',
+    'env.initConcurrentFailLog':'❌ 运行时并发写入冲突，初始化已安全回滚。禁止重复重试或点击「补部署角色文档」；请先升级母版，或由 ADMIN 停止并发写入后处理。',
+    'env.initConcurrentBlocked':'并发冲突：禁止重试',
     'env.initRetry':'⚡ 重试部署/接管',
     'env.streamNoDone':'⚠️ 流结束但未收到完成信号，请检查日志。',
     'env.requestFailPrefix':'❌ 请求失败: ',
@@ -7212,7 +7214,9 @@ const LANGS={
     'env.deployFailLog':'❌ Role template deploy failed disk check — see ❌ items above',
     'env.initInProgress':'⏳ Initializing…',
     'env.initPass':'✅ Init verification passed',
-    'env.initFailLog':'❌ Init incomplete or failed disk check — see ❌ above; retry role deploy or init',
+    'env.initFailLog':'❌ Init incomplete or failed disk check — follow the error code above; do not retry blindly',
+    'env.initConcurrentFailLog':'❌ Runtime writes conflicted with initialization and the transaction was safely rolled back. Do not retry or deploy role documents; upgrade the mother edition or let ADMIN stop concurrent writers first.',
+    'env.initConcurrentBlocked':'Concurrent conflict: retry blocked',
     'env.initRetry':'⚡ Retry deploy',
     'env.streamNoDone':'⚠️ Stream ended without done signal — check log',
     'env.requestFailPrefix':'❌ Request failed: ',
@@ -24344,6 +24348,7 @@ async function submitFcopInit() {
     let buf = '';
     let isDone = false;
     let initSuccess = false;
+    let initFailureCode = '';
 
     while (true) {
       const { value, done } = await reader.read();
@@ -24362,6 +24367,7 @@ async function submitFcopInit() {
           if (evt.done) {
             isDone = true;
             initSuccess = evt.success === true;
+            initFailureCode = String(evt.code || '');
           }
         } catch (_) { /* 忽略非 JSON 行 */ }
       }
@@ -24385,11 +24391,12 @@ async function submitFcopInit() {
         }
       }, 1800);
     } else if (isDone) {
-      appendLog(t('env.initFailLog'));
+      const concurrentWriteConflict = initFailureCode === 'PRESERVE_CONCURRENT_WRITE';
+      appendLog(t(concurrentWriteConflict ? 'env.initConcurrentFailLog' : 'env.initFailLog'));
       showToast(t('toast.fcopInitFail'), '#fca5a5');
       if (btn) {
-        btn.disabled = false;
-        btn.textContent = t('env.initRetry');
+        btn.disabled = concurrentWriteConflict;
+        btn.textContent = t(concurrentWriteConflict ? 'env.initConcurrentBlocked' : 'env.initRetry');
         btn.style.background = '';
       }
       runEnvCheck();

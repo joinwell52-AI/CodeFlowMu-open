@@ -15,6 +15,10 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
+import {
+  waitForProjectWriteLeasesToDrain,
+} from "../../packages/codeflowmu-runtime/src/project/ProjectWriteBarrier.ts";
+import { scheduleLedgerRebuild } from "../../packages/codeflowmu-runtime/src/ledger/scheduleLedgerRebuild.ts";
 
 export type FcopBootstrapFile = {
   source_rel: string;
@@ -118,6 +122,10 @@ const IDENTITY_DENYLIST = [
   "runtime.lock",
 ] as const;
 
+// These prefixes remain explicit "initializer must not write" policy entries.
+// Their live contents are deliberately not hashed: tasks, reports, logs and
+// ledger projections are written by the running project and are coordinated by
+// ProjectWriteBarrier instead of requiring the whole tree to stay motionless.
 const LEDGER_PRESERVE_PREFIXES = [
   "fcop/_lifecycle/",
   "fcop/tasks/",
@@ -210,11 +218,16 @@ function listFiles(root: string, rel = ""): string[] {
   return out;
 }
 
-function preservedFileSnapshot(targetRoot: string): Array<{ target_rel: string; sha256: string }> {
+function preservedFileSnapshot(
+  targetRoot: string,
+  preserveEntries: FcopInitPlanEntry[],
+): Array<{ target_rel: string; sha256: string }> {
   const rows: Array<{ target_rel: string; sha256: string }> = [];
   const candidates = new Set<string>();
-  for (const prefix of LEDGER_PRESERVE_PREFIXES) {
-    for (const rel of listFiles(targetRoot, prefix)) candidates.add(rel);
+  for (const entry of preserveEntries) {
+    const rel = slash(entry.target_rel);
+    const target = join(targetRoot, rel);
+    if (existsSync(target) && statSync(target).isFile()) candidates.add(rel);
   }
   for (const rel of IDENTITY_DENYLIST) {
     const target = join(targetRoot, rel);
@@ -225,6 +238,17 @@ function preservedFileSnapshot(targetRoot: string): Array<{ target_rel: string; 
     if (sha) rows.push({ target_rel: slash(rel), sha256: sha });
   }
   return rows;
+}
+
+function assertExecutionPlanStillFresh(plan: FcopInitPlan): void {
+  for (const entry of [...plan.create, ...plan.update]) {
+    const actual = fileSha(join(plan.target_root, entry.target_rel));
+    if (actual !== (entry.actual_sha256 ?? null)) {
+      throw new Error(
+        `FCOP_INIT_PLAN_STALE: ${entry.target_rel} changed after approval`,
+      );
+    }
+  }
 }
 
 function manifestFileCandidates(sourceRoot: string): Array<Omit<FcopBootstrapFile, "sha256">> {
@@ -559,7 +583,6 @@ export function buildFcopInitPlan(input: {
     "fcop/scripts",
     "workspace",
   ];
-  const preserve_snapshot = preservedFileSnapshot(targetRoot);
   const planBase = {
     schema_version: "1.0" as const,
     mode,
@@ -585,7 +608,10 @@ export function buildFcopInitPlan(input: {
     },
     package_requirements: [manifest.fcop_package_compatibility, `shell=${manifest.shell_compatibility}`, `runtime=${manifest.runtime_compatibility}`],
     package_upgrade_actions: packageUpgradeActions,
-    preserve_snapshot,
+    // Execution snapshots are intentionally created only after the shared
+    // project write barrier is held. A plan may wait for ADMIN approval while
+    // the live runtime continues writing tasks, reports and ledger projections.
+    preserve_snapshot: [] as Array<{ target_rel: string; sha256: string }>,
     identity_contract: {
       preserve_runtime_instance: true as const,
       preserve_gateway_secret: true as const,
@@ -593,11 +619,12 @@ export function buildFcopInitPlan(input: {
       preserve_registry_data_root: true as const,
     },
     rollback_plan: [
-      "acquire project-level init lock",
-      "snapshot every approved update",
+      "acquire the shared project write barrier and drain active writers",
+      "revalidate the approved plan and snapshot exact preserved bootstrap inputs",
       "write approved files through transaction staging",
       "postflight every manifest digest",
       "restore all snapshots and remove transaction-created files on failure",
+      "release the barrier and rebuild derived ledger projections once",
     ],
   };
   return { ...planBase, plan_digest: digest(planBase) };
@@ -626,10 +653,10 @@ export class FcopInitTransaction {
     this.sourceRoot = resolve(plan.source_root);
   }
 
-  execute(
+  async execute(
     approvedPlanDigest: string,
     postflight?: () => { ok: boolean; failures?: string[]; evidence?: unknown },
-  ): FcopInitTransactionResult {
+  ): Promise<FcopInitTransactionResult> {
     if (approvedPlanDigest !== this.plan.plan_digest) {
       throw new Error("FCOP_INIT_PLAN_STALE: confirmed plan digest does not match execution plan");
     }
@@ -654,9 +681,19 @@ export class FcopInitTransaction {
     const createdDirectories = new Set<string>();
     const created = new Set(this.plan.create.map((item) => item.target_rel));
     const updates = new Set(this.plan.update.map((item) => item.target_rel));
+    let executionPreserveSnapshot: Array<{ target_rel: string; sha256: string }> = [];
     mkdirSync(snapshotRoot, { recursive: true });
     const journal = (state: string, error?: string) => writeAtomic(journalPath, `${JSON.stringify({ transaction_id: transactionId, state, plan_digest: this.plan.plan_digest, changed, rolled_back: rolledBack, error, updated_at: new Date().toISOString() }, null, 2)}\n`);
     try {
+      try {
+        await waitForProjectWriteLeasesToDrain(this.targetRoot, { timeoutMs: 30_000 });
+      } catch (error) {
+        throw new Error(
+          `PRESERVE_CONCURRENT_WRITE: runtime project writers did not yield to initialization; do not retry blindly (${error instanceof Error ? error.message : String(error)})`,
+        );
+      }
+      assertExecutionPlanStillFresh(this.plan);
+      executionPreserveSnapshot = preservedFileSnapshot(this.targetRoot, this.plan.preserve);
       journal("preparing");
       for (const rel of this.plan.required_directories) {
         assertSafeRelative(rel);
@@ -747,11 +784,20 @@ export class FcopInitTransaction {
           throw new Error(`generated postflight digest mismatch: ${file.target_rel}`);
         }
       }
-      for (const preserved of this.plan.preserve_snapshot) {
+      for (const preserved of executionPreserveSnapshot) {
         const actual = fileSha(join(this.targetRoot, preserved.target_rel));
         if (actual !== preserved.sha256) {
-          throw new Error(`preserved artifact changed during initialization: ${preserved.target_rel}`);
+          throw new Error(`FCOP_INIT_PRESERVED_INPUT_CHANGED: ${preserved.target_rel}`);
         }
+      }
+      const approvedWriteSet = new Set([
+        ...this.plan.create.map((item) => slash(item.target_rel)),
+        ...this.plan.update.map((item) => slash(item.target_rel)),
+        "fcop/bootstrap-manifest.json",
+      ]);
+      const unapprovedWrites = changed.filter((rel) => !approvedWriteSet.has(slash(rel)));
+      if (unapprovedWrites.length > 0) {
+        throw new Error(`FCOP_INIT_UNAPPROVED_WRITE: ${unapprovedWrites.join(", ")}`);
       }
       for (const rel of this.plan.required_directories) {
         const directory = join(this.targetRoot, rel);
@@ -778,7 +824,7 @@ export class FcopInitTransaction {
         manifest: installedManifest.manifest_digest,
         files: installedManifest.files.map((file) => [file.target_rel, fileSha(join(this.targetRoot, file.target_rel))]),
         generated: this.plan.generated_files.map((file) => [file.target_rel, fileSha(join(this.targetRoot, file.target_rel))]),
-        preserved: this.plan.preserve_snapshot,
+        preserved: executionPreserveSnapshot,
         extended_postflight: extendedPostflight?.evidence ?? null,
       });
       journal("committed");
@@ -820,6 +866,7 @@ export class FcopInitTransaction {
     } finally {
       closeSync(lockFd!);
       try { unlinkSync(lockPath); } catch { /* visible stale lock is handled by diagnostics */ }
+      scheduleLedgerRebuild(this.targetRoot);
       const staging = join(txRoot, "staging");
       if (existsSync(staging)) {
         assertWithin(txRoot, staging);
