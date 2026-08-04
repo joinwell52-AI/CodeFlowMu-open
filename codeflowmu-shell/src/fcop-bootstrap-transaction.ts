@@ -250,7 +250,11 @@ function readVersion(path: string, fallback: string): string {
 
 function extractVersion(path: string, pattern: RegExp, fallback: string): string {
   if (!existsSync(path)) return fallback;
-  return readFileSync(path, "utf8").match(pattern)?.[1] ?? fallback;
+  return extractVersionText(readFileSync(path, "utf8"), pattern, fallback);
+}
+
+function extractVersionText(content: string, pattern: RegExp, fallback: string): string {
+  return content.match(pattern)?.[1] ?? fallback;
 }
 
 function extractRulesVersion(path: string, fallback: string): string {
@@ -267,6 +271,28 @@ function extractProtocolVersion(path: string, fallback: string): string {
     /(?:fcop_protocol_version\s*:\s*|Protocol commentary version:\s*`?|Rules version:\s*`?)([0-9]+\.[0-9]+\.[0-9]+)/i,
     fallback,
   );
+}
+
+function extractRulesVersionFromBootstrapSource(sourceRoot: string, fallback: string): string {
+  const source = readBootstrapSource(sourceRoot, ".cursor/rules/fcop-rules.mdc");
+  return source
+    ? extractVersionText(
+        source.content.toString("utf8"),
+        /(?:fcop_rules_version\s*:\s*|Rules version:\s*`?)([0-9]+\.[0-9]+\.[0-9]+)/i,
+        fallback,
+      )
+    : fallback;
+}
+
+function extractProtocolVersionFromBootstrapSource(sourceRoot: string, fallback: string): string {
+  const source = readBootstrapSource(sourceRoot, ".cursor/rules/fcop-protocol.mdc");
+  return source
+    ? extractVersionText(
+        source.content.toString("utf8"),
+        /(?:fcop_protocol_version\s*:\s*|Protocol commentary version:\s*`?|Rules version:\s*`?)([0-9]+\.[0-9]+\.[0-9]+)/i,
+        fallback,
+      )
+    : fallback;
 }
 
 function listFiles(root: string, rel = ""): string[] {
@@ -460,8 +486,8 @@ export function createFcopBootstrapManifest(input: {
   const sourceVersion = readVersion(join(sourceRoot, "package.json"), "unknown");
   const shellVersion = readVersion(join(sourceRoot, "codeflowmu-shell", "package.json"), sourceVersion);
   const runtimeVersion = readVersion(join(sourceRoot, "packages", "codeflowmu-runtime", "package.json"), sourceVersion);
-  const rulesPath = join(sourceRoot, ".cursor", "rules", "fcop-rules.mdc");
-  const protocolPath = join(sourceRoot, ".cursor", "rules", "fcop-protocol.mdc");
+  const rulesVersion = extractRulesVersionFromBootstrapSource(sourceRoot, "unknown");
+  const protocolVersion = extractProtocolVersionFromBootstrapSource(sourceRoot, "unknown");
   const base = {
     schema_version: "1.0" as const,
     source_release_sha: input.sourceReleaseSha ?? gitHead(sourceRoot),
@@ -469,9 +495,9 @@ export function createFcopBootstrapManifest(input: {
     shell_compatibility: shellVersion,
     runtime_compatibility: runtimeVersion,
     fcop_package_compatibility: input.fcopPackageCompatibility ?? ">=3.2.5 <4",
-    rules_version: extractRulesVersion(rulesPath, "unknown"),
-    protocol_version: extractProtocolVersion(protocolPath, "unknown"),
-    commentary_version: extractProtocolVersion(protocolPath, "unknown"),
+    rules_version: rulesVersion,
+    protocol_version: protocolVersion,
+    commentary_version: protocolVersion,
     role_template_version: sourceVersion,
     adopted_version: sourceVersion,
     files,

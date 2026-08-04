@@ -259,6 +259,37 @@ test("checkSkillsManifestHealth ok with source + projections", () => {
   }
 });
 
+test("checkSkillsManifestHealth ignores a stale 17-entry project source when runtime projection is 58/58", () => {
+  const root = mkdtempSync(join(tmpdir(), "fcop-skills-stale-source-"));
+  try {
+    mkdirSync(join(root, "fcop"), { recursive: true });
+    mkdirSync(join(root, "docs", "skills"), { recursive: true });
+    mkdirSync(join(root, ".codeflowmu"), { recursive: true });
+    writeFileSync(join(root, "fcop", "fcop.json"), JSON.stringify({ protocol_version: 3 }));
+    const currentProjection = healthyPlaybooks(root);
+    const staleSource = {
+      ...currentProjection,
+      common_skills: currentProjection.common_skills.slice(0, 17),
+    };
+    writeFileSync(join(root, AGENT_SKILLS_SOURCE_REL), JSON.stringify(staleSource));
+    writeFileSync(
+      join(root, ".codeflowmu", "agent-skills.manifest.json"),
+      JSON.stringify(currentProjection),
+    );
+    writeFileSync(
+      join(root, ".codeflowmu", "pm-skills.manifest.json"),
+      JSON.stringify(buildPmSkillManifestFile()),
+    );
+
+    const health = checkSkillsManifestHealth(root);
+    assert.equal(health.ok, true, health.summary);
+    assert.equal(health.agentCatalogEntries, 58);
+    assert.equal(health.pmSkillCount, 5);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("checkSkillsManifestHealth resolves host packages but rejects an incomplete 1/58 projection", () => {
   const projectRoot = mkdtempSync(join(tmpdir(), "fcop-skills-adopted-"));
   const hostRoot = mkdtempSync(join(tmpdir(), "fcop-skills-host-"));

@@ -571,6 +571,8 @@ const PM_BUILTIN_SKILL_IDS = [
   "pm.review_check",
 ] as const;
 
+const REQUIRED_AGENT_PLAYBOOK_ENTRIES = 58;
+
 const AGENT_PLAYBOOK_GROUP_KEYS = [
   "common_skills",
   "pm_playbook_skills",
@@ -747,9 +749,12 @@ export function checkSkillsManifestHealth(projectRoot: string): SkillsManifestHe
   } else if (!pmManifestMatchesBuilder) {
     failures.push("PM skills manifest kind/version/digest does not match the current Runtime builder");
   }
-  const expectedAgentEntries = agentSourceData
-    ? collectAgentPlaybookPackages(agentSourceData).entries
-    : 58;
+  // The runtime projection is the initialization authority for an adopted
+  // product project. A project can legitimately retain an older
+  // docs/skills source snapshot (for example 17 entries) across an Open
+  // application upgrade; that local compatibility document must not lower
+  // or redefine the current 58-entry runtime contract.
+  const expectedAgentEntries = REQUIRED_AGENT_PLAYBOOK_ENTRIES;
   if (agentProjectionData && agentCatalogEntries !== expectedAgentEntries) {
     failures.push(`Agent Playbook projection count mismatch: ${agentCatalogEntries}/${expectedAgentEntries}`);
   }

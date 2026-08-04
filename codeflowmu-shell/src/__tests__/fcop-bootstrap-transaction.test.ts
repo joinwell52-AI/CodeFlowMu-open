@@ -151,6 +151,27 @@ test("frontmatter protocol versions are parsed and never become an unknown minim
   }
 });
 
+test("Open application root reads required protocol versions from default-project bootstrap sources", () => {
+  const source = sourceFixture();
+  const target = join(mkdtempSync(join(tmpdir(), "cfm-bootstrap-open-version-")), "target");
+  try {
+    const rules = readFileSync(join(source, ".cursor/rules/fcop-rules.mdc"), "utf8");
+    const protocol = readFileSync(join(source, ".cursor/rules/fcop-protocol.mdc"), "utf8");
+    write(source, "templates/default-project/.cursor/rules/fcop-rules.mdc", rules);
+    write(source, "templates/default-project/.cursor/rules/fcop-protocol.mdc", protocol);
+    rmSync(join(source, ".cursor"), { recursive: true, force: true });
+
+    const plan = compatiblePlan(source, target);
+    assert.equal(plan.source_versions.mother_rules, "3.2.5");
+    assert.equal(plan.source_versions.mother_protocol, "3.2.5");
+    assert.equal(plan.package_upgrade_actions.some((item) => item.includes("unknown")), false);
+    assert.deepEqual(plan.conflict, []);
+  } finally {
+    rmSync(source, { recursive: true, force: true });
+    rmSync(dirname(target), { recursive: true, force: true });
+  }
+});
+
 test("partial uninitialized project preserves local bootstrap files and completes initialization", async () => {
   const source = sourceFixture();
   const target = mkdtempSync(join(tmpdir(), "cfm-bootstrap-partial-"));
@@ -167,6 +188,45 @@ test("partial uninitialized project preserves local bootstrap files and complete
     assert.equal(readFileSync(join(target, "fcop/shared/TEAM-README.md"), "utf8"), "local team notes must survive\n");
     assert.equal(verifyFcopBootstrapManifest(target).ok, true);
     assert.equal(JSON.parse(readFileSync(join(target, "fcop/fcop.json"), "utf8")).protocol_version, 3);
+  } finally {
+    rmSync(source, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("Open project with a stale 17-entry docs source initializes to authoritative Agent 58/58 and PM 5/5 projections", async () => {
+  const source = sourceFixture();
+  const target = mkdtempSync(join(tmpdir(), "cfm-bootstrap-open-stale-skills-"));
+  try {
+    const current = JSON.parse(
+      readFileSync(join(source, "docs/skills/agent-skills.manifest.json"), "utf8"),
+    ) as { common_skills: unknown[]; [key: string]: unknown };
+    const stale = { ...current, common_skills: current.common_skills.slice(0, 17) };
+    write(
+      target,
+      "docs/skills/agent-skills.manifest.json",
+      `${JSON.stringify(stale, null, 2)}\n`,
+    );
+
+    const plan = compatiblePlan(source, target);
+    assert.equal(plan.mode, "new");
+    assert.deepEqual(plan.conflict, []);
+    assert.ok(plan.preserve.some((row) => row.target_rel === "docs/skills/agent-skills.manifest.json"));
+
+    await new FcopInitTransaction(plan).execute(plan.plan_digest);
+    const projected = JSON.parse(
+      readFileSync(join(target, ".codeflowmu", "agent-skills.manifest.json"), "utf8"),
+    ) as { common_skills: unknown[] };
+    const pm = JSON.parse(
+      readFileSync(join(target, ".codeflowmu", "pm-skills.manifest.json"), "utf8"),
+    ) as { skills: unknown[] };
+    const preservedSource = JSON.parse(
+      readFileSync(join(target, "docs/skills/agent-skills.manifest.json"), "utf8"),
+    ) as { common_skills: unknown[] };
+    assert.equal(projected.common_skills.length, 58);
+    assert.ok(pm.skills.length >= 5);
+    assert.equal(preservedSource.common_skills.length, 17);
+    assert.equal(verifyFcopBootstrapManifest(target).ok, true);
   } finally {
     rmSync(source, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
