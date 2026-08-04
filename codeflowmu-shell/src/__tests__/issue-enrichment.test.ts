@@ -61,9 +61,47 @@ test("later done report for the same task marks an issue covered", () => {
   assert.match(result.analysis.recommended_action, /结案/);
 });
 
+test("force archived parent makes an open issue historical", () => {
+  const root = projectWithReports([
+    {
+      report_id: "REPORT-20260614-020-OPS-to-PM",
+      task_id: "TASK-20260614-020",
+      sender: "OPS",
+      status: "blocked",
+    },
+  ]);
+  writeFileSync(
+    join(root, "fcop", "ledger", "tasks.jsonl"),
+    JSON.stringify({
+      task_id: "TASK-20260614-020",
+      bucket: "archive",
+      yaml: { archive_mode: "force" },
+    }),
+    "utf-8",
+  );
+  const result = enrichIssueMetadata(
+    root,
+    { source_report: "REPORT-20260614-020-OPS-to-PM.md" },
+    "dependency pending",
+  );
+  assert.equal(result.effective_status, "historical");
+  assert.equal(result.parent_task_state, "archive");
+  assert.equal(result.inactive_reason, "parent_force_archived");
+});
+
 test("issue detail UI renders structured analysis", () => {
   const html = readFileSync(join(process.cwd(), "..", "codeflowmu-desktop", "panel", "index.html"), "utf-8");
   assert.match(html, /## 分析判断/);
   assert.match(html, /a\.cause_type/);
   assert.match(html, /severity_level/);
+});
+
+test("issue page exposes row operations and an aggregate mother-evidence submission page", () => {
+  const html = readFileSync(join(process.cwd(), "..", "codeflowmu-desktop", "panel", "index.html"), "utf-8");
+  assert.match(html, /id="is-promotion-summary-btn"/);
+  assert.match(html, /id="is-promotion-tbody"/);
+  assert.match(html, /data-issue-action="close"/);
+  assert.match(html, /data-issue-action="promote"/);
+  assert.match(html, /downloadIssuePromotion/);
+  assert.match(html, /\/api\/v2\/issues\/promotions/);
 });

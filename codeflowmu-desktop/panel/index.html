@@ -2360,6 +2360,10 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
 .is-table th,.is-table td{padding:8px 10px;border-bottom:1px solid var(--bd2);text-align:left;vertical-align:top}
 .is-table tr{cursor:pointer}
 .is-table tr:hover td{background:rgba(255,255,255,.03)}
+.is-row-actions{display:flex;flex-wrap:wrap;gap:6px;min-width:220px}
+.is-row-actions .hbtn{padding:4px 9px;font-size:12px;white-space:nowrap}
+.is-promotion-summary{display:flex;flex-direction:column;flex:1;min-height:0;padding:12px 16px 110px;overflow:auto}
+.is-promotion-note{padding:10px 12px;margin-bottom:10px;border:1px solid rgba(96,165,250,.25);border-radius:9px;background:rgba(30,64,175,.08);color:var(--text3);font-size:13px}
 .is-sev-critical,.is-sev-high{color:#fca5a5}
 .is-sev-medium{color:#fcd34d}
 .is-sev-low{color:var(--text3)}
@@ -2370,6 +2374,21 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
 .is-close-btn--open{font-size:14px;color:#fca5a5;border-color:rgba(239,68,68,.45)}
 .is-close-btn--open:hover:not(:disabled){background:rgba(239,68,68,.12)}
 .is-close-btn--done{font-size:14px;color:#4ade80;border-color:rgba(74,222,128,.45);cursor:default;opacity:.95}
+.issue-closure-dialog{background:var(--bg2);color:var(--text);border:1px solid rgba(96,165,250,.35);border-radius:12px;padding:0;width:min(900px,94vw);max-height:92vh;box-shadow:0 18px 56px rgba(0,0,0,.65)}
+.issue-closure-dialog::backdrop{background:rgba(2,6,23,.78);backdrop-filter:blur(4px)}
+.issue-closure-head{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--bd2);position:sticky;top:0;background:var(--bg2);z-index:2}
+.issue-closure-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:18px 20px;overflow:auto;max-height:calc(92vh - 132px)}
+.issue-closure-field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.issue-closure-field.wide{grid-column:1/-1}
+.issue-closure-field label{font-size:12px;color:var(--text3);font-weight:700}
+.issue-closure-field input,.issue-closure-field select,.issue-closure-field textarea{background:var(--bg3);color:var(--text);border:1px solid var(--bd2);border-radius:7px;padding:8px 10px;font:inherit;box-sizing:border-box;width:100%}
+.issue-closure-field textarea{min-height:76px;resize:vertical}
+.issue-closure-checks{display:flex;flex-wrap:wrap;gap:14px;align-items:center;padding:10px;border:1px solid var(--bd2);border-radius:8px;background:rgba(15,23,42,.45)}
+.issue-closure-checks label{font-size:13px;color:var(--text2);display:flex;align-items:center;gap:6px}
+.issue-closure-preview{white-space:pre-wrap;word-break:break-word;background:#07101f;border:1px solid rgba(96,165,250,.25);border-radius:8px;padding:12px;max-height:260px;overflow:auto;color:#bfdbfe;font:12px/1.55 ui-monospace,monospace}
+.issue-closure-actions{display:flex;gap:8px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--bd2);position:sticky;bottom:0;background:var(--bg2)}
+.issue-closure-badge{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:700;background:rgba(59,130,246,.14);color:#93c5fd;border:1px solid rgba(59,130,246,.28);margin:0 6px 6px 0}
+@media(max-width:760px){.issue-closure-grid{grid-template-columns:1fr}.issue-closure-field.wide{grid-column:auto}}
 
 .chat-v2-task-badge{font-size:14px;padding:2px 8px;border-radius:10px;
   background:rgba(59,130,246,.2);border:1px solid rgba(96,165,250,.3);
@@ -3530,11 +3549,12 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
       <button type="button" class="rp-tab" data-st="all" onclick="setIssueStatusTab('all')" data-i18n="is.tab.all">全部</button>
     </div>
     <span class="tc" id="tc-issues">0</span>
+    <button type="button" class="rp-tab" id="is-promotion-summary-btn" onclick="showIssuePromotionSummary()">母版证据提交 <span class="tc" id="tc-issue-promotions">0</span></button>
     <div style="flex:1"></div>
     <input class="rp-list-search" id="is-search" type="text" data-i18n-ph="is.searchPh" placeholder="搜索摘要/报告人…"
            oninput="onIssueSearch(this.value)" style="max-width:220px">
   </div>
-  <div class="is-body">
+  <div class="is-body" id="is-issue-pane">
     <div class="is-table-wrap">
       <table class="is-table">
         <thead><tr>
@@ -3543,6 +3563,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
           <th style="width:72px" data-i18n="is.col.reporter">报告人</th>
           <th data-i18n="is.col.summary">摘要</th>
           <th style="width:88px" data-i18n="is.col.status">状态</th>
+          <th style="width:250px">操作</th>
         </tr></thead>
         <tbody id="is-tbody"></tbody>
       </table>
@@ -3554,6 +3575,8 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
       </div>
       <div id="is-detail-toolbar" class="is-detail-toolbar" style="display:none">
         <button type="button" class="hbtn is-close-btn is-close-btn--open" id="is-close-btn" onclick="closeSelectedIssue()" data-i18n="is.closeBtn">结案</button>
+        <button type="button" class="hbtn" id="is-reopen-btn" onclick="reopenSelectedIssue()" style="display:none">重新打开</button>
+        <button type="button" class="hbtn" id="is-promote-btn" onclick="promoteSelectedIssue()" style="display:none">提交为母版修复证据</button>
       </div>
       <div class="is-detail-scroll">
         <div id="is-detail-empty" style="color:var(--text3)" data-i18n="is.detailEmpty">点击左侧条目查看详情</div>
@@ -3564,6 +3587,13 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
         </div>
       </div>
     </div>
+  </div>
+  <div id="is-promotion-pane" class="is-promotion-summary" style="display:none">
+    <div class="is-promotion-note">这里汇总所有 ISSUE 的本地证据包、GitHub 草稿、待审批外部发布和最终回执。生成本地证据不会自动写 GitHub。</div>
+    <table class="is-table">
+      <thead><tr><th>来源 ISSUE</th><th>状态</th><th>目标仓库</th><th>生成时间</th><th>GitHub 回执</th><th style="width:260px">操作</th></tr></thead>
+      <tbody id="is-promotion-tbody"></tbody>
+    </table>
   </div>
 </div>
 
@@ -5014,6 +5044,70 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
 </div>
 
 <!-- Model Selector Modal -->
+<dialog id="issue-closure-dialog" class="issue-closure-dialog">
+  <div class="issue-closure-head">
+    <div style="flex:1">
+      <div style="font-size:17px;font-weight:800">ISSUE 结构化结案</div>
+      <div id="issue-closure-context" style="font-size:12px;color:var(--text3);margin-top:4px"></div>
+    </div>
+    <button type="button" class="hbtn" onclick="closeIssueClosureDialog()">✕</button>
+  </div>
+  <div class="issue-closure-grid">
+    <div class="issue-closure-field">
+      <label>结案类型 *</label>
+      <select id="ic-resolution-type" onchange="invalidateIssueClosurePreview()">
+        <option value="">请选择</option><option value="fixed">已修复</option><option value="mitigated">已缓解</option><option value="workaround">临时绕行</option><option value="duplicate">重复问题</option><option value="not_reproducible">无法复现</option><option value="invalid">无效问题</option><option value="accepted_risk">接受风险</option><option value="superseded">被后续事项取代</option>
+      </select>
+    </div>
+    <div class="issue-closure-field">
+      <label>根因状态 *</label>
+      <select id="ic-root-status" onchange="invalidateIssueClosurePreview()"><option value="unknown">未知</option><option value="not_fixed" selected>未修复</option><option value="partially_fixed">部分修复</option><option value="fixed">已修复</option><option value="accepted_risk">接受风险</option></select>
+    </div>
+    <div class="issue-closure-field"><label>根因分类</label><input id="ic-root-category" placeholder="runtime.lifecycle_state_split" oninput="invalidateIssueClosurePreview()"></div>
+    <div class="issue-closure-field"><label>替代/重复目标 ISSUE 或 TASK</label><input id="ic-replacement-target" oninput="invalidateIssueClosurePreview()"></div>
+    <div class="issue-closure-field wide"><label>结案原因 *</label><textarea id="ic-reason" oninput="invalidateIssueClosurePreview()"></textarea></div>
+    <div class="issue-closure-field wide"><label>根因说明</label><textarea id="ic-root-summary" oninput="invalidateIssueClosurePreview()"></textarea></div>
+    <div class="issue-closure-field wide"><label>恢复/修复动作</label><textarea id="ic-recovery" oninput="invalidateIssueClosurePreview()"></textarea></div>
+    <div class="issue-closure-field wide"><label>验证说明</label><textarea id="ic-verification" oninput="invalidateIssueClosurePreview()"></textarea></div>
+    <div class="issue-closure-field wide"><label>证据（每行 `type: ref`，如 `session: session-1`、`report: REPORT-*`）</label><textarea id="ic-evidence" oninput="invalidateIssueClosurePreview()"></textarea></div>
+    <div class="issue-closure-field wide"><label>残余风险</label><textarea id="ic-residual-risk" oninput="invalidateIssueClosurePreview()"></textarea></div>
+    <div class="issue-closure-field"><label>修复 commit</label><input id="ic-fix-commit" oninput="invalidateIssueClosurePreview()"></div>
+    <div class="issue-closure-field"><label>修复版本</label><input id="ic-fix-version" oninput="invalidateIssueClosurePreview()"></div>
+    <div class="issue-closure-field"><label>后续目标</label><input id="ic-follow-target" placeholder="CodeFlowMu" oninput="invalidateIssueClosurePreview()"></div>
+    <div class="issue-closure-field"><label>后续 ISSUE/TASK</label><input id="ic-follow-ref" oninput="invalidateIssueClosurePreview()"></div>
+    <div class="issue-closure-field wide"><label>重新打开条件（每行一项）</label><textarea id="ic-reopen-conditions" oninput="invalidateIssueClosurePreview()"></textarea></div>
+    <div class="issue-closure-field"><label>无法复现：环境</label><input id="ic-environment" oninput="invalidateIssueClosurePreview()"></div>
+    <div class="issue-closure-field"><label>无法复现：尝试次数</label><input id="ic-reproduction-attempts" type="number" min="1" oninput="invalidateIssueClosurePreview()"></div>
+    <div class="issue-closure-field"><label>无法复现：观察窗口</label><input id="ic-observation-window" oninput="invalidateIssueClosurePreview()"></div>
+    <div class="issue-closure-field"><label>风险决定人</label><input id="ic-risk-decider" oninput="invalidateIssueClosurePreview()"></div>
+    <div class="issue-closure-field"><label>风险接受有效期</label><input id="ic-risk-expires-at" type="date" oninput="invalidateIssueClosurePreview()"></div>
+    <div class="issue-closure-field"><label>风险复审条件</label><input id="ic-risk-review-condition" oninput="invalidateIssueClosurePreview()"></div>
+    <div class="issue-closure-field"><label>解除 TASK 的理由</label><input id="ic-unblock-reason" oninput="invalidateIssueClosurePreview()"></div>
+    <div class="issue-closure-field wide">
+      <div class="issue-closure-checks">
+        <label><input type="checkbox" id="ic-follow-required" checked onchange="invalidateIssueClosurePreview()">需要后续事项</label>
+        <label><input type="checkbox" id="ic-unblock" onchange="invalidateIssueClosurePreview()">显式解除关联 TASK blocker（默认不选）</label>
+        <label><input type="checkbox" id="ic-promote" checked onchange="invalidateIssueClosurePreview()">结案后可生成母版证据草稿（不会自动外发）</label>
+      </div>
+    </div>
+    <div class="issue-closure-field wide"><label>精确操作预览</label><pre id="ic-preview" class="issue-closure-preview">请先填写并点击“生成预览”。预览不会写入磁盘。</pre></div>
+  </div>
+  <div class="issue-closure-actions">
+    <button type="button" class="hbtn" onclick="closeIssueClosureDialog()">取消</button>
+    <button type="button" class="hbtn" id="ic-preview-btn" onclick="previewIssueClosure()">生成预览</button>
+    <button type="button" class="hbtn is-close-btn is-close-btn--open" id="ic-submit-btn" onclick="submitIssueClosure()" disabled>确认结案</button>
+  </div>
+</dialog>
+
+<dialog id="issue-promotion-dialog" class="issue-closure-dialog">
+  <div class="issue-closure-head"><div style="flex:1"><div style="font-size:17px;font-weight:800">提交为母版修复证据</div><div id="issue-promotion-meta" style="font-size:12px;color:var(--text3);margin-top:4px"></div></div><button type="button" class="hbtn" onclick="document.getElementById('issue-promotion-dialog').close()">✕</button></div>
+  <div style="padding:18px 20px;max-height:68vh;overflow:auto">
+    <div class="issue-closure-badge">本地不可变证据包已生成</div><div class="issue-closure-badge">未写母版工作树</div><div class="issue-closure-badge">未创建 GitHub Issue</div>
+    <pre id="issue-promotion-preview" class="issue-closure-preview" style="max-height:52vh"></pre>
+  </div>
+  <div class="issue-closure-actions"><button type="button" class="hbtn" onclick="document.getElementById('issue-promotion-dialog').close()">仅保存证据</button><button type="button" class="hbtn" onclick="downloadIssuePromotion()">下载证据包</button><button type="button" class="hbtn" id="issue-promotion-publish" onclick="prepareIssueGithubPublish()">申请发布到配置的 GitHub Issues</button></div>
+</dialog>
+
 <div class="model-modal" id="modelModal" style="display:none" onclick="if(event.target===this)closeModelModal()">
   <div class="model-modal-box">
     <div class="model-modal-title" id="modelModalTitle" data-i18n="model.pickTitle">选择模型</div>
@@ -7696,7 +7790,8 @@ let tasks=[], taskSubmissions=[], reports=[], issues=[], events=[], doorbells=[]
 let projectGraphProjection=null;
 let taskPrimaryTab='formal', selectedTaskSubmissionId='';
 window._diagNavOpen=false;
-let issueStatusTab='open', issueSearchQ='', _isSelectedFn=null;
+let issueStatusTab='open', issueSearchQ='', issuePageMode='issues', issuePromotions=[], _isSelectedFn=null, _isSelectedDetail=null;
+let _issueClosurePreview=null, _issueClosureDraft=null, _issuePromotion=null;
 let _dbBuffer=[];  // ring-buffer: max 200 entries, persists across nav
 // P0 fix: dedup set for task_dispatched SSE events (prevents replay-toast on SSE reconnect)
 const _seenTaskIds=new Set();
@@ -14388,7 +14483,11 @@ function _openDetailBase(f,type){
 function renderList(){
   if(curPage==='tasks'||curPage==='dashboard')renderTaskPage();
   if(curPage==='reports')renderReportPage();
-  if(curPage==='issues')renderIssuePage();
+  if(curPage==='issues'){
+    setIssuePageMode(issuePageMode);
+    if(issuePageMode==='promotions')showIssuePromotionSummary();else renderIssuePage();
+    loadIssuePromotions().then(()=>{if(issuePageMode==='promotions')renderIssuePromotionPage();}).catch(()=>{});
+  }
   if(curPage==='approvals')renderApprovals(document.getElementById('page-approvals'));
   if(curPage==='doorbell')renderDoorbells(document.getElementById('page-doorbell'));
 }
@@ -14397,10 +14496,36 @@ function renderList(){
 
 // ── Issue page ──────────────────────────────────────────
 function setIssueStatusTab(st){
+  setIssuePageMode('issues');
   issueStatusTab=st;
   document.querySelectorAll('#issue-status-tabs .rp-tab').forEach(b=>
     b.classList.toggle('on',b.dataset.st===st));
   loadIssues().then(()=>{if(curPage==='issues')renderIssuePage();});
+}
+function setIssuePageMode(mode){
+  issuePageMode=mode==='promotions'?'promotions':'issues';
+  const issuesPane=document.getElementById('is-issue-pane');
+  const promotionPane=document.getElementById('is-promotion-pane');
+  const promotionBtn=document.getElementById('is-promotion-summary-btn');
+  const search=document.getElementById('is-search');
+  if(issuesPane)issuesPane.style.display=issuePageMode==='issues'?'flex':'none';
+  if(promotionPane)promotionPane.style.display=issuePageMode==='promotions'?'flex':'none';
+  if(promotionBtn)promotionBtn.classList.toggle('on',issuePageMode==='promotions');
+  if(search)search.style.display=issuePageMode==='issues'?'':'none';
+}
+async function loadIssuePromotions(){
+  const r=await fetch('/api/v2/issues/promotions');
+  const d=await r.json();
+  if(!r.ok||d.ok===false)throw new Error((d.code?d.code+': ':'')+(d.message||d.error||r.status));
+  issuePromotions=Array.isArray(d)?d:(Array.isArray(d?.promotions)?d.promotions:[]);
+  const count=document.getElementById('tc-issue-promotions');
+  if(count)count.textContent=String(issuePromotions.length);
+  return issuePromotions;
+}
+async function showIssuePromotionSummary(){
+  setIssuePageMode('promotions');
+  try{await loadIssuePromotions();renderIssuePromotionPage();}
+  catch(e){showToast(String(e),'error');}
 }
 async function loadIssues(){
   const r=await fetch('/api/v2/issues?limit=200&status=all');
@@ -14429,7 +14554,7 @@ function renderIssuePage(){
   if(!tb)return;
   const pool=issueVisiblePool();
   if(!pool.length){
-    tb.innerHTML='<tr><td colspan="5" style="color:var(--text3);padding:24px">'+esc(t('msg.noIssues'))+'</td></tr>';
+    tb.innerHTML='<tr><td colspan="6" style="color:var(--text3);padding:24px">'+esc(t('msg.noIssues'))+'；结案与母版证据操作会在 ISSUE 出现后显示在本表“操作”列。</td></tr>';
   }else{
   tb.innerHTML=pool.map(i=>{
     const fn=i.filename||'';
@@ -14441,15 +14566,58 @@ function renderIssuePage(){
       +'<td class="is-sev-'+esc(sev)+'">'+esc(sev+(i.severity_level?' · '+i.severity_level:''))+'</td>'
       +'<td>'+esc(i.reporter||'?')+'</td>'
       +'<td>'+esc((i.summary||i.preview||'').slice(0,120))+'</td>'
-      +'<td>'+esc(stLbl)+'</td></tr>';
+      +'<td>'+esc(stLbl)+'</td>'
+      +'<td><div class="is-row-actions">'
+      +'<button type="button" class="hbtn" data-issue-action="view" data-fn="'+esc(fn)+'">查看</button>'
+      +(st==='closed'
+        ? '<button type="button" class="hbtn" data-issue-action="promote" data-fn="'+esc(fn)+'">母版证据</button><button type="button" class="hbtn" data-issue-action="reopen" data-fn="'+esc(fn)+'">重新打开</button>'
+        : '<button type="button" class="hbtn is-close-btn is-close-btn--open" data-issue-action="close" data-fn="'+esc(fn)+'">结构化结案</button>')
+      +'</div></td></tr>';
   }).join('');
   tb.querySelectorAll('tr[data-fn]').forEach(tr=>{
     tr.addEventListener('click',()=>openIssueDetail(tr.dataset.fn));
   });
+  tb.querySelectorAll('[data-issue-action]').forEach(btn=>btn.addEventListener('click',ev=>{
+    ev.stopPropagation();issueRowAction(btn.dataset.issueAction,btn.dataset.fn);
+  }));
   }
   const det=document.getElementById('is-detail');
   if(det)det.style.display='flex';
   isSyncBottomSafeArea();
+}
+async function issueRowAction(action,fn){
+  if(!fn)return;
+  await openIssueDetail(fn);
+  if(action==='close')return closeSelectedIssue();
+  if(action==='reopen')return reopenSelectedIssue();
+  if(action==='promote')return promoteSelectedIssue();
+}
+function issuePromotionStatusLabel(status){
+  const labels={draft_created:'本地证据/草稿已生成',exported:'证据已导出',import_pending:'等待外部审批',published:'已发布 GitHub',publish_failed_retryable:'发布失败，可重试',rejected:'发布已拒绝'};
+  return labels[String(status||'')]||String(status||'draft_created');
+}
+function renderIssuePromotionPage(){
+  const tb=document.getElementById('is-promotion-tbody');if(!tb)return;
+  if(!issuePromotions.length){
+    tb.innerHTML='<tr><td colspan="6" style="color:var(--text3);padding:24px">暂无母版证据提交记录。请先在已结案 ISSUE 的“操作”列点击“母版证据”。</td></tr>';
+    return;
+  }
+  tb.innerHTML=issuePromotions.map(row=>{
+    const id=String(row.promotion_id||'');
+    const receipt=row.target_issue_url?'<a href="'+esc(row.target_issue_url)+'" target="_blank" rel="noopener">#'+esc(row.target_issue_number||row.target_issue_url)+'</a>':'—';
+    return '<tr><td><button type="button" class="link-btn" data-promotion-issue="'+esc(row.source_issue_filename||'')+'">'+esc(row.source_issue_id||row.source_issue_filename||'-')+'</button><div class="mono muted" style="font-size:11px">'+esc(id)+'</div></td>'
+      +'<td>'+esc(issuePromotionStatusLabel(row.status))+'</td><td>'+esc(row.target_repo||'-')+'</td><td>'+esc(fmtTime(row.published_at||row.generated_at||''))+'</td><td>'+receipt+'</td>'
+      +'<td><div class="is-row-actions"><button type="button" class="hbtn" data-promotion-action="preview" data-id="'+esc(id)+'">预览草稿</button><button type="button" class="hbtn" data-promotion-action="download" data-id="'+esc(id)+'">下载证据包</button>'
+      +(String(row.status||'')==='published'?'':'<button type="button" class="hbtn" data-promotion-action="publish" data-id="'+esc(id)+'">审阅并申请发布</button>')
+      +'</div></td></tr>';
+  }).join('');
+  tb.querySelectorAll('[data-promotion-issue]').forEach(btn=>btn.addEventListener('click',()=>{
+    const fn=btn.dataset.promotionIssue;if(fn){setIssuePageMode('issues');openIssueDetail(fn);}
+  }));
+  tb.querySelectorAll('[data-promotion-action]').forEach(btn=>btn.addEventListener('click',()=>{
+    const action=btn.dataset.promotionAction,id=btn.dataset.id;
+    if(action==='download')downloadIssuePromotion(id);else openIssuePromotionById(id);
+  }));
 }
 async function openIssueDetail(fn){
   if(!fn)return;
@@ -14461,6 +14629,7 @@ async function openIssueDetail(fn){
   if(body)body.style.display='block';
   try{
     const d=await fetch('/api/v2/issues/'+encodeURIComponent(fn)).then(r=>r.json());
+    _isSelectedDetail=d;
     const meta=document.getElementById('is-detail-meta');
     if(meta)meta.textContent=[d.reporter,d.severity_level?d.severity+' · '+d.severity_level:d.severity,d.effective_status||d.status,d.created_at].filter(Boolean).join(' · ');
     const sum=document.getElementById('is-detail-summary');
@@ -14475,34 +14644,55 @@ async function openIssueDetail(fn){
         +'严重度判断：'+(a.severity_reason||'暂无')+'\n\n'
         +'当前状态判断：'+(a.current_status_judgment||'暂无')+'\n\n'
         +'建议动作：'+(a.recommended_action||'暂无');
-      md.innerHTML=renderMd((d.body||'')+'\n\n'+analysis);
+      const closure=d.current_closure||null;
+      const closureSection=d.legacy_simple_closure
+        ? '\n\n> ⚠️ 历史简式结案，缺少结构化 closure；系统不会推测或补造原因。'
+        : closure
+          ? '\n\n## 结案事实\n\n'
+            +'**结案类型：** '+(closure.resolution_type||'-')+'\n\n'
+            +'**根因状态：** '+(closure.root_cause_status||'unknown')+'\n\n'
+            +'**完整原因：** '+(closure.body||'')+'\n\n'
+            +'**TASK 副作用：** `'+JSON.stringify(closure.task_side_effect||{})+'`\n\n'
+            +'**母版升级：** '+(d.promotion_status||closure.promotion_status||'not_promoted')+'\n\n'
+            +(d.promotion?.target_issue_url?'**GitHub 回执：** ['+(d.promotion.target_issue_number||d.promotion.target_issue_url)+']('+d.promotion.target_issue_url+')\n\n':'')
+            +'**closure digest：** `'+(closure.closure_digest||'')+'`\n\n'
+            +'**历史 attempts：** '+((d.closure_history||[]).length)
+          : '';
+      md.innerHTML=renderMd((d.body||'')+'\n\n'+analysis+closureSection);
     }
-    updateIssueCloseBtn(d.status);
+    updateIssueCloseBtn(d);
   }catch(e){
     showToast(String(e),'error');
   }
 }
-function updateIssueCloseBtn(status){
+function updateIssueCloseBtn(detail){
   const toolbar=document.getElementById('is-detail-toolbar');
   const btn=document.getElementById('is-close-btn');
+  const reopen=document.getElementById('is-reopen-btn');
+  const promote=document.getElementById('is-promote-btn');
   const body=document.getElementById('is-detail-body');
   if(!toolbar||!btn)return;
   const showing=body&&body.style.display!=='none';
   if(!showing){toolbar.style.display='none';return;}
   toolbar.style.display='flex';
-  const st=String(status||'open').toLowerCase();
+  const st=String((detail&&detail.status)||detail||'open').toLowerCase();
   if(st==='closed'){
     btn.className='hbtn is-close-btn is-close-btn--done';
     btn.textContent=t('is.closedBtn');
     btn.disabled=true;
+    if(reopen)reopen.style.display='';
+    if(promote)promote.style.display=detail&&detail.current_closure?'':'none';
   }else{
     btn.className='hbtn is-close-btn is-close-btn--open';
     btn.textContent=t('is.closeBtn');
     btn.disabled=false;
+    if(reopen)reopen.style.display='none';
+    if(promote)promote.style.display='none';
   }
 }
 function resetIssueDetailView(){
   _isSelectedFn=null;
+  _isSelectedDetail=null;
   const empty=document.getElementById('is-detail-empty');
   const body=document.getElementById('is-detail-body');
   const toolbar=document.getElementById('is-detail-toolbar');
@@ -14515,20 +14705,170 @@ function closeIssueDetail(){
   renderIssuePage();
 }
 async function closeSelectedIssue(){
-  if(!_isSelectedFn)return;
-  if(!confirm(t('is.closeConfirm')))return;
+  if(!_isSelectedFn||!_isSelectedDetail)return;
+  _issueClosurePreview=null;
+  _issueClosureDraft=null;
+  const dlg=document.getElementById('issue-closure-dialog');
+  const context=document.getElementById('issue-closure-context');
+  if(context)context.textContent=[_isSelectedFn,_isSelectedDetail.source_task||_isSelectedDetail.task_id||'',_isSelectedDetail.thread_key||'',_isSelectedDetail.blocking_issue_id?'blocker: '+_isSelectedDetail.blocking_issue_id:''].filter(Boolean).join(' · ');
+  ['ic-resolution-type','ic-root-category','ic-replacement-target','ic-reason','ic-root-summary','ic-recovery','ic-verification','ic-evidence','ic-residual-risk','ic-fix-commit','ic-fix-version','ic-follow-ref','ic-reopen-conditions','ic-environment','ic-reproduction-attempts','ic-observation-window','ic-risk-decider','ic-risk-expires-at','ic-risk-review-condition','ic-unblock-reason'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  document.getElementById('ic-root-status').value='not_fixed';
+  document.getElementById('ic-follow-target').value='CodeFlowMu';
+  document.getElementById('ic-follow-required').checked=true;
+  document.getElementById('ic-unblock').checked=false;
+  document.getElementById('ic-promote').checked=true;
+  document.getElementById('ic-preview').textContent='请先填写并点击“生成预览”。预览不会写入磁盘。';
+  document.getElementById('ic-submit-btn').disabled=true;
+  dlg.showModal();
+}
+function closeIssueClosureDialog(){
+  const dlg=document.getElementById('issue-closure-dialog');
+  if(dlg&&dlg.open)dlg.close();
+}
+function invalidateIssueClosurePreview(){
+  _issueClosurePreview=null;
+  const btn=document.getElementById('ic-submit-btn');if(btn)btn.disabled=true;
+  const pre=document.getElementById('ic-preview');if(pre)pre.textContent='表单已变化，请重新生成精确预览。';
+}
+function issueClosureEvidenceRows(){
+  return String(document.getElementById('ic-evidence')?.value||'').split(/\r?\n/).map(line=>{
+    const idx=line.indexOf(':');
+    return idx>0?{type:line.slice(0,idx).trim(),ref:line.slice(idx+1).trim()}:null;
+  }).filter(row=>row&&row.type&&row.ref);
+}
+function collectIssueClosureDraft(){
+  return {
+    actor:(document.getElementById('tp-panel-operator')?.value||'ADMIN'),
+    idempotency_key:_issueClosureDraft?.idempotency_key||((crypto.randomUUID&&crypto.randomUUID())||('issue-close-'+Date.now())),
+    expected_issue_digest:_isSelectedDetail?.issue_digest||'',
+    resolution_type:document.getElementById('ic-resolution-type')?.value||'',
+    root_cause_status:document.getElementById('ic-root-status')?.value||'unknown',
+    root_cause_category:document.getElementById('ic-root-category')?.value||'',
+    root_cause_summary:document.getElementById('ic-root-summary')?.value||'',
+    replacement_target:document.getElementById('ic-replacement-target')?.value||'',
+    reason:document.getElementById('ic-reason')?.value||'',
+    recovery_action:document.getElementById('ic-recovery')?.value||'',
+    verification_summary:document.getElementById('ic-verification')?.value||'',
+    evidence:issueClosureEvidenceRows(),
+    residual_risk:document.getElementById('ic-residual-risk')?.value||'',
+    fix_commit:document.getElementById('ic-fix-commit')?.value||'',
+    fix_version:document.getElementById('ic-fix-version')?.value||'',
+    follow_up_required:!!document.getElementById('ic-follow-required')?.checked,
+    follow_up_target:document.getElementById('ic-follow-target')?.value||'',
+    follow_up_reference:document.getElementById('ic-follow-ref')?.value||'',
+    reopen_conditions:String(document.getElementById('ic-reopen-conditions')?.value||'').split(/\r?\n/).map(v=>v.trim()).filter(Boolean),
+    environment:document.getElementById('ic-environment')?.value||'',
+    reproduction_attempts:Number(document.getElementById('ic-reproduction-attempts')?.value||0),
+    observation_window:document.getElementById('ic-observation-window')?.value||'',
+    unblock_task:!!document.getElementById('ic-unblock')?.checked,
+    unblock_reason:document.getElementById('ic-unblock-reason')?.value||'',
+    promote_to_mother:!!document.getElementById('ic-promote')?.checked,
+    risk_decider:document.getElementById('ic-risk-decider')?.value||'',
+    risk_expires_at:document.getElementById('ic-risk-expires-at')?.value||'',
+    risk_review_condition:document.getElementById('ic-risk-review-condition')?.value||''
+  };
+}
+async function previewIssueClosure(){
   try{
-    const r=await fetch('/api/v2/issues/'+encodeURIComponent(_isSelectedFn)+'/close',{
+    const draft=collectIssueClosureDraft();
+    _issueClosureDraft=draft;
+    const r=await fetch('/api/v2/issues/'+encodeURIComponent(_isSelectedFn)+'/closure/preview',{
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({closed_by:(document.getElementById('tp-panel-operator')?.value||'ADMIN')})
+      body:JSON.stringify(draft)
     });
     const d=await r.json();
-    if(!r.ok||d.ok===false)throw new Error(d.message||d.error||r.status);
-    showToast(t('is.closedOk'),'#6ee7b7');
+    if(!r.ok||d.ok===false)throw new Error((d.code?d.code+': ':'')+(d.message||d.error||r.status));
+    _issueClosurePreview=d;
+    document.getElementById('ic-preview').textContent=[
+      'closure: '+d.closure_record,
+      'digest: '+d.closure_digest,
+      'authority: '+d.required_authority,
+      'approval required: '+d.required_approval,
+      '',
+      'ISSUE projection diff:',JSON.stringify(d.issue_frontmatter_diff,null,2),
+      '',
+      'TASK unblock:',JSON.stringify(d.task_unblock,null,2),
+      '',
+      '明确不会发生:',...(d.non_effects||[]).map(v=>'- '+v)
+    ].join('\n');
+    document.getElementById('ic-submit-btn').disabled=false;
+  }catch(e){document.getElementById('ic-preview').textContent=String(e);showToast(String(e),'error');}
+}
+async function submitIssueClosure(){
+  if(!_issueClosurePreview)return;
+  try{
+    const draft={...collectIssueClosureDraft(),expected_closure_digest:_issueClosurePreview.closure_digest};
+    const r=await fetch('/api/v2/issues/'+encodeURIComponent(_isSelectedFn)+'/close',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(draft)});
+    const d=await r.json();
+    if(!r.ok||d.ok===false)throw new Error((d.code?d.code+': ':'')+(d.message||d.error||r.status));
+    showToast('ISSUE 结构化结案已落盘','#6ee7b7');
     const closedFn=_isSelectedFn;
+    closeIssueClosureDialog();
     await loadIssues();
     await openIssueDetail(closedFn);
     renderIssuePage();
+  }catch(e){showToast(String(e),'error');}
+}
+async function reopenSelectedIssue(){
+  if(!_isSelectedFn||!_isSelectedDetail)return;
+  const reason=prompt('请输入重新打开原因（既有 closure 不会被覆盖）：');
+  if(!reason||!reason.trim())return;
+  try{
+    const r=await fetch('/api/v2/issues/'+encodeURIComponent(_isSelectedFn)+'/reopen',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({actor:(document.getElementById('tp-panel-operator')?.value||'ADMIN'),reason:reason.trim(),expected_issue_digest:_isSelectedDetail.issue_digest,idempotency_key:(crypto.randomUUID&&crypto.randomUUID())||('reopen-'+Date.now())})});
+    const d=await r.json();if(!r.ok||d.ok===false)throw new Error((d.code?d.code+': ':'')+(d.error||r.status));
+    const fn=_isSelectedFn;await loadIssues();await openIssueDetail(fn);showToast('ISSUE 已重新打开','#93c5fd');
+  }catch(e){showToast(String(e),'error');}
+}
+async function promoteSelectedIssue(){
+  if(!_isSelectedFn||!_isSelectedDetail?.current_closure)return;
+  try{
+    const r=await fetch('/api/v2/issues/'+encodeURIComponent(_isSelectedFn)+'/promotion/bundle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({actor:(document.getElementById('tp-panel-operator')?.value||'ADMIN'),expected_closure_digest:_isSelectedDetail.current_closure.closure_digest})});
+    const d=await r.json();if(!r.ok||d.ok===false)throw new Error((d.code?d.code+': ':'')+(d.error||r.status));
+    _issuePromotion=d;
+    document.getElementById('issue-promotion-meta').textContent=[d.promotion_id,d.target_repo,d.promotion_digest].filter(Boolean).join(' · ');
+    document.getElementById('issue-promotion-preview').textContent=d.draft_body||'';
+    document.getElementById('issue-promotion-dialog').showModal();
+    await openIssueDetail(_isSelectedFn);
+    await loadIssuePromotions();
+    if(issuePageMode==='promotions')renderIssuePromotionPage();
+  }catch(e){showToast(String(e),'error');}
+}
+async function openIssuePromotionById(promotionId){
+  if(!promotionId)return;
+  try{
+    const r=await fetch('/api/v2/issues/promotion/'+encodeURIComponent(promotionId));
+    const d=await r.json();if(!r.ok||d.ok===false)throw new Error((d.code?d.code+': ':'')+(d.error||d.message||r.status));
+    _issuePromotion=d;
+    document.getElementById('issue-promotion-meta').textContent=[d.promotion_id,issuePromotionStatusLabel(d.status),d.target_repo,d.promotion_digest].filter(Boolean).join(' · ');
+    document.getElementById('issue-promotion-preview').textContent=d.draft_body||'';
+    document.getElementById('issue-promotion-dialog').showModal();
+  }catch(e){showToast(String(e),'error');}
+}
+async function downloadIssuePromotion(promotionId){
+  const id=promotionId||_issuePromotion?.promotion_id;if(!id)return;
+  try{
+    const r=await fetch('/api/v2/issues/promotion/'+encodeURIComponent(id)+'/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({actor:(document.getElementById('tp-panel-operator')?.value||'ADMIN')})});
+    const d=await r.json();if(!r.ok||d.ok===false)throw new Error((d.code?d.code+': ':'')+(d.error||d.message||r.status));
+    let blob,name=d.filename||id+'.zip';
+    if(window.JSZip){
+      const zip=new JSZip();(d.files||[]).forEach(file=>zip.file(file.path,file.content));blob=await zip.generateAsync({type:'blob'});
+    }else{
+      name=id+'.evidence.json';blob=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});
+    }
+    const a=document.createElement('a');const url=URL.createObjectURL(blob);a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    showToast('证据包已导出：'+name,'#6ee7b7');
+    await loadIssuePromotions();renderIssuePromotionPage();
+  }catch(e){showToast(String(e),'error');}
+}
+async function prepareIssueGithubPublish(){
+  if(!_issuePromotion)return;
+  try{
+    const r=await fetch('/api/v2/issues/promotion/'+encodeURIComponent(_issuePromotion.promotion_id)+'/github/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({actor:(document.getElementById('tp-panel-operator')?.value||'ADMIN')})});
+    const d=await r.json();if(!r.ok||d.ok===false)throw new Error((d.code?d.code+': ':'')+(d.error||r.status));
+    const approval=d.approval||{};
+    showToast('已生成精确 GitHub 外部写入审批：'+(approval.approval_id||d.operation_digest),'#fcd34d');
+    document.getElementById('issue-promotion-dialog').close();
+    navTo('approvals');
   }catch(e){showToast(String(e),'error');}
 }
 

@@ -1,6 +1,7 @@
 /* Minimal PWA service worker — cache shell assets */
-const CACHE_NAME = "codeflowmu-pwa-v1.0.61";
+const CACHE_NAME = "codeflowmu-pwa-v1.0.62";
 const LEGACY_CACHE_NAMES = [
+    "codeflowmu-pwa-v1.0.61",
     "codeflowmu-pwa-v1.0.60",
     "codeflowmu-pwa-v1.0.59",
     "codeflowmu-pwa-v1.0.58",
@@ -40,13 +41,13 @@ const LEGACY_CACHE_NAMES = [
 const ASSETS = [
   "./",
   "./index.html",
-  "./mobile.js?v=1.0.61",
-  "./mobile.css?v=1.0.61",
-  "./i18n.js?v=1.0.61",
-  "./jsqr.min.js?v=1.0.61",
-  "./manifest.json?v=1.0.61",
-  "./logo-64.png?v=1.0.61",
-  "./RELEASES.json?v=1.0.61",
+  "./mobile.js?v=1.0.62",
+  "./mobile.css?v=1.0.62",
+  "./i18n.js?v=1.0.62",
+  "./jsqr.min.js?v=1.0.62",
+  "./manifest.json?v=1.0.62",
+  "./logo-64.png?v=1.0.62",
+  "./RELEASES.json?v=1.0.62",
 ];
 
 self.addEventListener("install", (event) => {

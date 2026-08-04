@@ -25,6 +25,7 @@ import { mergeMobileChatMessages } from "../mobile/mobileRoutes.ts";
 import { resetMobileEventStoreForTests } from "../mobile/mobileEventStore.ts";
 import { fcopLogsRuntimeDir, logsDateKey } from "../logs-paths.ts";
 import { appendPanelRuntimeAction } from "../panel-runtime-actions.ts";
+import { digestIssueClosureText, IssueClosureService } from "../issue-closure.ts";
 import {
   GovernanceApprovalService,
   OperationApprovalService,
@@ -1084,6 +1085,102 @@ async function bindMobileTestSession(app: MobileApp): Promise<string> {
   assert.equal(bindRes.status, 200);
   return String(bindRes.body.mobile_session_token);
 }
+
+test("mobile API: ISSUE closure preview, close and history share the PC contract", async () => {
+  const { root, reviews } = makeV3ProjectRoot();
+  const dataDir = mkdtempSync(join(tmpdir(), "cf-mobile-issue-data-"));
+  const app = buildMobilePanel(root, reviews, dataDir) as MobileApp;
+  const filename = "ISSUE-20260804-902-PM.md";
+  const issuePath = join(root, "fcop", "issues", filename);
+  const raw = `---
+protocol: fcop
+kind: issue
+issue_id: ISSUE-20260804-902-PM
+sender: PM
+recipient: DEV
+status: open
+---
+
+# Mobile runtime incident
+
+Recovery succeeded while the mother root cause remains open.
+`;
+  writeFileSync(issuePath, raw, "utf8");
+  try {
+    const token = await bindMobileTestSession(app);
+    const naked = await request(app)
+      .post(`/api/v2/mobile/issues/${filename}/close`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ closed_by: "ADMIN" });
+    assert.equal(naked.status, 422);
+    assert.equal(naked.body.code, "ISSUE_CLOSURE_DETAILS_REQUIRED");
+
+    const draft = {
+      actor: "ADMIN",
+      idempotency_key: "mobile-close-902",
+      expected_issue_digest: digestIssueClosureText(raw),
+      resolution_type: "mitigated",
+      root_cause_status: "not_fixed",
+      reason: "Recovery succeeded, but the mother runtime defect may recur.",
+      recovery_action: "Restart Runtime and reconcile the task projection.",
+      evidence: [{ type: "session", ref: "session-mobile-902" }],
+      residual_risk: "The runtime state split remains possible before the mother fix.",
+      follow_up_required: true,
+      follow_up_target: "CodeFlowMu",
+      reopen_conditions: ["The runtime state split recurs"],
+      promote_to_mother: true,
+      unblock_task: false,
+    };
+    const preview = await request(app)
+      .post(`/api/v2/mobile/issues/${filename}/closure/preview`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(draft);
+    assert.equal(preview.status, 200);
+    const closed = await request(app)
+      .post(`/api/v2/mobile/issues/${filename}/close`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ ...draft, expected_closure_digest: preview.body.closure_digest });
+    assert.equal(closed.status, 200);
+    const promotionId = "ISSUE-PROMOTION-20260804-902-PM-mobile";
+    const promotionRel = `fcop/internal/issue-promotions/${promotionId}/promotion.json`;
+    const promotionPath = join(root, ...promotionRel.split("/"));
+    mkdirSync(join(promotionPath, ".."), { recursive: true });
+    writeFileSync(promotionPath, `${JSON.stringify({
+      promotion_id: promotionId,
+      status: "published",
+      target_issue_number: 902,
+      target_issue_url: "https://github.com/example/private/issues/902",
+    }, null, 2)}\n`, "utf8");
+    await new IssueClosureService({ projectRoot: root }).updatePromotionProjection(filename, {
+      expected_closure_digest: closed.body.closure_digest,
+      status: "published",
+      promotion_record: promotionRel,
+    });
+    const detail = await request(app)
+      .get(`/api/v2/mobile/issues/${filename}`)
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(detail.status, 200);
+    assert.equal(detail.body.current_closure.closure_digest, closed.body.closure_digest);
+    assert.equal(detail.body.promotion.status, "published");
+    assert.equal(detail.body.promotion.target_issue_number, 902);
+    const promotionSummary = await request(app)
+      .get("/api/v2/mobile/issues/promotions")
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(promotionSummary.status, 200);
+    assert.equal(promotionSummary.body.promotions.length, 1);
+    assert.equal(promotionSummary.body.promotions[0].promotion_id, promotionId);
+    const history = await request(app)
+      .get(`/api/v2/mobile/issues/${filename}/closure/history`)
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(history.status, 200);
+    assert.equal(history.body.closures.length, 1);
+  } finally {
+    cleanupPanel(app);
+    wpResetProjectStoreForTests();
+    rmSync(root, { recursive: true, force: true });
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
 
 test("mobile API: tasks recipient filter and admin PM detail", async () => {
   const { root, reviews } = makeV3ProjectRoot();

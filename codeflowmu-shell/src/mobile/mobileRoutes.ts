@@ -14,6 +14,16 @@ import {
 } from "@codeflowmu/runtime";
 
 import { fcopV3Paths } from "../fcop-v3-paths.ts";
+import {
+  IssueClosureService,
+  issueClosureErrorResponse,
+} from "../issue-closure.ts";
+import {
+  buildIssueGithubApprovalInput,
+  generateIssuePromotionBundle,
+  listIssuePromotions,
+  readIssuePromotion,
+} from "../issue-promotion.ts";
 import { executeLifecycleRuntimeAction } from "../lifecycle-runtime-bridge.ts";
 import {
   ensureLedgerFresh,
@@ -1222,6 +1232,99 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
       res.json({ issues: rows.map((r) => slimMobileIssue(r)) });
     } catch (err) {
       res.status(500).json({ ok: false, error: String(err) });
+    }
+  });
+
+  router.get("/issues/promotions", (_req: Request, res: Response) => {
+    try {
+      const promotions = listIssuePromotions(ctx.getProjectRoot());
+      res.json({ promotions, _meta: { count: promotions.length } });
+    } catch (error) {
+      const out = issueClosureErrorResponse(error);
+      res.status(out.status).json({ ok: false, error: out.message, code: out.code, details: out.details });
+    }
+  });
+
+  router.get("/issues/:filename", (req: Request, res: Response) => {
+    try {
+      res.json(new IssueClosureService({ projectRoot: ctx.getProjectRoot() }).detail(String(req.params["filename"] ?? "")));
+    } catch (error) {
+      const out = issueClosureErrorResponse(error);
+      res.status(out.status).json({ ok: false, error: out.message, code: out.code, details: out.details });
+    }
+  });
+
+  router.post("/issues/:filename/closure/preview", (req: Request, res: Response) => {
+    try {
+      res.json(new IssueClosureService({ projectRoot: ctx.getProjectRoot() }).preview(String(req.params["filename"] ?? ""), req.body));
+    } catch (error) {
+      const out = issueClosureErrorResponse(error);
+      res.status(out.status).json({ ok: false, error: out.message, code: out.code, details: out.details });
+    }
+  });
+
+  router.post("/issues/:filename/close", async (req: Request, res: Response) => {
+    try {
+      res.json(await new IssueClosureService({ projectRoot: ctx.getProjectRoot() }).close(String(req.params["filename"] ?? ""), req.body));
+    } catch (error) {
+      const out = issueClosureErrorResponse(error);
+      res.status(out.status).json({ ok: false, error: out.message, code: out.code, details: out.details });
+    }
+  });
+
+  router.get("/issues/:filename/closure/history", (req: Request, res: Response) => {
+    try {
+      res.json(new IssueClosureService({ projectRoot: ctx.getProjectRoot() }).history(String(req.params["filename"] ?? "")));
+    } catch (error) {
+      const out = issueClosureErrorResponse(error);
+      res.status(out.status).json({ ok: false, error: out.message, code: out.code, details: out.details });
+    }
+  });
+
+  router.post("/issues/:filename/reopen", async (req: Request, res: Response) => {
+    try {
+      res.json(await new IssueClosureService({ projectRoot: ctx.getProjectRoot() }).reopen(String(req.params["filename"] ?? ""), req.body));
+    } catch (error) {
+      const out = issueClosureErrorResponse(error);
+      res.status(out.status).json({ ok: false, error: out.message, code: out.code, details: out.details });
+    }
+  });
+
+  router.post("/issues/:filename/promotion/bundle", async (req: Request, res: Response) => {
+    try {
+      res.json(await generateIssuePromotionBundle({
+        projectRoot: ctx.getProjectRoot(),
+        filename: String(req.params["filename"] ?? ""),
+        actor: String(req.body?.actor ?? ""),
+        expected_closure_digest: String(req.body?.expected_closure_digest ?? ""),
+      }));
+    } catch (error) {
+      const out = issueClosureErrorResponse(error);
+      res.status(out.status).json({ ok: false, error: out.message, code: out.code, details: out.details });
+    }
+  });
+
+  router.get("/issues/promotion/:promotionId", (req: Request, res: Response) => {
+    try {
+      res.json(readIssuePromotion(ctx.getProjectRoot(), String(req.params["promotionId"] ?? "")));
+    } catch (error) {
+      const out = issueClosureErrorResponse(error);
+      res.status(out.status).json({ ok: false, error: out.message, code: out.code, details: out.details });
+    }
+  });
+
+  router.post("/issues/promotion/:promotionId/github/prepare", (req: Request, res: Response) => {
+    try {
+      const preparedInput = buildIssueGithubApprovalInput({
+        projectRoot: ctx.getProjectRoot(),
+        promotion_id: String(req.params["promotionId"] ?? ""),
+        actor: String(req.body?.actor ?? ""),
+      });
+      const prepared = mobileApprovalService(ctx).prepare(preparedInput);
+      res.status(prepared.decision === "REQUIRE_APPROVAL" ? 202 : 200).json({ ok: true, ...prepared });
+    } catch (error) {
+      const out = issueClosureErrorResponse(error);
+      res.status(out.status).json({ ok: false, error: out.message, code: out.code, details: out.details });
     }
   });
 

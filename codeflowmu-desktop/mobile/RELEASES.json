@@ -2,6 +2,17 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "V1.0.62",
+      "resource_version": "1.0.62",
+      "released_at": "2026-08-04T06:47:17Z",
+      "name": "ISSUE 结构化结案与母版证据闭环",
+      "changes": [
+        "移动端新增 ISSUE 结构化结案预览、必填校验、关闭与历史记录查看",
+        "统一展示结案摘要、根因状态、不可变摘要和母版证据升级状态",
+        "默认只生成本地脱敏证据包，不经 ADMIN 审批不会写入 GitHub"
+      ]
+    },
+    {
       "version": "V1.0.61",
       "resource_version": "1.0.61",
       "released_at": "2026-08-03T15:06:08Z",

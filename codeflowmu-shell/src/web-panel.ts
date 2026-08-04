@@ -41,6 +41,17 @@ import { CursorUsageSyncer } from "./cursor-usage-syncer.ts";
 import { closeHttpServerBounded } from "./bounded-server-close.ts";
 import { enrichIssueMetadata } from "./issue-enrichment.ts";
 import {
+  IssueClosureService,
+  issueClosureErrorResponse,
+} from "./issue-closure.ts";
+import {
+  buildIssueGithubApprovalInput,
+  exportIssuePromotionBundle,
+  generateIssuePromotionBundle,
+  listIssuePromotions,
+  readIssuePromotion,
+} from "./issue-promotion.ts";
+import {
   fcopV3Paths,
   fcopV3TaskSearchDirs,
   findTaskFile,
@@ -1083,10 +1094,11 @@ interface ApiError {
   ok: false;
   error: string;
   code: string;
+  details?: unknown;
 }
 
-function sendError(res: Response, status: number, code: string, msg: string) {
-  const body: ApiError = { ok: false, error: msg, code };
+function sendError(res: Response, status: number, code: string, msg: string, details?: unknown) {
+  const body: ApiError = { ok: false, error: msg, code, ...(details === undefined ? {} : { details }) };
   res.status(status).json(body);
 }
 
@@ -9669,29 +9681,30 @@ export function buildWebPanelApp(
     }
   });
 
+  /** GET /api/v2/issues/promotions — aggregate local mother-evidence submissions. */
+  app.get("/api/v2/issues/promotions", (_req: Request, res: Response) => {
+    try {
+      const promotions = listIssuePromotions(projectRoot());
+      res.json({ promotions, _meta: { count: promotions.length } });
+    } catch (err) {
+      const out = issueClosureErrorResponse(err);
+      sendError(res, out.status, out.code, out.message, out.details);
+    }
+  });
+
   /**
    * GET /api/v2/issues/:filename — read one issue (body included).
    */
   app.get("/api/v2/issues/:filename", (req: Request, res: Response) => {
     try {
       const filename = String(req.params["filename"] ?? "").trim();
-      if (!/^ISSUE-\d{8}-\d{3}-.+\.md$/i.test(filename)) {
-        sendError(res, 400, "INVALID_ISSUE_FILENAME", "Expected ISSUE-YYYYMMDD-NNN-*.md");
-        return;
-      }
       const root = projectRoot();
-      const abs = join(root, "fcop", "issues", filename);
-      if (!existsSync(abs)) {
-        sendError(res, 404, "ISSUE_NOT_FOUND", filename);
-        return;
-      }
-      const raw = readFileSync(abs, "utf-8");
-      const fm = _wpParseFmYaml(raw);
-      const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
-      const enrichment = enrichIssueMetadata(root, fm, body);
-      res.json({ filename, ...fm, ...enrichment, body, open: _wpIssueStatusOpen(fm) });
+      const detail = new IssueClosureService({ projectRoot: root }).detail(filename);
+      const enrichment = enrichIssueMetadata(root, detail as Record<string, string>, String(detail.body ?? ""));
+      res.json({ ...detail, ...enrichment });
     } catch (err) {
-      sendError(res, 500, "ISSUE_READ_FAILED", String(err));
+      const out = issueClosureErrorResponse(err);
+      sendError(res, out.status, out.code, out.message, out.details);
     }
   });
 
@@ -9699,76 +9712,95 @@ export function buildWebPanelApp(
    * POST /api/v2/issues/:filename/close — mark issue closed (frontmatter only, ADR-0004).
    * Body: { closed_by?: string, resolution?: string }
    */
-  app.post("/api/v2/issues/:filename/close", (req: Request, res: Response) => {
+  app.post("/api/v2/issues/:filename/close", async (req: Request, res: Response) => {
     try {
       const filename = String(req.params["filename"] ?? "").trim();
-      if (!/^ISSUE-\d{8}-\d{3}-.+\.md$/i.test(filename)) {
-        sendError(res, 400, "INVALID_ISSUE_FILENAME", "Expected ISSUE-YYYYMMDD-NNN-*.md");
-        return;
-      }
-      const root = projectRoot();
-      const abs = join(root, "fcop", "issues", filename);
-      if (!existsSync(abs)) {
-        sendError(res, 404, "ISSUE_NOT_FOUND", filename);
-        return;
-      }
-      const raw = readFileSync(abs, "utf-8");
-      const fm = _wpParseFmYaml(raw);
-      if (!_wpIssueStatusOpen(fm)) {
-        res.json({ ok: true, filename, already_closed: true });
-        return;
-      }
-      const body = (req.body as Record<string, unknown>) ?? {};
-      const closedBy = String(body.closed_by ?? body.operator ?? "ADMIN").trim() || "ADMIN";
-      const resolution = String(body.resolution ?? "").trim();
-      const closedAt = new Date().toISOString();
-      const fields: Record<string, string> = {
-        status: "closed",
-        closed_at: `'${closedAt}'`,
-        closed_by: closedBy,
-      };
-      if (resolution) fields.resolution = resolution.replace(/\n/g, " ").slice(0, 200);
-      const updated = _wpPatchFmFields(raw, fields);
-      writeFileSync(abs, updated, "utf-8");
-      const sourceTaskId = String(
-        fm["source_task"] ?? fm["task_id"] ?? "",
-      ).trim();
-      const issueId = String(
-        fm["issue_id"] ?? filename.replace(/\.md$/i, ""),
-      ).trim();
-      if (sourceTaskId) {
-        const taskHit = findTaskFileByIdPrefix(root, sourceTaskId);
-        if (taskHit?.path && existsSync(taskHit.path)) {
-          const taskRaw = readFileSync(taskHit.path, "utf-8");
-          const taskFm = parseMarkdownFrontmatter(taskRaw) as Record<
-            string,
-            unknown
-          >;
-          if (String(taskFm["blocking_issue_id"] ?? "").trim() === issueId) {
-            const taskPath = taskHit.path.replace(/\\/g, "/").toLowerCase();
-            const stage =
-              taskPath.match(
-                /\/fcop\/_lifecycle\/(inbox|active|review|done|archive)\//,
-              )?.[1] ?? "active";
-            const unblockedTask = _wpPatchFmFields(taskRaw, {
-              issue_blocking: "false",
-              blocking_issue_id: '""',
-              blocking_issue_reason: '""',
-              display_status: stage,
-              dispatch_state:
-                stage === "review"
-                  ? "waiting_review"
-                  : stage === "active"
-                    ? "pending"
-                    : stage,
-            });
-            writeFileSync(taskHit.path, unblockedTask, "utf-8");
-          }
-        }
-      }
-      res.json({ ok: true, filename, status: "closed", closed_at: closedAt, closed_by: closedBy });
+      res.json(await new IssueClosureService({ projectRoot: projectRoot() }).close(filename, req.body));
     } catch (err) {
-      sendError(res, 500, "ISSUE_CLOSE_FAILED", String(err));
+      const out = issueClosureErrorResponse(err);
+      sendError(res, out.status, out.code, out.message, out.details);
+    }
+  });
+
+  app.post("/api/v2/issues/:filename/closure/preview", (req: Request, res: Response) => {
+    try {
+      res.json(new IssueClosureService({ projectRoot: projectRoot() }).preview(String(req.params["filename"] ?? ""), req.body));
+    } catch (err) {
+      const out = issueClosureErrorResponse(err);
+      sendError(res, out.status, out.code, out.message, out.details);
+    }
+  });
+
+  app.get("/api/v2/issues/:filename/closure/history", (req: Request, res: Response) => {
+    try {
+      res.json(new IssueClosureService({ projectRoot: projectRoot() }).history(String(req.params["filename"] ?? "")));
+    } catch (err) {
+      const out = issueClosureErrorResponse(err);
+      sendError(res, out.status, out.code, out.message, out.details);
+    }
+  });
+
+  app.post("/api/v2/issues/:filename/reopen", async (req: Request, res: Response) => {
+    try {
+      res.json(await new IssueClosureService({ projectRoot: projectRoot() }).reopen(String(req.params["filename"] ?? ""), req.body));
+    } catch (err) {
+      const out = issueClosureErrorResponse(err);
+      sendError(res, out.status, out.code, out.message, out.details);
+    }
+  });
+
+  app.post("/api/v2/issues/:filename/promotion/bundle", async (req: Request, res: Response) => {
+    try {
+      res.json(await generateIssuePromotionBundle({
+        projectRoot: projectRoot(),
+        filename: String(req.params["filename"] ?? ""),
+        actor: String(req.body?.actor ?? ""),
+        expected_closure_digest: String(req.body?.expected_closure_digest ?? ""),
+      }));
+    } catch (err) {
+      const out = issueClosureErrorResponse(err);
+      sendError(res, out.status, out.code, out.message, out.details);
+    }
+  });
+
+  app.get("/api/v2/issues/promotion/:promotionId", (req: Request, res: Response) => {
+    try {
+      res.json(readIssuePromotion(projectRoot(), String(req.params["promotionId"] ?? "")));
+    } catch (err) {
+      const out = issueClosureErrorResponse(err);
+      sendError(res, out.status, out.code, out.message, out.details);
+    }
+  });
+
+  app.post("/api/v2/issues/promotion/:promotionId/export", async (req: Request, res: Response) => {
+    try {
+      res.json(await exportIssuePromotionBundle({
+        projectRoot: projectRoot(),
+        promotion_id: String(req.params["promotionId"] ?? ""),
+        actor: String(req.body?.actor ?? ""),
+      }));
+    } catch (err) {
+      const out = issueClosureErrorResponse(err);
+      sendError(res, out.status, out.code, out.message, out.details);
+    }
+  });
+
+  app.post("/api/v2/issues/promotion/:promotionId/github/prepare", (req: Request, res: Response) => {
+    try {
+      const preparedInput = buildIssueGithubApprovalInput({
+        projectRoot: projectRoot(),
+        promotion_id: String(req.params["promotionId"] ?? ""),
+        actor: String(req.body?.actor ?? ""),
+      });
+      const prepared = operationApprovalService().prepare(preparedInput);
+      res.status(prepared.decision === "REQUIRE_APPROVAL" ? 202 : 200).json({ ok: true, ...prepared });
+    } catch (err) {
+      if (err instanceof OperationApprovalError) {
+        sendOperationApprovalError(res, err);
+        return;
+      }
+      const out = issueClosureErrorResponse(err);
+      sendError(res, out.status, out.code, out.message, out.details);
     }
   });
 

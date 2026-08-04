@@ -7,11 +7,11 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
-  <meta name="cfm-pwa-bundle-version" content="V1.0.61" />
+  <meta name="cfm-pwa-bundle-version" content="V1.0.62" />
   <title>码流 CodeFlowMu</title>
-  <link rel="manifest" href="manifest.json?v=1.0.61" />
-  <link rel="stylesheet" href="mobile.css?v=1.0.61" />
-  <link rel="apple-touch-icon" href="logo-64.png?v=1.0.61" />
+  <link rel="manifest" href="manifest.json?v=1.0.62" />
+  <link rel="stylesheet" href="mobile.css?v=1.0.62" />
+  <link rel="apple-touch-icon" href="logo-64.png?v=1.0.62" />
   <script>
     (function () {
       try {
@@ -62,7 +62,7 @@
 <div class="app-shell" id="appShell">
   <header class="app-header">
     <div class="header-row1">
-      <img class="header-logo" src="logo-64.png?v=1.0.61" width="28" height="28" alt="" />
+      <img class="header-logo" src="logo-64.png?v=1.0.62" width="28" height="28" alt="" />
       <div class="header-brand-block">
         <span id="headerBrand" class="header-brand" data-i18n="appTitle">码流 CodeFlowMu</span>
         <span id="heroSub" class="header-sub" data-i18n="homeSloganFull">手机驭 AI，指令达团队</span>
@@ -460,8 +460,43 @@
   </div>
 </div>
 
-  <script src="i18n.js?v=1.0.61"></script>
-  <script src="jsqr.min.js?v=1.0.61"></script>
-  <script src="mobile.js?v=1.0.61"></script>
+<div id="issueClosurePage" class="fullscreen-page">
+  <header class="fullscreen-page-header">
+    <button id="micBack" class="fullscreen-back-btn" type="button">← 返回</button>
+    <span class="fullscreen-page-title">ISSUE 结构化结案</span>
+  </header>
+  <div class="fullscreen-page-content">
+    <div class="card composer-section">
+      <label class="composer-label">结案类型 *</label>
+      <select id="micResolution"><option value="">请选择</option><option value="fixed">已修复</option><option value="mitigated">已缓解</option><option value="workaround">临时绕行</option><option value="duplicate">重复问题</option><option value="not_reproducible">无法复现</option><option value="invalid">无效问题</option><option value="accepted_risk">接受风险</option><option value="superseded">被后续事项取代</option></select>
+      <label class="composer-label">根因状态 *</label>
+      <select id="micRootStatus"><option value="unknown">未知</option><option value="not_fixed">未修复</option><option value="partially_fixed">部分修复</option><option value="fixed">已修复</option><option value="accepted_risk">接受风险</option></select>
+      <label class="composer-label">根因分类</label><input id="micRootCategory" type="text" placeholder="runtime.lifecycle_state_split">
+      <label class="composer-label">结案原因 *</label><textarea id="micReason" rows="4"></textarea>
+      <label class="composer-label">根因说明</label><textarea id="micRootSummary" rows="3"></textarea>
+      <label class="composer-label">恢复/修复动作</label><textarea id="micRecovery" rows="3"></textarea>
+      <label class="composer-label">验证说明</label><textarea id="micVerification" rows="3"></textarea>
+      <label class="composer-label">证据（每行 type: ref）</label><textarea id="micEvidence" rows="4"></textarea>
+      <label class="composer-label">残余风险</label><textarea id="micResidual" rows="3"></textarea>
+      <label class="composer-label">替代/重复目标</label><input id="micReplacement" type="text">
+      <label class="composer-label">修复 commit / 版本</label><input id="micFixCommit" type="text" placeholder="commit"><input id="micFixVersion" type="text" placeholder="version">
+      <label class="composer-label">后续目标</label><input id="micFollowTarget" type="text">
+      <label class="composer-label">后续事项引用</label><input id="micFollowReference" type="text" placeholder="ISSUE/TASK/说明">
+      <label class="composer-label"><input id="micFollowRequired" type="checkbox"> 需要后续事项</label>
+      <label class="composer-label">重开条件（每行一项）</label><textarea id="micReopenConditions" rows="3"></textarea>
+      <label class="composer-label">无法复现：环境 / 尝试次数 / 观察窗口</label><input id="micEnvironment" type="text" placeholder="environment"><input id="micReproductionAttempts" type="number" min="1" placeholder="attempts"><input id="micObservationWindow" type="text" placeholder="observation window">
+      <label class="composer-label">接受风险：决定人 / 到期日 / 复审条件</label><input id="micRiskDecider" type="text" placeholder="decider"><input id="micRiskExpiresAt" type="date"><input id="micRiskReviewCondition" type="text" placeholder="review condition">
+      <label class="composer-label"><input id="micUnblock" type="checkbox"> 显式解除 TASK blocker（默认不选）</label>
+      <input id="micUnblockReason" type="text" placeholder="解除理由">
+      <label class="composer-label"><input id="micPromote" type="checkbox"> 可生成母版证据草稿（不会自动外发）</label>
+      <pre id="micPreview" class="detail-markdown" style="white-space:pre-wrap;max-height:320px;overflow:auto">请先生成零写入预览。</pre>
+      <div class="composer-actions-row"><button id="micPreviewBtn" type="button" class="btn-secondary-block">生成预览</button><button id="micSubmit" type="button" class="btn-block-primary" disabled>确认结案</button></div>
+    </div>
+  </div>
+</div>
+
+  <script src="i18n.js?v=1.0.62"></script>
+  <script src="jsqr.min.js?v=1.0.62"></script>
+  <script src="mobile.js?v=1.0.62"></script>
 </body>
 </html>

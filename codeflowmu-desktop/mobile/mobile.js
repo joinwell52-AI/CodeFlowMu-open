@@ -6,10 +6,11 @@
   "use strict";
 
   /** 本机当前运行的 PWA 包版本（发版时与 version.json / index.html ?v= 对齐） */
-  var BUNDLE_VERSION = "V1.0.61";
-  var PWA_CACHE_BUST = "1.0.61";
+  var BUNDLE_VERSION = "V1.0.62";
+  var PWA_CACHE_BUST = "1.0.62";
   var PWA_VERSION_STORAGE_KEY = "cfm_pwa_installed_version";
   var PWA_LEGACY_CACHE_NAMES = [
+    "codeflowmu-pwa-v1.0.61",
     "codeflowmu-pwa-v1.0.60",
     "codeflowmu-pwa-v1.0.59",
     "codeflowmu-pwa-v1.0.58",
@@ -3196,7 +3197,8 @@
   function setDetailTitle(kind) {
     var titleEl = $("taskDetailPageTitle");
     if (!titleEl) return;
-    if (kind === "report") titleEl.textContent = t("reportDetailTitle");
+    if (kind === "issue") titleEl.textContent = t("navIssues");
+    else if (kind === "report") titleEl.textContent = t("reportDetailTitle");
     else if (kind === "approval") titleEl.textContent = t("approvalDetailTitle");
     else titleEl.textContent = t("taskDetailTitle");
   }
@@ -3382,7 +3384,9 @@
     var empty = $(emptyId);
     if (!host) return;
     if (items && items.length) {
-      host.innerHTML = items.map(itemCardHtmlFlat).join("");
+      host.innerHTML = items.map(function (item) {
+        return itemCardHtmlFlat(Object.assign({}, item, { kind: kind || item.kind || "task" }));
+      }).join("");
       bindItemCards(host);
       if (empty) empty.classList.add("hidden");
     } else {
@@ -3517,6 +3521,55 @@
     $("taskDetailPage").classList.add("open");
   }
 
+  function showDetailFromIssue(issue) {
+    state.currentDetail = issue;
+    state.detailKind = "issue";
+    setDetailTitle("issue");
+    hideDetailSections();
+    $("fpDetailTaskId").textContent = issue.filename || issue.issue_id || "—";
+    $("fpDetailFileName").textContent = issue.title || issue.summary || issue.filename || "—";
+    $("fpDetailStatus").textContent = issue.status || "open";
+    $("fpDetailSender").textContent = issue.reporter || issue.sender || "—";
+    $("fpDetailRecipient").textContent = issue.recipient || "—";
+    $("fpDetailBucket").textContent = issue.root_cause_status || "unknown";
+    var closure = issue.current_closure || null;
+    var promotion = issue.promotion || null;
+    var history = issue.closure_history || [];
+    var closureMarkdown = issue.legacy_simple_closure
+      ? "\n\n> ⚠️ 历史简式结案，缺少结构化 closure；系统不会推测或补造原因。"
+      : closure
+        ? "\n\n## 结案事实\n\n" +
+          "- 结案类型：" + (closure.resolution_type || "-") + "\n" +
+          "- 根因状态：" + (closure.root_cause_status || "unknown") + "\n" +
+          "- 母版升级：" + (issue.promotion_status || closure.promotion_status || "not_promoted") + "\n" +
+          (promotion && promotion.target_issue_url ? "- GitHub 回执：[" + (promotion.target_issue_number || promotion.target_issue_url) + "](" + promotion.target_issue_url + ")\n" : "") +
+          "- closure digest：`" + (closure.closure_digest || "") + "`\n" +
+          "- 历史 attempts：" + history.length + "\n\n" +
+          (closure.body || "")
+        : "";
+    setFpMarkdown((issue.body || "") + closureMarkdown);
+    var alert = $("fpStatusAlert");
+    if (alert && issue.legacy_simple_closure) {
+      alert.classList.remove("hidden");
+      alert.className = "detail-alert";
+      alert.textContent = "历史简式结案，缺少结构化 closure";
+    }
+    var host = $("fpTaskActionBar");
+    if (host) {
+      var closed = String(issue.status || "open").toLowerCase() === "closed";
+      host.innerHTML =
+        '<button type="button" class="btn-secondary-block" id="mobileIssueBack">' + esc(t("back")) + '</button>' +
+        (closed && closure ? '<button type="button" class="btn-block-primary" id="mobileIssuePromote">提交为母版修复证据</button>' : '') +
+        (closed && closure ? '<button type="button" class="btn-secondary-block" id="mobileIssueReopen">' + esc(t("issueReopen")) + '</button>' : '') +
+        (!closed ? '<button type="button" class="btn-block-primary" id="mobileIssueClose">结构化结案</button>' : '');
+      $("mobileIssueBack") && $("mobileIssueBack").addEventListener("click", closeTaskDetail);
+      $("mobileIssueClose") && $("mobileIssueClose").addEventListener("click", openMobileIssueClosure);
+      $("mobileIssuePromote") && $("mobileIssuePromote").addEventListener("click", promoteMobileIssueEvidence);
+      $("mobileIssueReopen") && $("mobileIssueReopen").addEventListener("click", reopenMobileIssue);
+    }
+    $("taskDetailPage").classList.add("open");
+  }
+
   function showDetailFromApproval(data) {
     var approval = normalizeApproval(data.approval || data);
     state.currentDetail = approval;
@@ -3610,6 +3663,9 @@
         var report = normalizeReport(Object.assign({}, rd.report, { body: rd.report && rd.report.body }));
         showDetailFromReport(report, rd.linked_tasks || [], rd.related_issues || []);
         clearApiError("reports");
+      } else if (kind === "issue") {
+        var issue = await api("/api/v2/mobile/issues/" + encodeURIComponent(filename));
+        showDetailFromIssue(issue);
       } else if (kind === "approval") {
         var ad = await api("/api/v2/mobile/approvals/" + encodeURIComponent(filename));
         showDetailFromApproval(ad);
@@ -3625,6 +3681,164 @@
 
     if (prevScroll != null && detailContent) {
       detailContent.scrollTop = prevScroll;
+    }
+  }
+
+  function openMobileIssueClosure() {
+    var issue = state.currentDetail;
+    if (!issue || state.detailKind !== "issue") return;
+    state.issueClosurePreview = null;
+    state.issueClosureKey = (window.crypto && window.crypto.randomUUID)
+      ? window.crypto.randomUUID()
+      : "mobile-issue-close-" + Date.now();
+    ["micReason", "micRecovery", "micVerification", "micEvidence", "micResidual", "micRootSummary", "micRootCategory", "micReplacement", "micFixCommit", "micFixVersion", "micFollowReference", "micReopenConditions", "micEnvironment", "micReproductionAttempts", "micObservationWindow", "micRiskDecider", "micRiskExpiresAt", "micRiskReviewCondition", "micUnblockReason"].forEach(function (id) {
+      if ($(id)) $(id).value = "";
+    });
+    $("micResolution").value = "";
+    $("micRootStatus").value = "not_fixed";
+    $("micFollowTarget").value = "CodeFlowMu";
+    $("micFollowRequired").checked = true;
+    $("micUnblock").checked = false;
+    $("micPromote").checked = true;
+    $("micPreview").textContent = "请先生成零写入预览。";
+    $("micSubmit").disabled = true;
+    $("issueClosurePage").classList.add("open");
+  }
+
+  function closeMobileIssueClosure() {
+    $("issueClosurePage") && $("issueClosurePage").classList.remove("open");
+  }
+
+  function mobileIssueEvidence() {
+    return String($("micEvidence") && $("micEvidence").value || "")
+      .split(/\r?\n/)
+      .map(function (line) {
+        var idx = line.indexOf(":");
+        return idx > 0 ? { type: line.slice(0, idx).trim(), ref: line.slice(idx + 1).trim() } : null;
+      })
+      .filter(function (row) { return row && row.type && row.ref; });
+  }
+
+  function mobileIssueClosureDraft() {
+    var issue = state.currentDetail || {};
+    return {
+      actor: "ADMIN",
+      idempotency_key: state.issueClosureKey,
+      expected_issue_digest: issue.issue_digest || "",
+      resolution_type: $("micResolution").value,
+      root_cause_status: $("micRootStatus").value,
+      root_cause_category: $("micRootCategory").value,
+      root_cause_summary: $("micRootSummary").value,
+      replacement_target: $("micReplacement").value,
+      reason: $("micReason").value,
+      recovery_action: $("micRecovery").value,
+      verification_summary: $("micVerification").value,
+      evidence: mobileIssueEvidence(),
+      residual_risk: $("micResidual").value,
+      fix_commit: $("micFixCommit").value,
+      fix_version: $("micFixVersion").value,
+      follow_up_required: $("micFollowRequired").checked,
+      follow_up_target: $("micFollowTarget").value,
+      follow_up_reference: $("micFollowReference").value,
+      unblock_task: $("micUnblock").checked,
+      unblock_reason: $("micUnblockReason").value,
+      promote_to_mother: $("micPromote").checked,
+      reopen_conditions: String($("micReopenConditions").value || "").split(/\r?\n/).map(function (line) { return line.trim(); }).filter(Boolean),
+      environment: $("micEnvironment").value,
+      reproduction_attempts: Number($("micReproductionAttempts").value || 0),
+      observation_window: $("micObservationWindow").value,
+      risk_decider: $("micRiskDecider").value,
+      risk_expires_at: $("micRiskExpiresAt").value,
+      risk_review_condition: $("micRiskReviewCondition").value,
+    };
+  }
+
+  function invalidateMobileIssueClosurePreview() {
+    state.issueClosurePreview = null;
+    $("micSubmit") && ($("micSubmit").disabled = true);
+    $("micPreview") && ($("micPreview").textContent = "表单已变化，请重新预览。");
+  }
+
+  async function previewMobileIssueClosure() {
+    try {
+      var issue = state.currentDetail;
+      var result = await api("/api/v2/mobile/issues/" + encodeURIComponent(issue.filename) + "/closure/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: mobileIssueClosureDraft(),
+      });
+      state.issueClosurePreview = result;
+      $("micPreview").textContent = [
+        "closure: " + result.closure_record,
+        "digest: " + result.closure_digest,
+        "authority: " + result.required_authority,
+        "approval required: " + result.required_approval,
+        "",
+        "ISSUE diff:", JSON.stringify(result.issue_frontmatter_diff, null, 2),
+        "", "TASK unblock:", JSON.stringify(result.task_unblock, null, 2),
+      ].join("\n");
+      $("micSubmit").disabled = false;
+    } catch (error) {
+      $("micPreview").textContent = userFacingError(error);
+      showErrorToast(userFacingError(error));
+    }
+  }
+
+  async function submitMobileIssueClosure() {
+    if (!state.issueClosurePreview) return;
+    try {
+      var issue = state.currentDetail;
+      var draft = mobileIssueClosureDraft();
+      draft.expected_closure_digest = state.issueClosurePreview.closure_digest;
+      await api("/api/v2/mobile/issues/" + encodeURIComponent(issue.filename) + "/close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: draft,
+      });
+      closeMobileIssueClosure();
+      showToast(t("issueClosureSaved"));
+      await openDetail("issue", issue.filename);
+    } catch (error) {
+      showErrorToast(userFacingError(error));
+    }
+  }
+
+  async function promoteMobileIssueEvidence() {
+    var issue = state.currentDetail;
+    if (!issue || !issue.current_closure) return;
+    try {
+      var result = await api("/api/v2/mobile/issues/" + encodeURIComponent(issue.filename) + "/promotion/bundle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: { actor: "ADMIN", expected_closure_digest: issue.current_closure.closure_digest },
+      });
+      showToast(t("issueEvidenceBundleSaved", { id: result.promotion_id }));
+      await openDetail("issue", issue.filename);
+    } catch (error) {
+      showErrorToast(userFacingError(error));
+    }
+  }
+
+  async function reopenMobileIssue() {
+    var issue = state.currentDetail;
+    if (!issue || !issue.current_closure) return;
+    var reason = window.prompt(t("issueReopenReasonPrompt"), "");
+    if (!reason || !reason.trim()) return;
+    try {
+      await api("/api/v2/mobile/issues/" + encodeURIComponent(issue.filename) + "/reopen", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: {
+          actor: "ADMIN",
+          reason: reason.trim(),
+          expected_issue_digest: issue.issue_digest,
+          idempotency_key: "mobile-issue-reopen-" + Date.now(),
+        },
+      });
+      showToast(t("issueReopened"));
+      await openDetail("issue", issue.filename);
+    } catch (error) {
+      showErrorToast(userFacingError(error));
     }
   }
 
@@ -5417,6 +5631,13 @@
 
     $("taskDetailBackBtn") &&
       $("taskDetailBackBtn").addEventListener("click", closeTaskDetail);
+    $("micBack") && $("micBack").addEventListener("click", closeMobileIssueClosure);
+    $("micPreviewBtn") && $("micPreviewBtn").addEventListener("click", previewMobileIssueClosure);
+    $("micSubmit") && $("micSubmit").addEventListener("click", submitMobileIssueClosure);
+    ["micResolution", "micRootStatus", "micReason", "micRootSummary", "micRecovery", "micVerification", "micEvidence", "micResidual", "micReplacement", "micFixCommit", "micFixVersion", "micFollowTarget", "micFollowRequired", "micUnblock", "micUnblockReason", "micPromote"].forEach(function (id) {
+      var input = $(id);
+      if (input) input.addEventListener(input.type === "checkbox" || input.tagName === "SELECT" ? "change" : "input", invalidateMobileIssueClosurePreview);
+    });
     $("fpApprovalApprove") &&
       $("fpApprovalApprove").addEventListener("click", approveCurrentApproval);
     $("fpApprovalReject") &&

@@ -3,16 +3,16 @@
   "productName": "CodeFlowMu Open Dev Team Edition",
   "positioning": "A multi-agent development team application governed by the FCoP protocol and driven through Cursor SDK interfaces.",
   "edition": "open-dev-team",
-  "version": "V1.2.17-open",
-  "npmVersion": "1.2.17-open",
+  "version": "V1.2.19-open",
+  "npmVersion": "1.2.19-open",
   "releaseChannel": "open",
   "status": "public-open",
   "sourceRepository": "joinwell52-AI/codeflowmu",
   "targetRepository": "joinwell52-AI/CodeFlowMu-open",
-  "builtAt": "2026-08-04T04:15:56.328Z",
-  "sourceGitCommit": "63ee3d220ccd719369c1651c2fc48e4c872aa3d5",
+  "builtAt": "2026-08-04T08:15:25.635Z",
+  "sourceGitCommit": "5f5b2eec9de943cf2cc046090e17e6c4e623866b",
   "sourceDirty": false,
-  "motherVersion": "V1.2.17",
+  "motherVersion": "V1.2.19",
   "features": [
     {
       "id": "fcop-development-team",
@@ -76,6 +76,12 @@
       "name": "Recoverable FCoP initialization write barrier",
       "status": "public",
       "publicSince": "V1.2.14-open"
+    },
+    {
+      "id": "issue-closure-evidence-promotion",
+      "name": "Structured ISSUE closure and controlled mother evidence promotion",
+      "status": "public",
+      "publicSince": "V1.2.18-open"
     }
   ],
   "boundary": {
@@ -193,6 +199,7 @@
       "task-claim-redispatch-recovery",
       "pm-long-horizon-planning",
       "fcop-init-write-barrier",
+      "issue-closure-evidence-promotion",
       "pre-action-approval-gate",
       "runtime-governance-remediation",
       "team-model-runtime-persistence"
@@ -578,6 +585,36 @@
           "packages/codeflowmu-runtime/src/scheduler/ReportWatcherSeenStore.ts",
           "packages/codeflowmu-runtime/src/approval/GovernanceApprovalService.ts",
           "packages/codeflowmu-runtime/src/approval/OperationApprovalService.ts"
+        ]
+      },
+      {
+        "id": "issue-closure-evidence-promotion",
+        "productPolicy": "open-core",
+        "description": "提供 ISSUE 结构化结案、不可变历史、显式 TASK 解阻、本地脱敏母版证据包及 ADMIN 审批后的受控 GitHub Issue 发布。",
+        "paths": [
+          "codeflowmu-shell/src/issue-closure.ts",
+          "codeflowmu-shell/src/issue-enrichment.ts",
+          "codeflowmu-shell/src/issue-promotion.ts",
+          "codeflowmu-shell/src/controlled-executor-registry.ts",
+          "codeflowmu-shell/src/web-panel.ts",
+          "codeflowmu-shell/src/mobile/mobileIssues.ts",
+          "codeflowmu-shell/src/mobile/mobileRoutes.ts",
+          "codeflowmu-shell/src/__tests__/issue-closure.test.ts",
+          "codeflowmu-shell/src/__tests__/issue-enrichment.test.ts",
+          "codeflowmu-shell/src/__tests__/web-panel.test.ts",
+          "codeflowmu-shell/src/__tests__/mobile-api.test.ts",
+          "codeflowmu-desktop/panel/index.html",
+          "codeflowmu-desktop/mobile/index.html",
+          "codeflowmu-desktop/mobile/mobile.js",
+          "codeflowmu-desktop/mobile/sw.js",
+          "codeflowmu-desktop/mobile/version.json",
+          "codeflowmu-desktop/mobile/RELEASES.json",
+          "codeflowmu-desktop/mobile/mobile-build.json",
+          "packages/codeflowmu-runtime/src/approval/ControlledExecutorRegistry.ts",
+          "packages/codeflowmu-runtime/src/index.ts",
+          "docs/design/issue-closure-evidence-promotion-v1.md",
+          "docs/OPERATION-MANUAL.md",
+          "docs/README.md"
         ]
       },
       {

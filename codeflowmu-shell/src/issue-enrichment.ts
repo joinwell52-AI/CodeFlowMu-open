@@ -22,7 +22,9 @@ export interface EnrichedIssueMetadata {
   reporter: string;
   severity: "critical" | "high" | "medium" | "low";
   severity_level: "P0" | "P1" | "P2" | "P3";
-  effective_status: "active" | "resolved";
+  effective_status: "active" | "resolved" | "historical";
+  parent_task_state?: "archive";
+  inactive_reason?: "parent_archived" | "parent_force_archived";
   source_severity?: string;
   analysis: IssueAnalysis;
 }
@@ -87,6 +89,50 @@ function hasLaterSuccessfulCoverage(projectRoot: string, frontmatter: Record<str
   );
 }
 
+function archivedParentProjection(
+  projectRoot: string,
+  frontmatter: Record<string, unknown>,
+  body: string,
+): { archived: boolean; force: boolean } {
+  const reports = readJsonLines(join(projectRoot, "fcop", "ledger", "reports.jsonl"));
+  const sourceId = issueSourceReport(frontmatter, body);
+  const source = reports.find(
+    (row) => normalizeReportId(row.report_id ?? row.filename) === sourceId,
+  );
+  const taskId = String(
+    frontmatter.task_id ??
+      frontmatter.source_task ??
+      source?.parent_task_id ??
+      source?.task_id ??
+      "",
+  )
+    .replace(/\.md$/i, "")
+    .trim();
+  if (!taskId) return { archived: false, force: false };
+  const tasks = readJsonLines(join(projectRoot, "fcop", "ledger", "tasks.jsonl"));
+  const parent = tasks.find((row) => {
+    const candidate = String(row.task_id ?? "").replace(/\.md$/i, "").trim();
+    return (
+      candidate === taskId ||
+      candidate.startsWith(`${taskId}-`) ||
+      taskId.startsWith(`${candidate}-`)
+    );
+  });
+  if (String(parent?.bucket ?? "").toLowerCase() !== "archive") {
+    return { archived: false, force: false };
+  }
+  const yaml =
+    parent?.yaml && typeof parent.yaml === "object"
+      ? (parent.yaml as Record<string, unknown>)
+      : {};
+  return {
+    archived: true,
+    force:
+      String(yaml.archive_mode ?? "").toLowerCase() === "force" ||
+      String(yaml.force_archived ?? "").toLowerCase() === "true",
+  };
+}
+
 export function classifyIssueCause(reporter: string, frontmatter: Record<string, unknown>, body: string): IssueCauseType {
   const text = `${Object.values(frontmatter).join(" ")} ${body}`.toLowerCase();
   if (/(错误归档|错误 approve|状态错乱|任务.*丢失|报告.*丢失|bucket mismatch|lifecycle.*(?:corrupt|mismatch)|wrong archive)/i.test(text)) return "lifecycle_integrity_issue";
@@ -106,6 +152,7 @@ export function enrichIssueMetadata(projectRoot: string, frontmatter: Record<str
   const reporter = inferIssueReporter(frontmatter, body);
   const cause = classifyIssueCause(reporter, frontmatter, body);
   const covered = hasLaterSuccessfulCoverage(projectRoot, frontmatter, body);
+  const archivedParent = archivedParentProjection(projectRoot, frontmatter, body);
   let severity: EnrichedIssueMetadata["severity"] = "medium";
   let impactScope = "局部任务或子线，通常可通过等待前置或返工恢复。";
   let severityReason = "P2：影响局部执行，但未发现系统完整性损坏，可通过重跑或返工恢复。";
@@ -148,7 +195,19 @@ export function enrichIssueMetadata(projectRoot: string, frontmatter: Record<str
     reporter,
     severity,
     severity_level: severityLevel(severity),
-    effective_status: covered ? "resolved" : "active",
+    effective_status: archivedParent.archived
+      ? "historical"
+      : covered
+        ? "resolved"
+        : "active",
+    ...(archivedParent.archived ? { parent_task_state: "archive" as const } : {}),
+    ...(archivedParent.archived
+      ? {
+          inactive_reason: archivedParent.force
+            ? ("parent_force_archived" as const)
+            : ("parent_archived" as const),
+        }
+      : {}),
     source_severity: String(frontmatter.severity ?? "").trim() || undefined,
     analysis: {
       cause_type: cause,

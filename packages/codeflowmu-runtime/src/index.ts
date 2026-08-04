@@ -915,6 +915,7 @@ export {
 } from "./_internal/report-tmp-quarantine.ts";
 
 export {
+  atomicWriteJson,
   atomicWriteFcopMarkdown,
   withReportWriteLock,
   cleanupStaleReportTmpsForTarget,

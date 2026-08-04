@@ -12,6 +12,11 @@ import {
   executeGitPushApproval,
 } from "./git-operation-approval.ts";
 import {
+  buildIssueGithubApprovalInput,
+  executeIssueGithubApproval,
+  recomputeIssueGithubApprovalRequest,
+} from "./issue-promotion.ts";
+import {
   buildWorkspaceOperationApprovalInput,
   executeWorkspaceOperation,
   workspaceInputFromRecord,
@@ -87,6 +92,31 @@ export function createControlledExecutorRegistry(
     },
     execute: executeFilesystemCleanupApproval,
     recovery(record) { return { inspect: record.request.resource.targets, action: "inspect_quarantine_manifest" }; },
+  });
+
+  registry.register({
+    name: "github.issue.create",
+    prepare(raw: unknown) {
+      const input = raw as { promotion_id: string; actor?: string };
+      return buildIssueGithubApprovalInput({
+        projectRoot: opts.projectRoot(),
+        promotion_id: input.promotion_id,
+        actor: input.actor ?? "ADMIN",
+      });
+    },
+    preview(raw: unknown) {
+      return { executor: "github.issue.create", ...(raw as object) };
+    },
+    recomputeRequest: recomputeIssueGithubApprovalRequest,
+    execute: executeIssueGithubApproval,
+    recovery(record) {
+      const scope = record.request.resource.scope ?? {};
+      return {
+        action: "retry_issue_publication_without_reopening_source_issue",
+        promotion_id: scope["promotion_id"],
+        target_repo: scope["target_repo"],
+      };
+    },
   });
 
   registry.register({

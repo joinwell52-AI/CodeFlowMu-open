@@ -6,6 +6,7 @@ import type {
 
 export const CONTROLLED_EXECUTOR_NAMES = [
   "git.push",
+  "github.issue.create",
   "filesystem.cleanup",
   "review.policy.save",
   "workspace.fs.write",
