@@ -188,7 +188,6 @@ export function buildPmSkillManifestFile(): PmSkillManifestFile {
     kind: "pm-builtin-skills",
     role: "PM",
     skills: [...PM_BUILTIN_SKILLS],
-    generated_at: new Date().toISOString(),
   };
 }
 

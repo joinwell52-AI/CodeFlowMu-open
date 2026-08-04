@@ -796,7 +796,13 @@ export async function invokePmRuntimeControlTool(input: {
       };
       break;
     case "pm.inspect_project_baseline":
-      path = "/api/v2/pm/tools/project-baseline";
+      path = withQuery("/api/v2/pm/tools/project-baseline", {
+        task_id: String(input.currentTaskId ?? "").trim(),
+        current_task_id: String(input.currentTaskId ?? "").trim(),
+        caller_role: agentId,
+        agent_id: agentId,
+        session_id: String(input.sessionId ?? "").trim(),
+      });
       break;
     case "pm.inspect_runtime_topology":
       path = "/api/v2/pm/tools/runtime-topology";

@@ -400,6 +400,12 @@ export {
   type PlanningArtifactStatus,
 } from "./ProductDeliveryGovernance.ts";
 export {
+  authorizePlanningRuntimeIdentity,
+  assertPlanningRuntimeIdentity,
+  PlanningRuntimeIdentityError,
+  type VerifiedPlanningRuntimeIdentity,
+} from "./PlanningRuntimeIdentity.ts";
+export {
   LONG_HORIZON_SKILL_ID,
   LONG_HORIZON_SIGNAL_PATTERNS,
   classifyLongHorizonPlanning,

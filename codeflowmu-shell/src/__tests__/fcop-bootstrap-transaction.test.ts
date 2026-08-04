@@ -51,6 +51,17 @@ function sourceFixture(): string {
   write(root, "fcop/shared/roles/OPS.md", "OPS\n");
   write(root, "workspace/README.md", "workspace contract\n");
   write(root, "adoptedSource/runtime-contract.md", "adopted\n");
+  const playbooks = Array.from({ length: 58 }, (_, index) => {
+    const id = `fixture-playbook-${String(index + 1).padStart(2, "0")}`;
+    const skillPackage = `skills/${id}/SKILL.md`;
+    write(root, skillPackage, `# ${id}\n`);
+    return { skill_id: id, skill_package: skillPackage };
+  });
+  write(
+    root,
+    "docs/skills/agent-skills.manifest.json",
+    `${JSON.stringify({ version: 1, kind: "agent_skills_manifest", common_skills: playbooks }, null, 2)}\n`,
+  );
   return root;
 }
 
@@ -82,6 +93,10 @@ test("new initialization writes only the confirmed signed plan and passes digest
     assert.equal(result.plan_digest, plan.plan_digest);
     assert.equal(result.rolled_back.length, 0);
     assert.equal(verifyFcopBootstrapManifest(target).ok, true);
+    const pmSkills = JSON.parse(readFileSync(join(target, ".codeflowmu", "pm-skills.manifest.json"), "utf8"));
+    const agentSkills = JSON.parse(readFileSync(join(target, ".codeflowmu", "agent-skills.manifest.json"), "utf8"));
+    assert.ok(Array.isArray(pmSkills.skills) && pmSkills.skills.length >= 5);
+    assert.equal(agentSkills.common_skills.length, 58);
     assert.equal(existsSync(join(target, ".codeflowmu", "instance.json")), false);
     assert.equal(existsSync(join(target, ".codeflowmu", "mobile-gateway.json")), false);
   } finally {
@@ -155,6 +170,30 @@ test("partial uninitialized project preserves local bootstrap files and complete
   } finally {
     rmSync(source, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test("skills manifests are transaction members and a missing PM manifest is repaired idempotently", async () => {
+  const source = sourceFixture();
+  const target = join(mkdtempSync(join(tmpdir(), "cfm-bootstrap-skills-repair-")), "target");
+  try {
+    const initial = compatiblePlan(source, target);
+    await new FcopInitTransaction(initial).execute(initial.plan_digest);
+    const pmPath = join(target, ".codeflowmu", "pm-skills.manifest.json");
+    rmSync(pmPath);
+
+    const repair = compatiblePlan(source, target);
+    assert.ok(repair.create.some((row) => row.target_rel === ".codeflowmu/pm-skills.manifest.json"));
+    assert.ok(repair.preserve.some((row) => row.target_rel === ".codeflowmu/agent-skills.manifest.json"));
+    await new FcopInitTransaction(repair).execute(repair.plan_digest);
+    assert.equal(existsSync(pmPath), true);
+
+    const repeated = compatiblePlan(source, target);
+    assert.ok(repeated.preserve.some((row) => row.target_rel === ".codeflowmu/pm-skills.manifest.json"));
+    assert.ok(repeated.preserve.some((row) => row.target_rel === ".codeflowmu/agent-skills.manifest.json"));
+  } finally {
+    rmSync(source, { recursive: true, force: true });
+    rmSync(dirname(target), { recursive: true, force: true });
   }
 });
 

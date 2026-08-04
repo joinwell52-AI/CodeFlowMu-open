@@ -16,6 +16,18 @@ import {
   checkSkillsManifestHealth,
   AGENT_SKILLS_SOURCE_REL,
 } from "../fcop-v3-paths.ts";
+import { buildPmSkillManifestFile } from "../../../packages/codeflowmu-runtime/src/pm/PmSkillManifest.ts";
+
+function healthyPlaybooks(root: string) {
+  const entries = Array.from({ length: 58 }, (_, index) => {
+    const id = `playbook-${String(index + 1).padStart(2, "0")}`;
+    const skill_package = `skills/${id}/SKILL.md`;
+    mkdirSync(join(root, "skills", id), { recursive: true });
+    writeFileSync(join(root, skill_package), `# ${id}`);
+    return { skill_id: id, skill_package };
+  });
+  return { version: 1, kind: "agent_skills_manifest", common_skills: entries };
+}
 
 test("fcopV3Paths returns v3 lifecycle dirs", () => {
   const p = fcopV3Paths("/proj");
@@ -201,7 +213,7 @@ test("checkSkillsManifestHealth fails when agent source and projection are both 
   }
 });
 
-test("checkSkillsManifestHealth accepts external project runtime projection without docs source", () => {
+test("checkSkillsManifestHealth requires complete external runtime projections", () => {
   const root = mkdtempSync(join(tmpdir(), "fcop-skills-"));
   try {
     mkdirSync(join(root, "fcop"), { recursive: true });
@@ -209,18 +221,11 @@ test("checkSkillsManifestHealth accepts external project runtime projection with
     writeFileSync(join(root, "fcop", "fcop.json"), JSON.stringify({ protocol_version: 3 }));
     writeFileSync(
       join(root, ".codeflowmu", "agent-skills.manifest.json"),
-      JSON.stringify({
-        version: 1,
-        common_skills: [],
-        pm_playbook_skills: [],
-        technical_manager_playbook_skills: [],
-        architect_playbook_skills: [],
-        dev_playbook_skills: [],
-        qa_playbook_skills: [],
-        ops_playbook_skills: [],
-        eval_playbook_skills: [],
-        ui_playbook_skills: [],
-      }),
+      JSON.stringify(healthyPlaybooks(root)),
+    );
+    writeFileSync(
+      join(root, ".codeflowmu", "pm-skills.manifest.json"),
+      JSON.stringify(buildPmSkillManifestFile()),
     );
     const h = checkSkillsManifestHealth(root);
     assert.equal(h.applicable, true);
@@ -239,44 +244,22 @@ test("checkSkillsManifestHealth ok with source + projections", () => {
     mkdirSync(join(root, "docs", "skills"), { recursive: true });
     mkdirSync(join(root, ".codeflowmu"), { recursive: true });
     writeFileSync(join(root, "fcop", "fcop.json"), JSON.stringify({ protocol_version: 3 }));
-    const agentManifest = {
-      version: 1,
-      common_skills: [{ skill_package: "skills/fcop-task-reading/SKILL.md", skill_id: "fcop.task_reading" }],
-      pm_playbook_skills: [],
-      technical_manager_playbook_skills: [],
-      architect_playbook_skills: [],
-      dev_playbook_skills: [],
-      qa_playbook_skills: [],
-      ops_playbook_skills: [],
-      eval_playbook_skills: [],
-      ui_playbook_skills: [],
-    };
+    const agentManifest = healthyPlaybooks(root);
     writeFileSync(join(root, AGENT_SKILLS_SOURCE_REL), JSON.stringify(agentManifest));
     writeFileSync(join(root, ".codeflowmu", "agent-skills.manifest.json"), JSON.stringify(agentManifest));
-    mkdirSync(join(root, "skills", "fcop-task-reading"), { recursive: true });
-    writeFileSync(join(root, "skills", "fcop-task-reading", "SKILL.md"), "# skill");
-    const pmManifest = {
-      kind: "pm-builtin-skills",
-      skills: [
-        { skill_id: "pm.summarize_thread" },
-        { skill_id: "pm.detect_thread_stall" },
-        { skill_id: "pm.close_admin_task" },
-        { skill_id: "pm.wake_downstream" },
-        { skill_id: "pm.review_check" },
-      ],
-    };
+    const pmManifest = buildPmSkillManifestFile();
     writeFileSync(join(root, ".codeflowmu", "pm-skills.manifest.json"), JSON.stringify(pmManifest));
     const h = checkSkillsManifestHealth(root);
     assert.equal(h.ok, true);
     assert.equal(h.pmSkillCount, 5);
-    assert.equal(h.agentCatalogEntries, 1);
+    assert.equal(h.agentCatalogEntries, 58);
     assert.deepEqual(h.missingSkillPackages, []);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("checkSkillsManifestHealth resolves common Playbook packages from the mother application", () => {
+test("checkSkillsManifestHealth resolves host packages but rejects an incomplete 1/58 projection", () => {
   const projectRoot = mkdtempSync(join(tmpdir(), "fcop-skills-adopted-"));
   const hostRoot = mkdtempSync(join(tmpdir(), "fcop-skills-host-"));
   const previousHostRoot = process.env.CODEFLOWMU_HOST_ROOT;
@@ -298,6 +281,7 @@ test("checkSkillsManifestHealth resolves common Playbook packages from the mothe
     const h = checkSkillsManifestHealth(projectRoot);
     assert.deepEqual(h.missingSkillPackages, []);
     assert.equal(h.agentCatalogEntries, 1);
+    assert.equal(h.ok, false);
   } finally {
     if (previousHostRoot === undefined) delete process.env.CODEFLOWMU_HOST_ROOT;
     else process.env.CODEFLOWMU_HOST_ROOT = previousHostRoot;
@@ -306,7 +290,80 @@ test("checkSkillsManifestHealth resolves common Playbook packages from the mothe
   }
 });
 
-test("verifyFcopProjectInit passes minimal v3 dev-team layout", () => {
+test("checkSkillsManifestHealth rejects PM 4/5, duplicate ids, and wrong kind", () => {
+  const root = mkdtempSync(join(tmpdir(), "fcop-skills-pm-invalid-"));
+  try {
+    mkdirSync(join(root, "fcop"), { recursive: true });
+    mkdirSync(join(root, ".codeflowmu"), { recursive: true });
+    writeFileSync(join(root, "fcop", "fcop.json"), JSON.stringify({ protocol_version: 3 }));
+    writeFileSync(
+      join(root, ".codeflowmu", "agent-skills.manifest.json"),
+      JSON.stringify(healthyPlaybooks(root)),
+    );
+
+    const expected = buildPmSkillManifestFile();
+    const fourOfFive = {
+      ...expected,
+      skills: expected.skills.filter((skill) => skill.skill_id !== "pm.review_check"),
+    };
+    writeFileSync(join(root, ".codeflowmu", "pm-skills.manifest.json"), JSON.stringify(fourOfFive));
+    let health = checkSkillsManifestHealth(root);
+    assert.equal(health.ok, false);
+    assert.equal(health.pmSkillCount, 4);
+
+    const duplicate = {
+      ...expected,
+      skills: [...expected.skills.slice(0, -1), expected.skills[0]],
+    };
+    writeFileSync(join(root, ".codeflowmu", "pm-skills.manifest.json"), JSON.stringify(duplicate));
+    health = checkSkillsManifestHealth(root);
+    assert.equal(health.ok, false);
+    assert.equal(health.pmManifestMatchesBuilder, false);
+
+    writeFileSync(
+      join(root, ".codeflowmu", "pm-skills.manifest.json"),
+      JSON.stringify({ ...expected, kind: "agent_skills_manifest" }),
+    );
+    health = checkSkillsManifestHealth(root);
+    assert.equal(health.ok, false);
+    assert.equal(health.pmManifestMatchesBuilder, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("checkSkillsManifestHealth rejects corrupt Agent JSON and missing skill packages", () => {
+  const root = mkdtempSync(join(tmpdir(), "fcop-skills-agent-invalid-"));
+  try {
+    mkdirSync(join(root, "fcop"), { recursive: true });
+    mkdirSync(join(root, ".codeflowmu"), { recursive: true });
+    writeFileSync(join(root, "fcop", "fcop.json"), JSON.stringify({ protocol_version: 3 }));
+    writeFileSync(
+      join(root, ".codeflowmu", "pm-skills.manifest.json"),
+      JSON.stringify(buildPmSkillManifestFile()),
+    );
+    writeFileSync(join(root, ".codeflowmu", "agent-skills.manifest.json"), "{not-json");
+    let health = checkSkillsManifestHealth(root);
+    assert.equal(health.ok, false);
+    assert.equal(health.agentProjectionExists, true);
+    assert.equal(health.agentCatalogEntries, 0);
+
+    const manifest = healthyPlaybooks(root);
+    rmSync(join(root, "skills", "playbook-58", "SKILL.md"), { force: true });
+    writeFileSync(
+      join(root, ".codeflowmu", "agent-skills.manifest.json"),
+      JSON.stringify(manifest),
+    );
+    health = checkSkillsManifestHealth(root);
+    assert.equal(health.ok, false);
+    assert.equal(health.agentCatalogEntries, 58);
+    assert.deepEqual(health.missingSkillPackages, ["skills/playbook-58/SKILL.md"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("verifyFcopProjectInit rejects a structure-only v3 layout without a signed bootstrap manifest", () => {
   const root = mkdtempSync(join(tmpdir(), "fcop-init-verify-"));
   try {
     const paths = fcopV3Paths(root);
@@ -341,9 +398,10 @@ test("verifyFcopProjectInit passes minimal v3 dev-team layout", () => {
       }),
     );
     const v = verifyFcopProjectInit(root);
-    assert.equal(v.ok, true, v.summary + " failures=" + v.failures.join("; "));
+    assert.equal(v.ok, false);
+    assert.match(v.failures.join("; "), /bootstrap manifest/i);
     assert.equal(v.roleTemplateHealth.ok, true);
-    assert.equal(v.skillsHealth.ok, true);
+    assert.equal(v.skillsHealth.ok, false);
     assert.ok(v.items.some((i) => i.id === "skills_manifest"));
   } finally {
     rmSync(root, { recursive: true, force: true });

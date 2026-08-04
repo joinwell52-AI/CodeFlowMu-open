@@ -112,6 +112,42 @@ describe("PmRuntimeControlTools", () => {
     }
   });
 
+  it("binds project-baseline inspection to the current Runtime task and session", async () => {
+    let requestUrl = "";
+    const server = createServer((req, res) => {
+      requestUrl = req.url ?? "";
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({
+        ok: true,
+        task_project_git_root: "D:/codeflowmu-core-dev",
+        host_git_root: "D:/codeflowmu",
+        baseline_scope: "task_project_git_root",
+      }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      assert(address && typeof address === "object");
+      const result = await invokePmRuntimeControlTool({
+        toolName: "pm.inspect_project_baseline",
+        args: {},
+        currentTaskId: "TASK-20260804-001",
+        agentId: "PM-01",
+        sessionId: "session-pm-baseline-1",
+        panelUrl: `http://127.0.0.1:${address.port}`,
+      });
+      assert.equal(result.task_project_git_root, "D:/codeflowmu-core-dev");
+      const query = new URL(requestUrl, "http://127.0.0.1").searchParams;
+      assert.equal(query.get("task_id"), "TASK-20260804-001");
+      assert.equal(query.get("caller_role"), "PM-01");
+      assert.equal(query.get("session_id"), "session-pm-baseline-1");
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => error ? reject(error) : resolve()),
+      );
+    }
+  });
+
   it("rejects non-PM callers before touching Runtime", async () => {
     const result = await invokePmRuntimeControlTool({
       toolName: "pm.wake_downstream",

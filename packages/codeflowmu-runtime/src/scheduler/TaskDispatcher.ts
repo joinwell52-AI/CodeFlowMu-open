@@ -45,6 +45,7 @@ import { createHash } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { toLocalIsoString } from "../_internal/local-iso.ts";
+import { findReportPathForTaskOnDisk } from "../_internal/report-reconcile.ts";
 import type { FcopProjectClient } from "../_external/fcop-client.ts";
 import type { AgentRegistry } from "../registry/AgentRegistry.ts";
 import { InvalidAgentStatusError } from "../registry/errors.ts";
@@ -680,10 +681,17 @@ export class TaskDispatcher {
         } catch {
           continue;
         }
-        if (_parseFmState(raw) !== "inbox") continue;
         const recipient = extractRecipientFromFilename(entry.name);
         const sender = extractSenderFromFilename(entry.name);
         if (!recipient || !sender) continue;
+        const reconcile = await this._reconcileTaskBeforeDispatch(
+          filepath,
+          entry.name,
+          recipient,
+          sender,
+          "periodic_reconcile",
+        );
+        if (!reconcile.dispatch) continue;
         await this._handleInbox({
           kind: "task_added",
           filepath,
@@ -701,6 +709,73 @@ export class TaskDispatcher {
     } finally {
       this._inboxReconcileRunning = false;
     }
+  }
+
+  private async _reconcileTaskBeforeDispatch(
+    filepath: string,
+    filename: string,
+    recipient: string,
+    sender: string,
+    source: string,
+  ): Promise<{ dispatch: boolean; action: string; filepath: string }> {
+    if (!this._projectRoot || !this._lifecycleGovernor) {
+      return { dispatch: true, action: "control_plane_unavailable", filepath };
+    }
+    const parsed = await this._parser.parse(filepath);
+    const fmState = String(parsed.frontmatter["state"] ?? "inbox").trim().toLowerCase();
+    if (fmState === "inbox") return { dispatch: true, action: "already_consistent", filepath };
+    if (!["dispatched", "running", "active"].includes(fmState)) {
+      this._logger.warn(`[TaskDispatcher] recoverable lifecycle conflict ${filename}: inbox/${fmState}`);
+      this._panelEvents?.emit("codeflowmu.lifecycle.reconcile_required", {
+        event: "lifecycle_reconcile_required",
+        task_path: filepath,
+        filename,
+        detail: `physical inbox conflicts with frontmatter state=${fmState}`,
+        recoverable: true,
+        at: toLocalIsoString(this._now()),
+      });
+      return { dispatch: false, action: "recoverable_conflict", filepath };
+    }
+    const taskId = resolveCanonicalTaskId(filename, parsed);
+    const attemptState = this._dispatchAttemptStore
+      ? await this._dispatchAttemptStore.getTaskState(taskId)
+      : { attempts: [] as DispatchAttempt[], active_lease: undefined };
+    const live = (await this._sessionManager.listActive()).find((session) =>
+      normalizeQueueTaskId(String(session.protocol.task_id ?? "")) === normalizeQueueTaskId(taskId) &&
+      normalizeWorkerRole(String(session.protocol.agent_id ?? "")) === normalizeWorkerRole(recipient) &&
+      (!attemptState.active_lease || attemptState.active_lease.session_id === session.protocol.session_id));
+    const latestAttempt = attemptState.attempts.at(-1);
+    if (live) {
+      const activePath = await this._lifecycleGovernor.awaitDispatchInboxToActive(filepath, {
+        ...(latestAttempt?.attempt_id ? { attemptId: latestAttempt.attempt_id } : {}),
+        ...(attemptState.active_lease?.lease_id ? { leaseId: attemptState.active_lease.lease_id } : {}),
+        agentId: live.protocol.agent_id,
+      });
+      return { dispatch: false, action: "confirmed_live_session", filepath: activePath };
+    }
+
+    const reportPath = await findReportPathForTaskOnDisk({
+      projectRoot: this._projectRoot,
+      taskId,
+      reporter: normalizeWorkerRole(recipient),
+      reportRecipient: normalizeWorkerRole(sender),
+    });
+    if (reportPath) {
+      const repaired = await this._lifecycleGovernor.repairInboxLifecycleSplit(filepath, `${source}:report_exists`);
+      await this._lifecycleGovernor.awaitDispatchInboxToActive(repaired, {
+        ...(latestAttempt?.attempt_id ? { attemptId: latestAttempt.attempt_id } : {}),
+        ...(attemptState.active_lease?.lease_id ? { leaseId: attemptState.active_lease.lease_id } : {}),
+        ...(attemptState.active_lease?.agent_id ? { agentId: attemptState.active_lease.agent_id } : {}),
+      });
+      await this._lifecycleGovernor.resolveReportSettlement(join(this._projectRoot, reportPath));
+      return { dispatch: false, action: "report_reconciled", filepath: repaired };
+    }
+
+    if (latestAttempt && this._dispatchAttemptStore && !["settled", "rejected", "expired", "stale", "session_failed", "superseded"].includes(latestAttempt.status)) {
+      await this._dispatchAttemptStore.finish(latestAttempt.attempt_id, "session_failed", `${source}:no_live_session`);
+    }
+    const repaired = await this._lifecycleGovernor.repairInboxLifecycleSplit(filepath, `${source}:no_live_session`);
+    return { dispatch: true, action: "repaired_to_inbox", filepath: repaired };
   }
 
   private _shouldEmitDispatchWait(key: string, intervalMs = 300_000): boolean {
@@ -751,9 +826,19 @@ export class TaskDispatcher {
   // ── private ──────────────────────────────────────────────────────────
 
   private async _handleInbox(event: InboxEvent): Promise<void> {
-    const { filepath, filename, recipient, sender } = event;
+    let { filepath } = event;
+    const { filename, recipient, sender } = event;
     let outcome: DispatchOutcome;
     try {
+      const reconcile = await this._reconcileTaskBeforeDispatch(
+        filepath,
+        filename,
+        recipient,
+        sender,
+        "watcher_event",
+      );
+      filepath = reconcile.filepath;
+      if (!reconcile.dispatch) return;
       const holdReason = await this._resolveExplicitHoldReason(
         filepath,
         sender,
@@ -1113,8 +1198,24 @@ export class TaskDispatcher {
     }
     await this._assertExecutorIdentity(input);
     const lifecycleRoot = join(this._projectRoot, "fcop", "_lifecycle");
-    const located = await findTaskLocationById(lifecycleRoot, input.taskId);
+    let located = await findTaskLocationById(lifecycleRoot, input.taskId);
     if (!located) throw new Error(`TASK_NOT_FOUND:${input.taskId}`);
+    if (located.stage === "inbox") {
+      const parsed = await this._parser.parse(located.path);
+      const sender = parsed.sender ?? extractSenderFromFilename(located.filename);
+      const recipient = parsed.recipient ?? extractRecipientFromFilename(located.filename);
+      const reconciled = await this._reconcileTaskBeforeDispatch(
+        located.path,
+        located.filename,
+        recipient,
+        sender,
+        "agent_claim",
+      );
+      if (!reconciled.dispatch) {
+        located = await findTaskLocationById(lifecycleRoot, input.taskId);
+        if (!located) throw new Error(`TASK_NOT_FOUND:${input.taskId}`);
+      }
+    }
     if (located.stage !== "inbox") {
       const state = await this._dispatchAttemptStore.getTaskState(input.taskId);
       const lease = state.active_lease;
@@ -1182,18 +1283,74 @@ export class TaskDispatcher {
     const lifecycleRoot = join(this._projectRoot, "fcop", "_lifecycle");
     let located = await findTaskLocationById(lifecycleRoot, input.taskId);
     if (!located) return { kind: "no_task_id", reason: `task not found: ${input.taskId}` };
-    const parsed = await this._parser.parse(located.path);
+    let parsed = await this._parser.parse(located.path);
     const role = input.role ?? parsed.recipient ?? extractRecipientFromFilename(located.filename);
+    const sender = parsed.sender ?? extractSenderFromFilename(located.filename);
     if (located.stage === "active") {
+      const attemptState = this._dispatchAttemptStore
+        ? await this._dispatchAttemptStore.getTaskState(input.taskId)
+        : { attempts: [] as DispatchAttempt[], active_lease: undefined };
       const live = (await this._sessionManager.listActive()).find((session) =>
-        normalizeQueueTaskId(String(session.protocol.task_id ?? "")) === normalizeQueueTaskId(input.taskId));
-      if (live) return { kind: "already_dispatched" };
+        normalizeQueueTaskId(String(session.protocol.task_id ?? "")) === normalizeQueueTaskId(input.taskId) &&
+        normalizeWorkerRole(String(session.protocol.agent_id ?? "")) === normalizeWorkerRole(input.agentId ?? role) &&
+        (!attemptState.active_lease || attemptState.active_lease.session_id === session.protocol.session_id));
+      if (live) {
+        return {
+          kind: "already_dispatched",
+          ...(attemptState.attempts.at(-1)?.attempt_id
+            ? { attempt_id: attemptState.attempts.at(-1)!.attempt_id }
+            : {}),
+          ...(attemptState.active_lease?.lease_id ? { lease_id: attemptState.active_lease.lease_id } : {}),
+          session_id: live.protocol.session_id,
+        };
+      }
+      const reportPath = await findReportPathForTaskOnDisk({
+        projectRoot: this._projectRoot,
+        taskId: input.taskId,
+        reporter: normalizeWorkerRole(role),
+        reportRecipient: normalizeWorkerRole(sender),
+      });
+      if (reportPath) {
+        await this._lifecycleGovernor.resolveReportSettlement(
+          join(this._projectRoot, reportPath),
+        );
+        return { kind: "dispatch_skipped", reason: "already_done", detail: reportPath };
+      }
       await this._lifecycleGovernor.restoreToInboxAfterDispatchFailure(located.path, `redispatch:${input.mode}`);
       located = await findTaskLocationById(lifecycleRoot, input.taskId);
     }
     if (!located) return { kind: "no_task_id", reason: `task disappeared: ${input.taskId}` };
-    if (located.stage === "inbox" && ["dispatched", "running"].includes(String(parsed.frontmatter["state"] ?? ""))) {
-      await this._lifecycleGovernor.repairInboxLifecycleSplit(located.path, `redispatch:${input.mode}`);
+    if (located.stage === "inbox") {
+      parsed = await this._parser.parse(located.path);
+      const reconciled = await this._reconcileTaskBeforeDispatch(
+        located.path,
+        located.filename,
+        role,
+        sender,
+        `redispatch:${input.mode}`,
+      );
+      if (!reconciled.dispatch) {
+        if (reconciled.action === "confirmed_live_session") {
+          const state = this._dispatchAttemptStore
+            ? await this._dispatchAttemptStore.getTaskState(input.taskId)
+            : { attempts: [] as DispatchAttempt[], active_lease: undefined };
+          return {
+            kind: "already_dispatched",
+            ...(state.attempts.at(-1)?.attempt_id ? { attempt_id: state.attempts.at(-1)!.attempt_id } : {}),
+            ...(state.active_lease?.lease_id ? { lease_id: state.active_lease.lease_id } : {}),
+            ...(state.active_lease?.session_id ? { session_id: state.active_lease.session_id } : {}),
+          };
+        }
+        return {
+          kind: "dispatch_skipped",
+          reason: reconciled.action === "report_reconciled" ? "already_done" : "lifecycle_split",
+          detail: reconciled.action,
+        };
+      }
+      located = await findTaskLocationById(lifecycleRoot, input.taskId);
+    }
+    if (!located || located.stage !== "inbox") {
+      return { kind: "dispatch_skipped", reason: "lifecycle_error", detail: "reconcile did not produce inbox task" };
     }
     return this.dispatchTaskFromControlPlane(located.path, located.filename, role, "pm_redispatch", {
       ...(input.agentId ? { preferredAgentId: input.agentId } : {}),
@@ -1527,15 +1684,27 @@ export class TaskDispatcher {
         reason: `no dispatch retry record for ${retryKey}`,
       };
     }
-    await this._restoreDispatchedToInbox(filepath, filename, "admin_retry", retryKey).catch(
-      () => undefined,
-    );
-    return this.dispatchTaskFromControlPlane(
-      filepath,
-      filename,
-      recipient,
-      "admin_retry",
-    );
+    if (!this._projectRoot || !this._lifecycleGovernor) {
+      await this._restoreDispatchedToInbox(
+        filepath,
+        filename,
+        "admin_retry",
+        retryKey,
+      );
+      return this.dispatchTaskFromControlPlane(
+        filepath,
+        filename,
+        recipient,
+        "admin_retry",
+      );
+    }
+    const taskId = filename.replace(/\.md$/i, "");
+    return this.redispatchTask({
+      taskId,
+      mode: "repair_retry",
+      role: recipient,
+      idempotencyKey: `admin-retry:${retryKey}`,
+    });
   }
 
   /** ADMIN 决策：强制归档，停止一切自动重试。 */

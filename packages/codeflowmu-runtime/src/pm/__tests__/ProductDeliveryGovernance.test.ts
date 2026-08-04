@@ -19,8 +19,35 @@ import {
   skillInvocationJournalPath,
 } from "../SkillInvocationJournal.ts";
 import { appendFile } from "node:fs/promises";
+import { SessionStore } from "../../session/SessionStore.ts";
+import { authorizePlanningRuntimeIdentity } from "../PlanningRuntimeIdentity.ts";
 
 const TASK_ID = "TASK-20260712-001";
+const THREAD_KEY = "product-thread-001";
+
+async function planningAuthority(root: string, sessionId: string) {
+  const store = new SessionStore({ dir: join(root, ".codeflowmu", "state", "sessions") });
+  await store.save({
+    protocol: {
+      session_id: sessionId,
+      agent_id: "PM-01",
+      task_id: TASK_ID,
+      started_at: new Date().toISOString(),
+      status: "running",
+      runs: [],
+    },
+    runtime_root_task_id: TASK_ID,
+    runtime_thread_key: THREAD_KEY,
+  });
+  return authorizePlanningRuntimeIdentity({
+    sessionStore: store,
+    projectRoot: root,
+    sessionId,
+    callerRole: "PM-01",
+    taskId: TASK_ID,
+    threadKey: THREAD_KEY,
+  });
+}
 
 function completeBrief(): string {
   return `---
@@ -97,6 +124,7 @@ test("PM writes planning artifacts through the controlled Runtime writer", async
   const root = await mkdtemp(join(tmpdir(), "cfm-planning-writer-"));
   try {
     const body = completeBrief().replace(/^---[\s\S]*?---\r?\n/, "").trim();
+    const firstAuthority = await planningAuthority(root, "session-pm-writer-1");
     const first = await writePlanningArtifact({
       projectRoot: root,
       taskId: TASK_ID,
@@ -105,6 +133,8 @@ test("PM writes planning artifacts through the controlled Runtime writer", async
       status: "ready",
       callerRole: "PM-01",
       sessionId: "session-pm-writer-1",
+      threadKey: THREAD_KEY,
+      authority: firstAuthority,
     });
     assert.equal(first.path, productBriefPath(root, TASK_ID));
     assert.equal(first.revision, 1);
@@ -113,6 +143,7 @@ test("PM writes planning artifacts through the controlled Runtime writer", async
     assert.match(raw, /source: pm\.write_planning_artifact/);
     assert.match(raw, /status: ready/);
 
+    const secondAuthority = await planningAuthority(root, "session-pm-writer-2");
     const second = await writePlanningArtifact({
       projectRoot: root,
       taskId: TASK_ID,
@@ -121,10 +152,13 @@ test("PM writes planning artifacts through the controlled Runtime writer", async
       status: "draft",
       callerRole: "PM-01",
       sessionId: "session-pm-writer-2",
+      threadKey: THREAD_KEY,
+      authority: secondAuthority,
     });
     assert.equal(second.revision, 2);
     assert.match(await readFile(second.path, "utf8"), /status: draft/);
 
+    const thirdAuthority = await planningAuthority(root, "session-pm-writer-3");
     await assert.rejects(
       writePlanningArtifact({
         projectRoot: root,
@@ -133,6 +167,8 @@ test("PM writes planning artifacts through the controlled Runtime writer", async
         bodyMarkdown: "---\nstatus: ready\n---\n# forged",
         callerRole: "PM-01",
         sessionId: "session-pm-writer-3",
+        threadKey: THREAD_KEY,
+        authority: thirdAuthority,
       }),
       /must not contain YAML frontmatter/,
     );
@@ -143,10 +179,66 @@ test("PM writes planning artifacts through the controlled Runtime writer", async
         planningLevel: 3,
         bodyMarkdown: body,
         callerRole: "DEV-01",
-        sessionId: "session-dev-writer-1",
+        sessionId: "session-pm-writer-1",
+        threadKey: THREAD_KEY,
+        authority: firstAuthority,
       }),
-      /PM-only/,
+      /RUNTIME_CONTEXT_MISMATCH/,
     );
+    await assert.rejects(
+      writePlanningArtifact({
+        projectRoot: root,
+        taskId: TASK_ID,
+        planningLevel: 3,
+        bodyMarkdown: body,
+        callerRole: "PM-01",
+        sessionId: "forged-session",
+        threadKey: THREAD_KEY,
+        authority: {
+          project_root: root,
+          session_id: "forged-session",
+          agent_id: "PM-01",
+          caller_role: "PM-01",
+          task_id: TASK_ID,
+          root_task_id: TASK_ID,
+          thread_key: THREAD_KEY,
+        },
+      }),
+      /verified Runtime planning identity is required/i,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("direct import with a forged Session authority cannot create a formal planning file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cfm-planning-forged-session-"));
+  try {
+    const target = planningArtifactPath(root, TASK_ID, 3);
+    await assert.rejects(
+      writePlanningArtifact({
+        projectRoot: root,
+        taskId: TASK_ID,
+        rootTaskId: TASK_ID,
+        threadKey: THREAD_KEY,
+        planningLevel: 3,
+        bodyMarkdown: completeBrief().replace(/^---[\s\S]*?---\r?\n/, "").trim(),
+        status: "draft",
+        callerRole: "PM-01",
+        sessionId: "forged-session",
+        authority: {
+          project_root: root,
+          session_id: "forged-session",
+          agent_id: "PM-01",
+          caller_role: "PM-01",
+          task_id: TASK_ID,
+          root_task_id: TASK_ID,
+          thread_key: THREAD_KEY,
+        },
+      }),
+      /verified Runtime planning identity is required/i,
+    );
+    await assert.rejects(() => readFile(target, "utf8"), /ENOENT/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -184,12 +276,15 @@ test("brief is not ready without file and real per-task skill evidence", async (
     const autoInjected = await evaluateProductDeliveryGate(input);
     assert.equal(autoInjected.allowed, false);
 
+    const evidenceAuthority = await planningAuthority(root, "session-pm-planning-1");
     for (const skillId of PRODUCT_DESIGN_REQUIRED_SKILLS) {
       await recordPlanningSkillEvidence(root, {
         skill_id: skillId,
         caller_role: "PM-01",
         task_id: TASK_ID,
         session_id: "session-pm-planning-1",
+        thread_key: THREAD_KEY,
+        authority: evidenceAuthority,
         input_context: "ADMIN 主任务、既有架构与目标用户约束",
         output_summary: `${skillId} 已应用到方案`,
         brief_section: "产品目标与交付计划",

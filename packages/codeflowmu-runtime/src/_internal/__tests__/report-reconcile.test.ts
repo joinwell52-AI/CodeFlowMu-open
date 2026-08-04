@@ -168,4 +168,26 @@ describe("report-reconcile wake guard", () => {
       assert.equal(blocks, true);
     });
   });
+
+  it("preserves a historical (no body) REPORT but does not count it as progress", async () => {
+    await withProject(async ({ rootDir }) => {
+      await writeFile(
+        join(rootDir, "fcop", "_lifecycle", "active", `${TASK_ID}.md`),
+        taskWithTransitions("  []"),
+        "utf-8",
+      );
+      await writeFile(
+        join(rootDir, "fcop", "reports", REPORT_NAME),
+        reportMarkdown("2026-06-09T14:00:00+08:00").replace("# PM final report", "(no body)"),
+        "utf-8",
+      );
+      const blocks = await findReportForTaskOnDisk({
+        projectRoot: rootDir,
+        taskId: TASK_ID,
+        reporter: "PM",
+        reportRecipient: "ADMIN",
+      });
+      assert.equal(blocks, false);
+    });
+  });
 });

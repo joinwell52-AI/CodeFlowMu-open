@@ -500,9 +500,15 @@ export class LifecycleStateMachine {
     const dest = join(this.lifecycleRoot, "active", filename);
     try {
       await fs.access(dest);
-      return;
+      throw new Error(`runtime dispatch found ambiguous duplicate task paths: ${taskPath} and ${dest}`);
     } catch {
-      /* dest absent */
+      /* dest absent unless the explicit ambiguity error was thrown */
+      try {
+        await fs.access(dest);
+        throw new Error(`runtime dispatch found ambiguous duplicate task paths: ${taskPath} and ${dest}`);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
     }
 
     await this.appendTransition(taskPath, {
@@ -522,6 +528,11 @@ export class LifecycleStateMachine {
 
     await fs.mkdir(dirname(dest), { recursive: true });
     await fs.rename(taskPath, dest);
+    const persisted = await this.store.read(dest);
+    if (stageFromPath(dest, this.lifecycleRoot) !== "active" || String(persisted.fm.state ?? "") !== "active") {
+      await fs.rename(dest, taskPath).catch(() => undefined);
+      throw new Error(`runtime dispatch read-back failed for ${filename}`);
+    }
   }
 
   async runtimeRepairInboxSplit(
@@ -544,6 +555,10 @@ export class LifecycleStateMachine {
       execution_lease_id: undefined,
       dispatch_agent_id: undefined,
     });
+    const persisted = await this.store.read(taskPath);
+    if (stageFromPath(taskPath, this.lifecycleRoot) !== "inbox" || String(persisted.fm.state ?? "") !== "inbox") {
+      throw new Error(`runtime inbox repair read-back failed for ${basename(taskPath)}`);
+    }
   }
 
   /**
@@ -562,9 +577,14 @@ export class LifecycleStateMachine {
     const dest = join(this.lifecycleRoot, "inbox", filename);
     try {
       await fs.access(dest);
-      return;
+      throw new Error(`runtime restore found ambiguous duplicate task paths: ${taskPath} and ${dest}`);
     } catch {
-      /* inbox copy absent */
+      try {
+        await fs.access(dest);
+        throw new Error(`runtime restore found ambiguous duplicate task paths: ${taskPath} and ${dest}`);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
     }
 
     await this.appendTransition(taskPath, {
@@ -585,6 +605,11 @@ export class LifecycleStateMachine {
 
     await fs.mkdir(dirname(dest), { recursive: true });
     await fs.rename(taskPath, dest);
+    const persisted = await this.store.read(dest);
+    if (stageFromPath(dest, this.lifecycleRoot) !== "inbox" || String(persisted.fm.state ?? "") !== "inbox") {
+      await fs.rename(dest, taskPath).catch(() => undefined);
+      throw new Error(`runtime restore read-back failed for ${filename}`);
+    }
   }
 
   /**

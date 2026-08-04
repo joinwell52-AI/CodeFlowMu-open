@@ -406,6 +406,8 @@ import {
   type OperationApprovalRecord,
   type OperationApprovalStatus,
   type PrepareOperationInput,
+  authorizePlanningRuntimeIdentity,
+  PlanningRuntimeIdentityError,
 } from "@codeflowmu/runtime";
 import { buildGitPushApprovalInput, executeGitPushApproval } from "./git-operation-approval.ts";
 import { registerGovernanceApprovalRoutes } from "./governance-approval-routes.ts";
@@ -6753,41 +6755,29 @@ export function buildWebPanelApp(
     callerRole: string,
     taskId: string,
     agentId?: string,
-  ): Promise<{ ok: true } | { ok: false; code: string; message: string }> => {
-    if (!sessionId || !callerRole) {
-      return { ok: false, code: "INVALID_PLANNING_ARTIFACT_CALL", message: "Runtime session identity is required" };
-    }
-    const session = await runtime.sessionStore.load(sessionId);
-    if (!session) {
-      return { ok: false, code: "RUNTIME_SESSION_NOT_FOUND", message: `Unknown Runtime session_id: ${sessionId}` };
-    }
-    if (session.protocol.status !== "running") {
-      return { ok: false, code: "RUNTIME_SESSION_NOT_ACTIVE", message: `Runtime session is ${session.protocol.status}` };
-    }
-    if (session.protocol.agent_id !== callerRole) {
+    threadKey?: string,
+  ) => {
+    try {
+      const authority = await authorizePlanningRuntimeIdentity({
+        sessionStore: runtime.sessionStore,
+        projectRoot: projectRoot(),
+        sessionId,
+        callerRole,
+        taskId,
+        ...(agentId ? { agentId } : {}),
+        ...(threadKey ? { threadKey } : {}),
+      });
+      return { ok: true as const, authority };
+    } catch (error) {
+      if (error instanceof PlanningRuntimeIdentityError) {
+        return { ok: false as const, code: error.code, message: error.message };
+      }
       return {
-        ok: false,
+        ok: false as const,
         code: "RUNTIME_CONTEXT_MISMATCH",
-        message: `caller_role does not match SessionStore agent_id for ${sessionId}`,
+        message: error instanceof Error ? error.message : String(error),
       };
     }
-    if (agentId && session.protocol.agent_id !== agentId) {
-      return {
-        ok: false,
-        code: "RUNTIME_CONTEXT_MISMATCH",
-        message: `agent_id does not match SessionStore agent_id for ${sessionId}`,
-      };
-    }
-    const sessionRootTaskId =
-      session.runtime_root_task_id || session.protocol.task_id;
-    if (sessionRootTaskId !== taskId) {
-      return {
-        ok: false,
-        code: "RUNTIME_TASK_MISMATCH",
-        message: `current root task_id does not match SessionStore context for ${sessionId}`,
-      };
-    }
-    return { ok: true };
   };
 
   app.post("/api/v2/pm/governance/planning-skill-evidence", async (req: Request, res: Response) => {
@@ -6813,6 +6803,7 @@ export function buildWebPanelApp(
         callerRole,
         taskId,
         agentId,
+        String(body["thread_key"] ?? "").trim() || undefined,
       );
       if (!identity.ok) {
         rememberPlanningFailure(
@@ -6838,6 +6829,7 @@ export function buildWebPanelApp(
         ...(String(body["thread_key"] ?? "").trim()
           ? { thread_key: String(body["thread_key"]).trim() }
           : {}),
+        authority: identity.authority,
       });
       planningFailureByTask.delete(taskId);
       res.json({ ok: true, invocation: record });
@@ -6862,7 +6854,7 @@ export function buildWebPanelApp(
         sendError(res, 400, "INVALID_LONG_HORIZON_VALIDATION", "task_id, thread_key, source_digest, body_markdown, planning_ir and fact_snapshot_at are required");
         return;
       }
-      const identity = await validateRuntimePlanningIdentity(sessionId, callerRole, taskId, agentId);
+      const identity = await validateRuntimePlanningIdentity(sessionId, callerRole, taskId, agentId, threadKey);
       if (!identity.ok) {
         sendError(res, 409, identity.code, identity.message);
         return;
@@ -6888,6 +6880,7 @@ export function buildWebPanelApp(
       const declaredSourcePath = String(sourceSpec?.["path"] ?? "").trim();
       let observedSourceDigest: string | undefined;
       let observedSourceLineCount: number | undefined;
+      let observedSourceText: string | undefined;
       let sourceReadError: string | undefined;
       try {
         if (!declaredSourcePath) throw new Error("planning_ir.source.path is required");
@@ -6896,10 +6889,10 @@ export function buildWebPanelApp(
           : pathResolve(root, declaredSourcePath);
         const sourceBytes = readFileSync(resolvedSourcePath);
         observedSourceDigest = sha256Digest(sourceBytes);
-        const sourceText = sourceBytes.toString("utf8");
-        observedSourceLineCount = sourceText.length === 0
+        observedSourceText = sourceBytes.toString("utf8");
+        observedSourceLineCount = observedSourceText.length === 0
           ? 0
-          : sourceText.replace(/\r?\n$/, "").split(/\r?\n/).length;
+          : observedSourceText.replace(/\r?\n$/, "").split(/\r?\n/).length;
       } catch (error) {
         sourceReadError = error instanceof Error ? error.message : String(error);
       }
@@ -6914,6 +6907,7 @@ export function buildWebPanelApp(
         factSnapshotAt,
         observedSourceDigest,
         observedSourceLineCount,
+        observedSourceText,
         sourceReadError,
       });
       const persistedValidationPath = await persistPlanningValidation(root, result);
@@ -6959,6 +6953,7 @@ export function buildWebPanelApp(
         callerRole,
         taskId,
         agentId,
+        threadKey || undefined,
       );
       if (!identity.ok) {
         rememberPlanningFailure(
@@ -7026,6 +7021,7 @@ export function buildWebPanelApp(
         validationDigest: validationDigest || undefined,
         validationPassed: Boolean(validation?.ready_for_review),
         longHorizon: before.classification.long_horizon_required,
+        authority: identity.authority,
       });
       const planningGateSubmission = before.classification.long_horizon_required && status === "ready_for_review" && validation
         ? await submitPlanningGate({
@@ -8550,9 +8546,19 @@ export function buildWebPanelApp(
     }
   });
 
-  app.get("/api/v2/pm/tools/project-baseline", async (_req: Request, res: Response) => {
+  app.get("/api/v2/pm/tools/project-baseline", async (req: Request, res: Response) => {
     try {
-      const root = resolveGitRoot();
+      const sessionId = String(req.query["session_id"] ?? "").trim();
+      const callerRole = String(req.query["caller_role"] ?? "").trim();
+      const agentId = String(req.query["agent_id"] ?? "").trim();
+      const taskId = String(req.query["task_id"] ?? req.query["current_task_id"] ?? "").trim();
+      const identity = await validateRuntimePlanningIdentity(sessionId, callerRole, taskId, agentId);
+      if (!identity.ok) {
+        sendError(res, 409, "PROJECT_CONTEXT_UNAVAILABLE", identity.message);
+        return;
+      }
+      const root = identity.authority.project_root;
+      const hostGitRoot = resolveGitRoot();
       const hasGit = wpHasOwnGitRepository(root);
       const status = hasGit ? await wpReadGitStatusPayload(root) : null;
       const head = hasGit
@@ -8570,6 +8576,11 @@ export function buildWebPanelApp(
       res.json({
         ok: true,
         project_root: root,
+        task_project_git_root: root,
+        host_git_root: hostGitRoot,
+        baseline_scope: "task_project_git_root",
+        task_id: identity.authority.root_task_id,
+        session_id: identity.authority.session_id,
         project_id: activeProjectId || pathBasename(root),
         git: {
           available: hasGit,

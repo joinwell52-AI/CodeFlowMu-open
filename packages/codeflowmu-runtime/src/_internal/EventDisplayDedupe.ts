@@ -1,7 +1,10 @@
 /**
  * EventDisplayDedupe — Log Center / Alert display-layer dedupe.
  *
- * Key: timestamp bucket + actor + event_type + message hash.
+ * Semantic key priority:
+ * 1. stable event_id;
+ * 2. call_id + session_id + phase;
+ * 3. timestamp bucket + actor + event_type + message hash (legacy fallback).
  */
 
 export interface EventDisplayDedupeOpts {
@@ -23,11 +26,23 @@ function hashMessage(msg: string): string {
 
 export function buildDisplayDedupeKey(parts: {
   ts: number;
+  eventId?: string | null;
+  callId?: string | null;
+  sessionId?: string | null;
+  phase?: string | null;
   actor?: string | null;
   eventType: string;
   message?: string | null;
   bucketMs?: number;
 }): string {
+  const eventId = String(parts.eventId ?? "").trim();
+  if (eventId) return `event:${eventId}`;
+  const callId = String(parts.callId ?? "").trim();
+  const sessionId = String(parts.sessionId ?? "").trim();
+  const phase = String(parts.phase ?? "").trim();
+  if (callId && sessionId && phase) {
+    return `call:${sessionId}|${callId}|${phase}`;
+  }
   const bucket = Math.floor(parts.ts / (parts.bucketMs ?? 1_000));
   const actor = (parts.actor ?? "").trim();
   const eventType = parts.eventType.trim();
@@ -50,6 +65,10 @@ export class EventDisplayDedupeRegistry {
   /** Returns true if this row should be shown (first in TTL window). */
   shouldDisplay(parts: {
     ts: number;
+    event_id?: string | null;
+    call_id?: string | null;
+    session_id?: string | null;
+    phase?: string | null;
     actor?: string | null;
     event_type: string;
     message?: string | null;
@@ -57,6 +76,10 @@ export class EventDisplayDedupeRegistry {
     this.#prune();
     const key = buildDisplayDedupeKey({
       ts: parts.ts,
+      eventId: parts.event_id,
+      callId: parts.call_id,
+      sessionId: parts.session_id,
+      phase: parts.phase,
       actor: parts.actor,
       eventType: parts.event_type,
       message: parts.message,

@@ -78,6 +78,12 @@ function reportReferencesTask(content: string, taskId: string): boolean {
   return false;
 }
 
+/** Historical placeholder reports stay auditable but are not progress evidence. */
+export function hasValidReportBody(content: string): boolean {
+  const body = content.replace(/^\s*---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "").trim();
+  return Boolean(body) && body !== "(no body)";
+}
+
 /** Parse ISO-8601 (offset or Z) to epoch ms; null when unparseable. */
 export function parseIsoTimeMs(value: string | undefined): number | null {
   const s = String(value ?? "").trim();
@@ -166,6 +172,7 @@ async function collectMatchingReports(
       const full = join(dir, name);
       const content = await fs.readFile(full, "utf8").catch(() => "");
       if (!reportReferencesTask(content, opts.taskId)) continue;
+      if (!hasValidReportBody(content)) continue;
       const stat = await fs.stat(full).catch(() => null);
       const fm = parseMarkdownFrontmatter(content);
       const createdAtMs = getReportCreatedAtMs(
@@ -259,6 +266,7 @@ export async function findReportPathForTaskOnDisk(
       const full = join(dir, name);
       const content = await fs.readFile(full, "utf8").catch(() => "");
       if (!reportReferencesTask(content, opts.taskId)) continue;
+      if (!hasValidReportBody(content)) continue;
       const stat = await fs.stat(full).catch(() => null);
       const fm = parseMarkdownFrontmatter(content);
       const createdAtMs = getReportCreatedAtMs(fm, stat?.mtimeMs);

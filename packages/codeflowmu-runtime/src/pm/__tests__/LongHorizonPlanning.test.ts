@@ -23,9 +23,43 @@ import {
   writePlanningArtifact,
 } from "../ProductDeliveryGovernance.ts";
 import { recordPlanningSkillEvidence } from "../SkillInvocationJournal.ts";
+import { authorizePlanningRuntimeIdentity } from "../PlanningRuntimeIdentity.ts";
+import { SessionStore } from "../../session/SessionStore.ts";
 
 const TASK_ID = "TASK-20260803-900";
 const THREAD_KEY = "planning-thread-900";
+
+function taskbookText(): string {
+  return [
+    "# Scope",
+    "Must preserve task execution context",
+    ...Array.from({ length: 298 }, (_, i) => `reference line ${i + 3}`),
+  ].join("\n");
+}
+
+async function planningAuthority(root: string, sessionId: string) {
+  const store = new SessionStore({ dir: join(root, ".codeflowmu", "state", "sessions") });
+  await store.save({
+    protocol: {
+      session_id: sessionId,
+      agent_id: "PM-01",
+      task_id: TASK_ID,
+      started_at: new Date().toISOString(),
+      status: "running",
+      runs: [],
+    },
+    runtime_root_task_id: TASK_ID,
+    runtime_thread_key: THREAD_KEY,
+  });
+  return authorizePlanningRuntimeIdentity({
+    sessionStore: store,
+    projectRoot: root,
+    sessionId,
+    callerRole: "PM-01",
+    taskId: TASK_ID,
+    threadKey: THREAD_KEY,
+  });
+}
 
 function completeBody(): string {
   return `# Product Brief
@@ -59,7 +93,7 @@ function completeBody(): string {
 }
 
 function planningIr(body: string, now: Date): Record<string, unknown> {
-  const sourceDigest = sha256Digest("source-taskbook");
+  const sourceDigest = sha256Digest(taskbookText());
   return {
     source: {
       path: "D:/taskbook.md",
@@ -82,6 +116,9 @@ function planningIr(body: string, now: Date): Record<string, unknown> {
       gate_ids: ["Gate-A"],
       tests: ["unit"],
       evidence: ["test-log"],
+      source_line: "2",
+      source_section: "Scope",
+      source_text: "Must preserve task execution context",
     }],
     findings: [],
     facts: [{ fact_id: "FACT-0001", observed_at: now.toISOString(), source: "runtime" }],
@@ -138,6 +175,48 @@ test("long-horizon trigger is deterministic and does not catch an ordinary UI ta
   );
 });
 
+test("validator blocks current-state contradictions and false source citations", () => {
+  const now = new Date("2026-08-04T09:00:00+08:00");
+  const body = `${completeBody()}\nPlanning Gate is pending.\nPlanning Gate is approved.\nT0: 2026-08-04T09:00:00+08:00\nT0: 2026-08-05T09:00:00+08:00\ncandidate clean\ncandidate dirty\ndispatch open\ndispatch closed\ncurrent waiting ADMIN\ncurrent executing implementation started\n`;
+  const ir = planningIr(body, now);
+  const sourceDigest = String((ir["source"] as Record<string, unknown>)["digest"]);
+  const result = validateLongHorizonPlan({
+    taskId: TASK_ID,
+    rootTaskId: TASK_ID,
+    threadKey: THREAD_KEY,
+    sessionId: "session-pm-conflict",
+    sourceDigest,
+    observedSourceDigest: sourceDigest,
+    observedSourceLineCount: 300,
+    observedSourceText: taskbookText(),
+    bodyMarkdown: body,
+    planningIr: ir,
+    factSnapshotAt: now.toISOString(),
+    now,
+  });
+  assert.equal(result.ready_for_review, false);
+  assert.ok(result.blocking_findings.filter((row) => row.code === "PB.BODY.STATE_CONFLICT").length >= 4);
+  assert.ok(result.blocking_findings.some((row) => row.code === "PB.BODY.T0_CONFLICT"));
+
+  const falseCitation = planningIr(completeBody(), now);
+  (falseCitation["requirements"] as Array<Record<string, unknown>>)[0]!["source_text"] = "not present on line two";
+  const sourceMismatch = validateLongHorizonPlan({
+    taskId: TASK_ID,
+    rootTaskId: TASK_ID,
+    threadKey: THREAD_KEY,
+    sessionId: "session-pm-source",
+    sourceDigest,
+    observedSourceDigest: sourceDigest,
+    observedSourceLineCount: 300,
+    observedSourceText: taskbookText(),
+    bodyMarkdown: completeBody(),
+    planningIr: falseCitation,
+    factSnapshotAt: now.toISOString(),
+    now,
+  });
+  assert.ok(sourceMismatch.blocking_findings.some((row) => row.code === "PB.SOURCE.REFERENCE_MISMATCH"));
+});
+
 test("validation, atomic revision history, and Planning Gate keep separate states", async () => {
   const root = await mkdtemp(join(tmpdir(), "cfm-long-horizon-"));
   try {
@@ -153,6 +232,7 @@ test("validation, atomic revision history, and Planning Gate keep separate state
       sourceDigest,
       observedSourceDigest: sourceDigest,
       observedSourceLineCount: 300,
+      observedSourceText: taskbookText(),
       bodyMarkdown: body,
       planningIr: ir,
       factSnapshotAt: now.toISOString(),
@@ -167,6 +247,7 @@ test("validation, atomic revision history, and Planning Gate keep separate state
       sourceDigest,
       observedSourceDigest: sha256Digest("tampered-source"),
       observedSourceLineCount: 300,
+      observedSourceText: taskbookText(),
       bodyMarkdown: body,
       planningIr: ir,
       factSnapshotAt: now.toISOString(),
@@ -177,6 +258,7 @@ test("validation, atomic revision history, and Planning Gate keep separate state
     await persistPlanningValidation(root, validation);
     assert.equal((await readPlanningValidation(root, TASK_ID))?.validation_digest, validation.validation_digest);
 
+    const authority = await planningAuthority(root, "session-pm-900");
     const artifact = await writePlanningArtifact({
       projectRoot: root,
       taskId: TASK_ID,
@@ -191,6 +273,7 @@ test("validation, atomic revision history, and Planning Gate keep separate state
       validationDigest: validation.validation_digest,
       validationPassed: true,
       longHorizon: true,
+      authority,
     });
     assert.equal(artifact.revision, 1);
     assert.equal(artifact.body_digest, validation.body_digest);
@@ -206,6 +289,7 @@ test("validation, atomic revision history, and Planning Gate keep separate state
       callerRole: "PM-01",
       sessionId: "session-pm-900",
       longHorizon: true,
+      authority,
     });
     assert.equal(second.revision, 2);
     assert.ok(second.history_path);
@@ -253,14 +337,17 @@ test("dispatch opens only after matching semantic validation and ADMIN approve_w
     const validation = validateLongHorizonPlan({
       taskId: TASK_ID, rootTaskId: TASK_ID, threadKey: THREAD_KEY, sessionId: "session-pm-901",
       sourceDigest, observedSourceDigest: sourceDigest, observedSourceLineCount: 300,
+      observedSourceText: taskbookText(),
       bodyMarkdown: body, planningIr: ir, factSnapshotAt: now.toISOString(), now,
     });
     await persistPlanningValidation(root, validation);
+    const authority = await planningAuthority(root, "session-pm-901");
     const artifact = await writePlanningArtifact({
       projectRoot: root, taskId: TASK_ID, rootTaskId: TASK_ID, threadKey: THREAD_KEY,
       planningLevel: 3, bodyMarkdown: body, status: "ready_for_review", callerRole: "PM-01",
       sessionId: "session-pm-901", sourceDigest, validationDigest: validation.validation_digest,
       validationPassed: true, longHorizon: true,
+      authority,
     });
     const required = [...PRODUCT_DESIGN_REQUIRED_SKILLS, LONG_HORIZON_SKILL_ID];
     for (const skillId of required) {
@@ -273,6 +360,8 @@ test("dispatch opens only after matching semantic validation and ADMIN approve_w
         output_summary: `${skillId} applied`,
         brief_section: "总体规划",
         product_decisions: [`decision from ${skillId}`],
+        thread_key: THREAD_KEY,
+        authority,
       });
     }
     const gateInput = {

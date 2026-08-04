@@ -19,6 +19,7 @@ import {
 import { join, resolve as pathResolve } from "node:path";
 
 import { verifyFcopBootstrapManifest } from "./fcop-bootstrap-transaction.ts";
+import { buildPmSkillManifestFile } from "../../packages/codeflowmu-runtime/src/pm/PmSkillManifest.ts";
 
 /** v2-only dirs that indicate old five-bucket topology — NOT 0002 work folders. */
 export const FCOP_V2_ONLY_LEGACY_DIRS = ["log"] as const;
@@ -552,6 +553,7 @@ export interface SkillsManifestHealth {
   agentProjectionExists: boolean;
   pmManifestExists: boolean;
   pmSkillCount: number;
+  pmManifestMatchesBuilder: boolean;
   agentCatalogEntries: number;
   missingSkillPackages: string[];
   summary: string;
@@ -645,6 +647,7 @@ export function checkSkillsManifestHealth(projectRoot: string): SkillsManifestHe
       agentProjectionExists: false,
       pmManifestExists: false,
       pmSkillCount: 0,
+      pmManifestMatchesBuilder: false,
       agentCatalogEntries: 0,
       missingSkillPackages: [],
       summary: "未初始化 FCoP，跳过 skills manifest 验收",
@@ -662,9 +665,9 @@ export function checkSkillsManifestHealth(projectRoot: string): SkillsManifestHe
   const missingSkillPackages: string[] = [];
   let agentCatalogEntries = 0;
 
-  const manifestForPackages =
-    readJsonObject(projectRoot, AGENT_SKILLS_PROJECTION_REL) ??
-    readJsonObject(projectRoot, AGENT_SKILLS_SOURCE_REL);
+  const agentProjectionData = readJsonObject(projectRoot, AGENT_SKILLS_PROJECTION_REL);
+  const agentSourceData = readJsonObject(projectRoot, AGENT_SKILLS_SOURCE_REL);
+  const manifestForPackages = agentProjectionData ?? agentSourceData;
   if (manifestForPackages) {
     const collected = collectAgentPlaybookPackages(manifestForPackages);
     agentCatalogEntries = collected.entries;
@@ -674,15 +677,24 @@ export function checkSkillsManifestHealth(projectRoot: string): SkillsManifestHe
   }
 
   let pmSkillCount = 0;
+  let pmManifestMatchesBuilder = false;
   const pmData = readJsonObject(projectRoot, PM_SKILLS_PROJECTION_REL);
   if (pmData?.kind === "pm-builtin-skills" && Array.isArray(pmData.skills)) {
-    const ids = new Set(
-      pmData.skills
+    const allIds = pmData.skills
         .filter((s): s is Record<string, unknown> => typeof s === "object" && s !== null)
         .map((s) => (typeof s.skill_id === "string" ? s.skill_id : ""))
-        .filter(Boolean),
-    );
+        .filter(Boolean);
+    const ids = new Set(allIds);
     pmSkillCount = PM_BUILTIN_SKILL_IDS.filter((id) => ids.has(id)).length;
+    const expected = buildPmSkillManifestFile();
+    const expectedIds = expected.skills.map((skill) => skill.skill_id);
+    pmManifestMatchesBuilder =
+      pmData.manifest_version === expected.manifest_version &&
+      pmData.kind === expected.kind &&
+      pmData.role === expected.role &&
+      allIds.length === ids.size &&
+      allIds.length === expectedIds.length &&
+      expectedIds.every((id) => ids.has(id));
   }
 
   const failures: string[] = [];
@@ -718,6 +730,36 @@ export function checkSkillsManifestHealth(projectRoot: string): SkillsManifestHe
     );
   }
 
+  // Initialization readiness is stricter than runtime fallback. Missing or
+  // drifted projections remain repairable, but they are blocking postflight.
+  if (!agentProjectionExists) {
+    failures.push(`${AGENT_SKILLS_PROJECTION_REL} missing`);
+  } else if (!agentProjectionData) {
+    failures.push(`${AGENT_SKILLS_PROJECTION_REL} JSON invalid`);
+  }
+  if (agentSourceExists && !agentSourceData) {
+    failures.push(`${AGENT_SKILLS_SOURCE_REL} JSON invalid`);
+  }
+  if (!pmManifestExists) {
+    failures.push(`${PM_SKILLS_PROJECTION_REL} missing (PM 0/${PM_BUILTIN_SKILL_IDS.length})`);
+  } else if (pmSkillCount !== PM_BUILTIN_SKILL_IDS.length) {
+    failures.push(`PM builtin skills incomplete: ${pmSkillCount}/${PM_BUILTIN_SKILL_IDS.length}`);
+  } else if (!pmManifestMatchesBuilder) {
+    failures.push("PM skills manifest kind/version/digest does not match the current Runtime builder");
+  }
+  const expectedAgentEntries = agentSourceData
+    ? collectAgentPlaybookPackages(agentSourceData).entries
+    : 58;
+  if (agentProjectionData && agentCatalogEntries !== expectedAgentEntries) {
+    failures.push(`Agent Playbook projection count mismatch: ${agentCatalogEntries}/${expectedAgentEntries}`);
+  }
+  if (agentProjectionData && agentCatalogEntries === 0) {
+    failures.push("Agent Playbook projection contains no entries");
+  }
+  if (missingSkillPackages.length > 0) {
+    failures.push(`Agent Playbook skill packages missing: ${missingSkillPackages.length}`);
+  }
+
   const applicable = true;
   const ok = failures.length === 0;
   let summary: string;
@@ -741,6 +783,7 @@ export function checkSkillsManifestHealth(projectRoot: string): SkillsManifestHe
     agentProjectionExists,
     pmManifestExists,
     pmSkillCount,
+    pmManifestMatchesBuilder,
     agentCatalogEntries,
     missingSkillPackages,
     summary,

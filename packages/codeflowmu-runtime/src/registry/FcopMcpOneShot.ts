@@ -161,6 +161,14 @@ const FCOP_STATIC_TOOL_SCHEMAS: Record<string, GoogleToolParameters> = {
       },
       session_id: { ...STRING_PROP, description: "Runtime Session that produced this report." },
       run_id: { ...STRING_PROP, description: "Runtime run that produced this report." },
+      thread_key: { ...STRING_PROP, description: "Runtime-bound FCoP thread key." },
+      agent_id: { ...STRING_PROP, description: "Runtime Agent identity; injected by the Runtime." },
+      caller_role: { ...STRING_PROP, description: "Runtime caller role; injected by the Runtime." },
+      runtime_bound: {
+        type: "BOOLEAN",
+        description: "True only for a write issued by a verified Runtime session.",
+      },
+      source: { ...STRING_PROP, description: "Explicit source for Runtime and non-Runtime writes." },
       evidence_refs: {
         type: "ARRAY",
         items: { type: "STRING" },

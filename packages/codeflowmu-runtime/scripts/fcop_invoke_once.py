@@ -621,6 +621,12 @@ def normalize_write_report_args(project_root: str, args: dict) -> dict:
                 file=sys.stderr,
             )
 
+    if body is None or not body.strip():
+        raise _TaskResolutionError(
+            "REPORT_BODY_REQUIRED",
+            "write_report body is required and must contain non-whitespace Markdown",
+        )
+
     if not task_id and body is not None:
         reporter_norm = (reporter or "").strip().upper()
         recipient_norm = (recipient or "").strip().upper()
@@ -666,6 +672,14 @@ def normalize_write_report_args(project_root: str, args: dict) -> dict:
     client_submission_id = _pick_alias(src, "client_submission_id", "clientSubmissionId")
     if client_submission_id:
         out["client_submission_id"] = client_submission_id
+
+    for key in (
+        "session_id", "sessionId", "run_id", "runId", "evidence_refs",
+        "evidenceRefs", "agent_id", "agentId", "caller_role", "thread_key",
+        "threadKey", "source", "source_channel", "runtime_bound",
+    ):
+        if key in src:
+            out[key] = src[key]
 
     return out
 
@@ -1377,7 +1391,86 @@ def _write_frontmatter_file(path: str, fields: dict[str, object], body: str) -> 
 def _report_content_hash(body: str) -> str:
     """Stable identity for an idempotent retry of the same report content."""
     normalized = (body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not normalized:
+        raise _TaskResolutionError(
+            "REPORT_BODY_REQUIRED",
+            "write_report body is required before content hashing",
+        )
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _validate_report_runtime_contract(
+    project_root: str,
+    args: dict,
+    task_id: str,
+    task_fields: dict[str, str],
+    reporter: str,
+) -> tuple[bool, str]:
+    runtime_bound = args.get("runtime_bound") is True
+    source = str(args.get("source") or args.get("source_channel") or "").strip()
+    if not runtime_bound:
+        return False, source or "external_fcop_one_shot"
+
+    session_id = _pick_alias(args, "session_id", "sessionId") or ""
+    if not session_id:
+        raise _TaskResolutionError(
+            "REPORT_SESSION_REQUIRED",
+            "Runtime-bound write_report requires session_id",
+        )
+    session_path = os.path.join(
+        project_root, ".codeflowmu", "state", "sessions", f"{session_id}.json"
+    )
+    try:
+        with open(session_path, encoding="utf-8") as fh:
+            session = json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise _TaskResolutionError(
+            "REPORT_SESSION_NOT_FOUND",
+            f"Runtime SessionStore record is unavailable for {session_id}: {exc}",
+        ) from exc
+    protocol = session.get("protocol") if isinstance(session, dict) else None
+    protocol = protocol if isinstance(protocol, dict) else {}
+    if str(protocol.get("status") or "").strip().lower() != "running":
+        raise _TaskResolutionError(
+            "REPORT_SESSION_NOT_ACTIVE",
+            f"Runtime session {session_id} is not running",
+        )
+    persisted_agent = str(protocol.get("agent_id") or "").strip()
+    supplied_agent = str(args.get("agent_id") or args.get("agentId") or "").strip()
+    supplied_role = str(args.get("caller_role") or "").strip()
+    if not persisted_agent or (supplied_agent and supplied_agent != persisted_agent):
+        raise _TaskResolutionError(
+            "REPORT_SESSION_CONTEXT_MISMATCH",
+            "report agent does not match Runtime SessionStore",
+        )
+    persisted_role = re.match(r"^[A-Za-z]+", persisted_agent)
+    persisted_role_code = (persisted_role.group(0) if persisted_role else persisted_agent).upper()
+    if reporter != persisted_role_code or (supplied_role and supplied_role != persisted_agent):
+        raise _TaskResolutionError(
+            "REPORT_SESSION_CONTEXT_MISMATCH",
+            "reporter does not match Runtime SessionStore agent identity",
+        )
+    session_task = str(protocol.get("task_id") or "").replace(".md", "").strip()
+    root_task = str(session.get("runtime_root_task_id") or session_task).replace(".md", "").strip()
+    if task_id not in {session_task, root_task}:
+        raise _TaskResolutionError(
+            "REPORT_SESSION_TASK_MISMATCH",
+            "report task does not match Runtime SessionStore task context",
+        )
+    task_thread = str(task_fields.get("thread_key") or "").strip()
+    session_thread = str(session.get("runtime_thread_key") or "").strip()
+    supplied_thread = str(args.get("thread_key") or args.get("threadKey") or "").strip()
+    if task_thread and session_thread != task_thread:
+        raise _TaskResolutionError(
+            "REPORT_SESSION_THREAD_MISMATCH",
+            "task thread does not match Runtime SessionStore thread context",
+        )
+    if supplied_thread and supplied_thread != session_thread:
+        raise _TaskResolutionError(
+            "REPORT_SESSION_THREAD_MISMATCH",
+            "supplied thread_key does not match Runtime SessionStore",
+        )
+    return True, source or "runtime_tool_call"
 
 
 def _read_markdown_body(path: str) -> str:
@@ -1429,6 +1522,14 @@ def _write_validated_report(
     task_id = task_match.group(0).upper() if task_match else task_id_raw
     status = _normalize_report_status(_pick_alias(args, "status")) or "in_progress"
     body = str(args.get("body") or "")
+    if not body.strip():
+        raise _TaskResolutionError(
+            "REPORT_BODY_REQUIRED",
+            "write_report body is required and must contain non-whitespace Markdown",
+        )
+    runtime_bound, report_source = _validate_report_runtime_contract(
+        project_root, args, task_id, task_fields, reporter
+    )
     try:
         rework_round = max(0, int(task_fields.get("reopened_count") or 0))
     except (TypeError, ValueError):
@@ -1504,6 +1605,8 @@ def _write_validated_report(
         "content_hash": content_hash,
         "created_at": _now_iso(),
         "writer": "codeflowmu-validated-lifecycle-writer",
+        "runtime_bound": runtime_bound,
+        "source": report_source,
     }
     thread_key = str(task_fields.get("thread_key") or "").strip()
     if thread_key:
@@ -1534,6 +1637,25 @@ def _write_validated_report(
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
+    persisted_fields = _read_file_frontmatter_fields(path)
+    persisted_body = _read_markdown_body(path).strip()
+    persisted_hash = str(persisted_fields.get("content_hash") or "")
+    if (
+        not persisted_body
+        or persisted_body == "(no body)"
+        or str(persisted_fields.get("task_id") or "") != task_id
+        or str(persisted_fields.get("thread_key") or "").strip() != thread_key
+        or persisted_hash != content_hash
+        or _report_content_hash(persisted_body) != content_hash
+    ):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise _TaskResolutionError(
+            "REPORT_READBACK_MISMATCH",
+            "persisted report failed body/task/thread/content-hash verification",
+        )
     try:
         _enrich_pm_admin_report_frontmatter(project_root, path, args)
     except Exception as exc:
@@ -1792,16 +1914,20 @@ def main() -> None:
     if tool == "write_report":
         report_runtime_metadata = {
             key: args[key]
-            for key in ("session_id", "sessionId", "run_id", "runId", "evidence_refs", "evidenceRefs")
+            for key in (
+                "session_id", "sessionId", "run_id", "runId", "evidence_refs",
+                "evidenceRefs", "agent_id", "agentId", "caller_role",
+                "thread_key", "threadKey", "source", "source_channel",
+                "runtime_bound",
+            )
             if key in args
         }
         tid = _pick_alias(args, "task_id", "taskId", "filename", "id")
         if tid:
             _quarantine_corrupt_inbox_stub(project_root, tid)
-        args = normalize_write_report_args(project_root, args)
-        args.update(report_runtime_metadata)
-
         try:
+            args = normalize_write_report_args(project_root, args)
+            args.update(report_runtime_metadata)
             print(
                 json.dumps(
                     _write_validated_report(project_root, args, original_args),

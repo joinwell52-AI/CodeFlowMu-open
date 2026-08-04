@@ -1,15 +1,15 @@
 {
   "schema_version": "1.0",
-  "source_release_sha": "325f5c097ad6b578c44f3de26481152c0e823c0c",
-  "source_version": "V1.2.15-open",
-  "shell_compatibility": "V1.2.15-open",
-  "runtime_compatibility": "V1.2.15-open",
+  "source_release_sha": "f5c89231d3c6c67978dfa4b9c520657d3a09725b",
+  "source_version": "V1.2.16-open",
+  "shell_compatibility": "V1.2.16-open",
+  "runtime_compatibility": "V1.2.16-open",
   "fcop_package_compatibility": ">=unknown <4",
   "rules_version": "unknown",
   "protocol_version": "unknown",
   "commentary_version": "unknown",
-  "role_template_version": "V1.2.15-open",
-  "adopted_version": "V1.2.15-open",
+  "role_template_version": "V1.2.16-open",
+  "adopted_version": "V1.2.16-open",
   "files": [
     {
       "source_rel": ".cursor/rules/fcop-protocol.mdc",
@@ -66,11 +66,101 @@
       "category": "adopted"
     },
     {
+      "source_rel": "fcop/LETTER-TO-ADMIN.md",
+      "target_rel": "fcop/LETTER-TO-ADMIN.md",
+      "sha256": "179f33b6c2e9d02a4dbb97f03081243a68cc13ff9abbbc17371420a20c41267b",
+      "category": "host_contract"
+    },
+    {
+      "source_rel": "fcop/shared/roles/DEV.en.md",
+      "target_rel": "fcop/shared/roles/DEV.en.md",
+      "sha256": "ef86e6741eb5cebf79792ce1c2d6b82778a319fb826ebd97ce9527d5fe46306f",
+      "category": "role_template"
+    },
+    {
+      "source_rel": "fcop/shared/roles/DEV.md",
+      "target_rel": "fcop/shared/roles/DEV.md",
+      "sha256": "350554d4cf7ff3e7debceab4216fbfc466d73da9ab728589457bef8c8f26de67",
+      "category": "role_template"
+    },
+    {
+      "source_rel": "fcop/shared/roles/OPS.en.md",
+      "target_rel": "fcop/shared/roles/OPS.en.md",
+      "sha256": "c9627f6b384c4905af3594cd0791585c1be64ba27b5ee2a10d8a31ad1ec94a90",
+      "category": "role_template"
+    },
+    {
+      "source_rel": "fcop/shared/roles/OPS.md",
+      "target_rel": "fcop/shared/roles/OPS.md",
+      "sha256": "18deaf0bb78932303e3372f96b8d56b67733edd4e7f58209af9cee76b1d0eea1",
+      "category": "role_template"
+    },
+    {
+      "source_rel": "fcop/shared/roles/PM.en.md",
+      "target_rel": "fcop/shared/roles/PM.en.md",
+      "sha256": "b6fcd27495bcfc85a7beff56ccb94c225060a6f6d580ced636ff89ac1999fe9e",
+      "category": "role_template"
+    },
+    {
+      "source_rel": "transformed:fcop/shared/roles/PM.md+open-planning-notice",
+      "target_rel": "fcop/shared/roles/PM.md",
+      "sha256": "2008e9eed47634ba6d02d0f2a4f8e0265828fef8183837a9b21df07aaaec1713",
+      "category": "role_template"
+    },
+    {
+      "source_rel": "fcop/shared/roles/QA.en.md",
+      "target_rel": "fcop/shared/roles/QA.en.md",
+      "sha256": "7623ab831aeaf2d8e960659aad900234668c30cbf19c3be400e068dac87ffccb",
+      "category": "role_template"
+    },
+    {
+      "source_rel": "fcop/shared/roles/QA.md",
+      "target_rel": "fcop/shared/roles/QA.md",
+      "sha256": "195b90a5a619d83c8fe2f5a9a5b4b9412b4278c6d6b906c76b5f993d7605b90c",
+      "category": "role_template"
+    },
+    {
+      "source_rel": "fcop/shared/TEAM-OPERATING-RULES.en.md",
+      "target_rel": "fcop/shared/TEAM-OPERATING-RULES.en.md",
+      "sha256": "5effa5f7d539b2981b1b81b89464808c84d7e84c9125bf608015ecc03597f916",
+      "category": "role_template"
+    },
+    {
+      "source_rel": "fcop/shared/TEAM-OPERATING-RULES.md",
+      "target_rel": "fcop/shared/TEAM-OPERATING-RULES.md",
+      "sha256": "4221ec5358a56428f41affc497850c23240b23bf0dc822fb43f15e6970c76c1f",
+      "category": "role_template"
+    },
+    {
+      "source_rel": "fcop/shared/TEAM-README.en.md",
+      "target_rel": "fcop/shared/TEAM-README.en.md",
+      "sha256": "9c0fd84cc4d176730e147ba77a7dc42c22121be21a1196c3aab6a423f6ab3b35",
+      "category": "role_template"
+    },
+    {
+      "source_rel": "fcop/shared/TEAM-README.md",
+      "target_rel": "fcop/shared/TEAM-README.md",
+      "sha256": "b09dbe4cf4d146604144ab07c64d6cc9a395d32fa6e8dd6cd221f8718d5edd86",
+      "category": "role_template"
+    },
+    {
+      "source_rel": "fcop/shared/TEAM-ROLES.en.md",
+      "target_rel": "fcop/shared/TEAM-ROLES.en.md",
+      "sha256": "0a057177e54e4b0b9e2eafea9d1b865bdc3f6ff12630822ad0c3b7e488abc155",
+      "category": "role_template"
+    },
+    {
+      "source_rel": "fcop/shared/TEAM-ROLES.md",
+      "target_rel": "fcop/shared/TEAM-ROLES.md",
+      "sha256": "3ec1bdba0af8c1810e52296ce920f292f6eb5b9581fc760846c3849d07ed9029",
+      "category": "role_template"
+    },
+    {
       "source_rel": "workspace/README.md",
       "target_rel": "workspace/README.md",
       "sha256": "12115e1a9557bb07cf06144030c125a82fffe0632c98f7319e0d5e057ee846df",
       "category": "host_contract"
     }
   ],
-  "manifest_digest": "sha256:e6194bed10266fd7495de86392fe55ec2d8ec32669bde8ce13c5cb717cf2a661"
+  "manifest_digest": "sha256:d6e57d7e7c04ce36b7d60049dcd3d1440fbac254f957d98272f361f6a6dc3d1c"
 }

@@ -38,6 +38,8 @@ export interface LogCenterRow {
   at: string;
   tab: LogCenterTab;
   event_type: string;
+  event_id?: string;
+  phase?: string;
   level: "ERROR" | "WARN" | "INFO";
   agent_id?: string;
   session_id?: string;
@@ -227,6 +229,8 @@ function doorbellToRow(e: DoorbellEvent): LogCenterRow {
     typeof merged.task_id === "string" ? merged.task_id : undefined;
   const status = typeof merged.status === "string" ? merged.status : undefined;
   const callId = pickPayloadString(merged, ["call_id", "tool_call_id", "tool_use_id"]);
+  const eventId = pickPayloadString(merged, ["event_id", "eventId"]);
+  const phase = pickPayloadString(merged, ["phase", "tool_phase", "status"]);
   const normalizedErrorCode = pickPayloadString(merged, [
     "normalized_error_code",
     "error_code",
@@ -274,6 +278,8 @@ function doorbellToRow(e: DoorbellEvent): LogCenterRow {
     at: new Date(e.ts).toISOString(),
     tab,
     event_type: eventType,
+    ...(eventId ? { event_id: eventId } : {}),
+    ...(phase ? { phase } : {}),
     level,
     ...(e.agent_id ? { agent_id: e.agent_id } : {}),
     ...(sessionId ? { session_id: sessionId } : {}),
@@ -479,6 +485,10 @@ export function queryLogCenter(
       ts: row.ts,
       actor: row.agent_id,
       event_type: row.event_type,
+      event_id: row.event_id,
+      call_id: row.call_id,
+      session_id: row.session_id,
+      phase: row.phase,
       message: row.message,
     });
   const passRootFaultDedupe = (row: LogCenterRow): boolean => {

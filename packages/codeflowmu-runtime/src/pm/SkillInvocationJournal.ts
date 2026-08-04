@@ -4,12 +4,16 @@
 
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import {
   buildAgentSkillsCatalog,
   readAgentSkillsManifestResolved,
 } from "../skills/AgentPlaybookCatalog.ts";
+import {
+  assertPlanningRuntimeIdentity,
+  type VerifiedPlanningRuntimeIdentity,
+} from "./PlanningRuntimeIdentity.ts";
 
 export type SkillInvocationChannel =
   | "governance_planner"
@@ -194,8 +198,19 @@ export async function recordPlanningSkillEvidence(
     brief_section: string;
     product_decisions: string[];
     thread_key?: string;
+    authority?: VerifiedPlanningRuntimeIdentity;
   },
 ): Promise<SkillInvocationRecord> {
+  assertPlanningRuntimeIdentity(input.authority);
+  if (
+    resolve(projectRoot) !== input.authority.project_root ||
+    input.task_id.trim() !== input.authority.root_task_id ||
+    input.session_id.trim() !== input.authority.session_id ||
+    input.caller_role.trim() !== input.authority.caller_role ||
+    (input.thread_key?.trim() && input.thread_key.trim() !== input.authority.thread_key)
+  ) {
+    throw new Error("RUNTIME_CONTEXT_MISMATCH: planning evidence authority does not match write target");
+  }
   const required: Array<[string, string]> = [
     ["skill_id", input.skill_id],
     ["task_id", input.task_id],

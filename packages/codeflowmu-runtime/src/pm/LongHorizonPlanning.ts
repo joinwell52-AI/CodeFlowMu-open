@@ -117,6 +117,7 @@ export interface ValidateLongHorizonPlanInput {
   factSnapshotAt: string;
   observedSourceDigest?: string;
   observedSourceLineCount?: number;
+  observedSourceText?: string;
   sourceReadError?: string;
   now?: Date;
   ttlMs?: number;
@@ -133,6 +134,126 @@ function finiteNumber(value: unknown): number | null {
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+}
+
+function nonHistoricalBodyLines(body: string): Array<{ line: number; text: string }> {
+  const out: Array<{ line: number; text: string }> = [];
+  let historicalDepth = 0;
+  const lines = body.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const text = lines[index] ?? "";
+    const heading = /^(#{1,6})\s+(.+)$/.exec(text.trim());
+    if (heading) {
+      const depth = heading[1]!.length;
+      const historical = /历史|已废弃|废弃|superseded|deprecated/i.test(heading[2]!);
+      if (historical) historicalDepth = depth;
+      else if (historicalDepth && depth <= historicalDepth) historicalDepth = 0;
+    }
+    if (!historicalDepth) out.push({ line: index + 1, text });
+  }
+  return out;
+}
+
+function collectBodyConsistencyFindings(body: string): PlanningFinding[] {
+  const lines = nonHistoricalBodyLines(body);
+  const categories: Array<{
+    category: string;
+    left: RegExp;
+    right: RegExp;
+    requirement: string;
+  }> = [
+    {
+      category: "planning_gate",
+      left: /(?:Planning\s+Gate|规划门禁|规划审批).*(?:pending|waiting|待批准|未批准|等待)/i,
+      right: /(?:Planning\s+Gate|规划门禁|规划审批).*(?:approved|通过|已批准)/i,
+      requirement: "retain only the current Planning Gate state outside a clearly historical section",
+    },
+    {
+      category: "candidate_cleanliness",
+      left: /candidate.*(?:clean|工作区干净|无未提交变更)|候选.*(?:干净|无变更)/i,
+      right: /candidate.*(?:dirty|not\s+clean|未提交|有变更)|候选.*(?:不干净|有变更|未提交)/i,
+      requirement: "reconcile candidate cleanliness from one current Git snapshot",
+    },
+    {
+      category: "dispatch_scope",
+      left: /dispatch.*(?:open|allowed|已开放|允许)|(?:允许|可以).*派发/i,
+      right: /dispatch.*(?:closed|blocked|not\s+allowed|未开放|禁止)|(?:禁止|不得|尚未).*派发/i,
+      requirement: "state one current dispatch scope and move superseded wording to history",
+    },
+    {
+      category: "waiting_point",
+      left: /(?:current\s+)?waiting.*(?:ADMIN|Planning\s+Gate)|当前.*等待.*(?:ADMIN|规划|审批)/i,
+      right: /(?:current\s+)?(?:executing|dispatching|implementation\s+started)|当前.*(?:执行中|正在派发|已经开工)/i,
+      requirement: "state one current wait/execution point",
+    },
+  ];
+  const findings: PlanningFinding[] = [];
+  for (const category of categories) {
+    const left = lines.find((row) => category.left.test(row.text));
+    const right = lines.find((row) => category.right.test(row.text));
+    if (left && right) {
+      findings.push({
+        code: "PB.BODY.STATE_CONFLICT",
+        severity: "blocking",
+        message: `${category.category} conflicts at body lines ${left.line} and ${right.line}; ${category.requirement}`,
+        evidence: { category: category.category, left, right, repair: category.requirement },
+      });
+    }
+  }
+  const t0Claims = lines
+    .filter((row) => /\bT0\b/i.test(row.text))
+    .flatMap((row) => [...row.text.matchAll(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})/g)].map((match) => ({ line: row.line, value: match[0], text: row.text })));
+  const t0Values = [...new Set(t0Claims.map((claim) => claim.value))];
+  if (t0Values.length > 1) {
+    findings.push({
+      code: "PB.BODY.T0_CONFLICT",
+      severity: "blocking",
+      message: `T0 has conflicting absolute timestamps: ${t0Values.join(", ")}`,
+      evidence: { category: "t0", claims: t0Claims, repair: "retain one authoritative T0 outside historical sections" },
+    });
+  }
+  return findings;
+}
+
+function requirementSourceReferenceFinding(
+  row: Record<string, unknown>,
+  sourceText: string | undefined,
+): PlanningFinding | null {
+  const id = String(row["id"] ?? "unknown");
+  const lineRef = String(row["source_line"] ?? row["source_lines"] ?? "").trim();
+  const section = String(row["source_section"] ?? "").trim();
+  const quote = String(row["source_text"] ?? row["source_excerpt"] ?? row["source_quote"] ?? "").trim();
+  if (!sourceText || !lineRef || !section || !quote) {
+    return {
+      code: "PB.SOURCE.REFERENCE_MISMATCH",
+      severity: "blocking",
+      message: `requirement ${id} must cite source_line, source_section and actual source_text`,
+      requirement_ids: [id],
+    };
+  }
+  const match = /(?:^|[^0-9])(\d+)(?:\s*[-–:]\s*(\d+))?/.exec(lineRef);
+  if (!match) {
+    return { code: "PB.SOURCE.REFERENCE_MISMATCH", severity: "blocking", message: `requirement ${id} has an invalid source line reference: ${lineRef}`, requirement_ids: [id] };
+  }
+  const lines = sourceText.split(/\r?\n/);
+  const start = Number(match[1]);
+  const end = Number(match[2] ?? match[1]);
+  if (start < 1 || end < start || end > lines.length) {
+    return { code: "PB.SOURCE.REFERENCE_MISMATCH", severity: "blocking", message: `requirement ${id} source lines ${start}-${end} are outside the source`, requirement_ids: [id] };
+  }
+  const actual = lines.slice(start - 1, end).join("\n");
+  const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
+  const sectionExists = sourceText.split(/\r?\n/).some((line) => normalize(line).includes(normalize(section)));
+  if (!sectionExists || !normalize(actual).includes(normalize(quote))) {
+    return {
+      code: "PB.SOURCE.REFERENCE_MISMATCH",
+      severity: "blocking",
+      message: `requirement ${id} source citation does not match current taskbook text`,
+      requirement_ids: [id],
+      evidence: { source_line: lineRef, source_section: section, expected_text: quote, actual_text: actual },
+    };
+  }
+  return null;
 }
 
 export function validateLongHorizonPlan(input: ValidateLongHorizonPlanInput): PlanningValidationResult {
@@ -182,6 +303,8 @@ export function validateLongHorizonPlan(input: ValidateLongHorizonPlanInput): Pl
   const hard = requirements.filter((row) => String(row["modality"] ?? "").toUpperCase() === "MUST");
   let hardCovered = 0;
   for (const row of hard) {
+    const sourceFinding = requirementSourceReferenceFinding(row, input.observedSourceText);
+    if (sourceFinding) blocking.push(sourceFinding);
     const wpRefs = stringArray(row["wp_ids"]);
     const gateRefs = stringArray(row["gate_ids"]);
     const covered = String(row["coverage_status"] ?? "") === "covered" &&
@@ -314,6 +437,7 @@ export function validateLongHorizonPlan(input: ValidateLongHorizonPlanInput): Pl
     else if (finding) info.push(finding);
   }
   const canonicalBody = input.bodyMarkdown.trim();
+  blocking.push(...collectBodyConsistencyFindings(canonicalBody));
   if (/\b(?:TBD|TODO)\b|详见\s*r\d+|同(?:上|前)(?:一)?(?:版|稿)|same as previous|see r\d+/i.test(canonicalBody)) {
     blocking.push({ code: "PB.REVISION.NOT_SELF_CONTAINED", severity: "blocking", message: "body depends on a placeholder or superseded revision" });
   }

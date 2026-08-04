@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { test } from "node:test";
 import { DoorbellBuffer } from "../doorbell-buffer.ts";
 import { queryLogCenter } from "../log-center.ts";
+import type { RuntimeEventFileLogger } from "../runtime-event-logger.ts";
 
 const require = createRequire(import.meta.url);
 const core = require("../../../codeflowmu-desktop/panel/log-center-core.js") as {
@@ -164,4 +165,39 @@ test("log-center API reads are deterministic and expose stable fault fields", ()
   assert.equal(second.total, 1);
   assert.equal(first.rows[0]?.call_id, "call-1");
   assert.equal(first.rows[0]?.normalized_error_code, "SDK_TIMEOUT");
+});
+
+test("log-center projection deduplicates the same semantic event across doorbell and JSONL", () => {
+  const doorbell = new DoorbellBuffer();
+  const ts = Date.parse("2026-08-04T01:00:00.000Z");
+  doorbell.hydrateFromDisk("sdk.tool_call", {
+    event_id: "evt-semantic-1",
+    session_id: "sess-semantic-1",
+    call_id: "call-semantic-1",
+    phase: "completed",
+    tool_name: "write_report",
+    message: "completed",
+  }, ts);
+  const logger = {
+    filePath: "D:/fixture/runtime-events.jsonl",
+    tailRecent: () => [{
+      ts: ts + 5_000,
+      at: new Date(ts + 5_000).toISOString(),
+      event_type: "sdk.tool_call",
+      session_id: "sess-semantic-1",
+      payload: {
+        event_id: "evt-semantic-1",
+        call_id: "call-semantic-1",
+        phase: "completed",
+        tool_name: "write_report",
+        message: "completed from durable audit",
+      },
+    }],
+  } as unknown as RuntimeEventFileLogger;
+
+  const projected = queryLogCenter(doorbell, logger, { tab: "tools", limit: 20 });
+  assert.equal(projected.total, 1);
+  assert.equal(projected.rows[0]?.event_id, "evt-semantic-1");
+  const raw = queryLogCenter(doorbell, logger, { tab: "raw", limit: 20 });
+  assert.equal(raw.total, 1, "durable raw audit remains available");
 });

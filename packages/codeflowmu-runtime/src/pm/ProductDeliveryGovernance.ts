@@ -6,7 +6,7 @@
  */
 
 import { access, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import {
@@ -21,6 +21,10 @@ import {
   sha256Digest,
 } from "./LongHorizonPlanning.ts";
 import { currentPlanningGateState } from "./PlanningGateStore.ts";
+import {
+  assertPlanningRuntimeIdentity,
+  type VerifiedPlanningRuntimeIdentity,
+} from "./PlanningRuntimeIdentity.ts";
 
 export const PRODUCT_DELIVERY_TASK_CLASS = "product_delivery" as const;
 export type PmPlanningLevel = 0 | 1 | 2 | 3;
@@ -270,6 +274,7 @@ export async function writePlanningArtifact(input: {
   validationDigest?: string;
   validationPassed?: boolean;
   longHorizon?: boolean;
+  authority?: VerifiedPlanningRuntimeIdentity;
 }): Promise<{
   path: string;
   task_id: string;
@@ -287,6 +292,17 @@ export async function writePlanningArtifact(input: {
   const bodyMarkdown = String(input.bodyMarkdown ?? "").trim();
   const status = input.status ?? "ready";
   if (!taskId) throw new Error("task_id is required");
+  assertPlanningRuntimeIdentity(input.authority);
+  if (
+    resolve(input.projectRoot) !== input.authority.project_root ||
+    input.authority.session_id !== sessionId ||
+    input.authority.caller_role !== callerRole ||
+    input.authority.root_task_id !== canonicalProductBriefTaskId(input.rootTaskId || taskId) ||
+    input.authority.root_task_id !== taskId ||
+    (String(input.threadKey ?? "").trim() && input.authority.thread_key !== String(input.threadKey).trim())
+  ) {
+    throw new Error("RUNTIME_CONTEXT_MISMATCH: planning artifact authority does not match write target");
+  }
   if (![1, 2, 3].includes(input.planningLevel)) {
     throw new Error("planning_level must be 1, 2, or 3");
   }
@@ -312,6 +328,19 @@ export async function writePlanningArtifact(input: {
       throw new Error("ready_for_review requires a passed validation bound to source and body digests");
     }
     if (!String(input.threadKey ?? "").trim()) throw new Error("long-horizon planning requires thread_key");
+    const validation = await readPlanningValidation(input.projectRoot, taskId);
+    if (
+      !validation?.ready_for_review ||
+      validation.task_id !== taskId ||
+      validation.root_task_id !== taskId ||
+      validation.thread_key !== String(input.threadKey).trim() ||
+      validation.session_id !== sessionId ||
+      validation.source_digest !== input.sourceDigest ||
+      validation.validation_digest !== input.validationDigest ||
+      validation.body_digest !== sha256Digest(bodyMarkdown)
+    ) {
+      throw new Error("PLANNING_VALIDATION_MISMATCH: persisted validation does not authorize this artifact");
+    }
   }
 
   const path = planningArtifactPath(input.projectRoot, taskId, input.planningLevel);
@@ -333,6 +362,16 @@ export async function writePlanningArtifact(input: {
   }
   const updatedAt = new Date().toISOString();
   const bodyDigest = sha256Digest(bodyMarkdown);
+  const operationDigest = sha256Digest(JSON.stringify({
+    project_root: input.authority.project_root,
+    session_id: sessionId,
+    task_id: taskId,
+    root_task_id: canonicalProductBriefTaskId(input.rootTaskId || taskId),
+    thread_key: String(input.threadKey ?? "").trim(),
+    body_digest: bodyDigest,
+    source_digest: input.sourceDigest ?? null,
+    validation_digest: input.validationDigest ?? null,
+  }));
   const rootTaskId = canonicalProductBriefTaskId(input.rootTaskId || taskId);
   const validationStatus = input.longHorizon
     ? input.validationPassed ? "passed" : status === "needs_admin_decision" ? "failed" : "missing"
@@ -354,6 +393,7 @@ export async function writePlanningArtifact(input: {
       `updated_at: ${updatedAt}`,
       `session_id: ${sessionId}`,
       `body_digest: ${bodyDigest}`,
+      `operation_digest: ${operationDigest}`,
       `previous_digest: ${previousDigest ?? "null"}`,
       ...(input.sourceDigest ? [`source_digest: ${input.sourceDigest}`] : []),
       ...(input.validationDigest ? [`validation_digest: ${input.validationDigest}`] : []),

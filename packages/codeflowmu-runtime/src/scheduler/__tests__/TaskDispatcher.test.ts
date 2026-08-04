@@ -1355,6 +1355,51 @@ Stop and wait for approval, while continuing to dispatch downstream tasks.
     });
   });
 
+  it("reconciles physical inbox/running to the existing live Session without duplicate execution", async () => {
+    await withTempScheduler(async ({ rootDir, stateDir }) => {
+      const lifecycleRoot = join(rootDir, "fcop", "_lifecycle");
+      const inboxDir = join(lifecycleRoot, "inbox");
+      await mkdir(join(lifecycleRoot, "active"), { recursive: true });
+      await mkdir(inboxDir, { recursive: true });
+      const lifecycleGovernor = new LifecycleGovernor({
+        lifecycleRoot,
+        projectRoot: rootDir,
+        logger: quietLogger(),
+      });
+      const pipeline = await buildPipeline({
+        inboxDir,
+        stateDir,
+        projectRoot: rootDir,
+        lifecycleGovernor,
+      });
+      try {
+        await pipeline.registry.register(makeAgentSpec());
+        pipeline.sdk.sendHandleFactory = (spec) =>
+          new InMemoryRunHandle({ sessionId: spec.sessionId, agentId: spec.agentId, manualSettle: true });
+        const taskId = "TASK-20260803-103";
+        const session = await pipeline.sessionManager.startSession(
+          "DEV-01",
+          taskId,
+          { text: "continue assigned task" },
+        );
+        const filename = `${taskId}-PM-to-DEV.md`;
+        await writeFile(
+          join(inboxDir, filename),
+          TASK_BODY(taskId, "DEV").replace("status: pending", "status: pending\nstate: running"),
+        );
+
+        await pipeline.dispatcher.reconcileInboxNow();
+        await access(join(lifecycleRoot, "active", filename));
+        await assert.rejects(() => access(join(inboxDir, filename)));
+        assert.equal((await pipeline.sessionManager.listActive()).length, 1);
+        assert.equal((await pipeline.sessionManager.listActive())[0]?.protocol.session_id, session.session_id);
+        await pipeline.sessionManager.cancelSession(session.session_id, "cleanup");
+      } finally {
+        await pipeline.shutdown();
+      }
+    });
+  });
+
   it("repairs inbox/dispatched and redispatches the same TASK with one durable attempt", async () => {
     await withTempScheduler(async ({ rootDir, stateDir }) => {
       const lifecycleRoot = join(rootDir, "fcop", "_lifecycle");

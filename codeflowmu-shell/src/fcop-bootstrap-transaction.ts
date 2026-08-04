@@ -19,6 +19,11 @@ import {
   waitForProjectWriteLeasesToDrain,
 } from "../../packages/codeflowmu-runtime/src/project/ProjectWriteBarrier.ts";
 import { scheduleLedgerRebuild } from "../../packages/codeflowmu-runtime/src/ledger/scheduleLedgerRebuild.ts";
+import { buildPmSkillManifestFile } from "../../packages/codeflowmu-runtime/src/pm/PmSkillManifest.ts";
+import {
+  collectAgentSkillPackagePaths,
+  mergeAgentSkillsManifest,
+} from "../../packages/codeflowmu-runtime/src/skills/AgentPlaybookManifest.ts";
 
 export type FcopBootstrapFile = {
   source_rel: string;
@@ -350,16 +355,60 @@ function manifestFileCandidates(sourceRoot: string): Array<Omit<FcopBootstrapFil
       candidates.push({ source_rel: rel, target_rel: rel, category: "adopted" });
     }
   }
-  for (const rel of [
-    ".codeflowmu/pm-skills.manifest.json",
-    ".codeflowmu/agent-skills.manifest.json",
-    ".codeflowmu/edition-ui.json",
-  ]) {
+  for (const rel of [".codeflowmu/edition-ui.json"]) {
     if (existsSync(join(sourceRoot, rel))) {
       candidates.push({ source_rel: rel, target_rel: rel, category: "adopted" });
     }
   }
   return candidates;
+}
+
+function buildManagedSkillsGeneratedFiles(
+  sourceRoot: string,
+  targetRoot: string,
+): FcopInitPlan["generated_files"] {
+  const pmContent = `${JSON.stringify(buildPmSkillManifestFile(), null, 2)}\n`;
+  const source = readBootstrapSource(sourceRoot, "docs/skills/agent-skills.manifest.json");
+  if (!source) {
+    throw new Error("FCOP_INIT_AGENT_SKILLS_SOURCE_MISSING: docs/skills/agent-skills.manifest.json");
+  }
+  let publicManifest: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(source.content.toString("utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("manifest must be an object");
+    publicManifest = parsed as Record<string, unknown>;
+  } catch (error) {
+    throw new Error(`FCOP_INIT_AGENT_SKILLS_SOURCE_INVALID: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const packages = collectAgentSkillPackagePaths(publicManifest);
+  if (packages.length === 0) {
+    throw new Error("FCOP_INIT_AGENT_SKILLS_SOURCE_INVALID: no skill_package entries");
+  }
+  for (const packageRel of packages) {
+    const normalized = slash(packageRel);
+    if (isAbsolute(packageRel) || normalized.includes("../") || !/^skills\/[^/]+\/SKILL\.md$/.test(normalized)) {
+      throw new Error(`FCOP_INIT_AGENT_SKILL_PACKAGE_INVALID: ${packageRel}`);
+    }
+    const packageSource = readBootstrapSource(sourceRoot, normalized);
+    if (!packageSource) throw new Error(`FCOP_INIT_AGENT_SKILL_PACKAGE_MISSING: ${normalized}`);
+  }
+  const existingProjection = readJson(join(targetRoot, ".codeflowmu", "agent-skills.manifest.json"));
+  const projectedManifest = existingProjection
+    ? mergeAgentSkillsManifest(existingProjection, publicManifest)
+    : publicManifest;
+  const agentContent = `${JSON.stringify(projectedManifest, null, 2)}\n`;
+  return [
+    {
+      target_rel: ".codeflowmu/pm-skills.manifest.json",
+      content: pmContent,
+      sha256: sha256Buffer(pmContent),
+    },
+    {
+      target_rel: ".codeflowmu/agent-skills.manifest.json",
+      content: agentContent,
+      sha256: sha256Buffer(agentContent),
+    },
+  ];
 }
 
 function assertSafeRelative(relPath: string): void {
@@ -620,7 +669,7 @@ export function buildFcopInitPlan(input: {
     target_rel: "fcop/fcop.json",
     content: generatedConfigContent,
     sha256: generatedConfigSha,
-  }];
+  }, ...buildManagedSkillsGeneratedFiles(sourceRoot, targetRoot)];
   const currentConfigSha = fileSha(configPath);
   if (configCompatible) {
     const configEntry = {
@@ -636,6 +685,22 @@ export function buildFcopInitPlan(input: {
     if (currentConfigSha == null) create.push(configEntry);
     else if (currentConfigSha === generatedConfigSha) preserve.push(configEntry);
     else update.push(configEntry);
+  }
+  for (const generated of generated_files.filter((file) => file.target_rel !== "fcop/fcop.json")) {
+    const actual = fileSha(join(targetRoot, generated.target_rel));
+    const entry = {
+      target_rel: generated.target_rel,
+      expected_sha256: generated.sha256,
+      actual_sha256: actual,
+      reason: actual == null
+        ? "create managed skills projection inside the approved init transaction"
+        : actual === generated.sha256
+          ? "managed skills projection already matches the Runtime source"
+          : "repair or upgrade managed skills projection inside the approved init transaction",
+    };
+    if (actual == null) create.push(entry);
+    else if (actual === generated.sha256) preserve.push(entry);
+    else update.push(entry);
   }
   const required_directories = [
     "fcop/_lifecycle/inbox",
