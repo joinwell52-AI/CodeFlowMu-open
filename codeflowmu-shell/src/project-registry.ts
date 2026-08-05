@@ -215,7 +215,8 @@ export interface RuntimeStartupProjectRootDiagnostic {
     | "INSTANCE_REGISTRY_MISSING"
     | "INSTANCE_REGISTRY_INVALID"
     | "ACTIVE_PROJECT_NOT_REGISTERED"
-    | "ACTIVE_PROJECT_ROOT_MISSING";
+    | "ACTIVE_PROJECT_ROOT_MISSING"
+    | "OPEN_INSTALL_ROOT_REJECTED";
   message: string;
   registryPath?: string;
   activeProjectId?: string;
@@ -233,6 +234,42 @@ function existingRoot(value?: string | null): string | null {
   if (!value?.trim()) return null;
   const resolved = pathResolve(value);
   return existsSync(resolved) ? resolved : null;
+}
+
+export function ensureOpenEditionDefaultProjectRoot(hostRoot: string): string {
+  const root = pathResolve(hostRoot, "projects", "newproject");
+  mkdirSync(root, { recursive: true });
+  return root;
+}
+
+export function enforceOpenEditionStartupProjectBoundary(
+  resolution: RuntimeStartupProjectRootResolution,
+  hostRoot: string,
+  defaultProjectRoot: string,
+): RuntimeStartupProjectRootResolution {
+  const protectedHostRoot = pathResolve(hostRoot);
+  const fallbackRoot = pathResolve(defaultProjectRoot);
+  const resolvedRoot = resolution.root ? pathResolve(resolution.root) : null;
+  if (resolvedRoot && resolvedRoot.toLowerCase() !== protectedHostRoot.toLowerCase()) {
+    return resolution;
+  }
+  return {
+    root: fallbackRoot,
+    source: "open_edition_bootstrap_root",
+    activeProjectId: null,
+    diagnostics: resolvedRoot
+      ? [
+          ...resolution.diagnostics,
+          {
+            code: "OPEN_INSTALL_ROOT_REJECTED",
+            message:
+              `Open edition install root cannot be used as a development project: ${protectedHostRoot}; ` +
+              `using ${fallbackRoot}`,
+            activeProjectRoot: protectedHostRoot,
+          },
+        ]
+      : resolution.diagnostics,
+  };
 }
 
 /**

@@ -85,6 +85,8 @@ import { ensureAdoptedFromSource } from "./fcop-adopted-bootstrap.ts";
 import {
   buildRuntimeProjectBindingPlan,
   diagnoseRuntimeProjectBinding,
+  enforceOpenEditionStartupProjectBoundary,
+  ensureOpenEditionDefaultProjectRoot,
   resolveRuntimeStartupProjectRootDetailed,
 } from "./project-registry.ts";
 import {
@@ -345,7 +347,11 @@ async function main(): Promise<void> {
     }
     return null;
   })();
-  const _openEditionBootstrapRoot = resolveOpenEditionStartupProjectRoot();
+  const _openEditionHostRoot = resolveOpenEditionHostRoot();
+  let _openEditionBootstrapRoot = resolveOpenEditionStartupProjectRoot();
+  if (_openEditionHostRoot && _openEditionBootstrapRoot) {
+    _openEditionBootstrapRoot = ensureOpenEditionDefaultProjectRoot(_openEditionHostRoot);
+  }
   const existingInstance = loadRuntimeInstance(hostRoot);
   const localInstance = existingInstance &&
       runtimeInstanceBelongsHere(existingInstance, hostRoot)
@@ -362,7 +368,7 @@ async function main(): Promise<void> {
       pathResolve(requestedRegistryPath).toLowerCase() ===
         pathResolve(existingRegistryPath).toLowerCase(),
   );
-  const startupProjectResolution = resolveRuntimeStartupProjectRootDetailed({
+  let startupProjectResolution = resolveRuntimeStartupProjectRootDetailed({
     explicitProjectRoot: launchArgs.projectRoot,
     instanceProjectRoot: localInstance?.project_root,
     discoveredBootstrapRoot: _bootstrapProjectRoot,
@@ -371,6 +377,13 @@ async function main(): Promise<void> {
     registryPath: requestedRegistryPath,
     registryBelongsToRuntimeInstance,
   });
+  if (_openEditionHostRoot && _openEditionBootstrapRoot) {
+    startupProjectResolution = enforceOpenEditionStartupProjectBoundary(
+      startupProjectResolution,
+      _openEditionHostRoot,
+      _openEditionBootstrapRoot,
+    );
+  }
   let _earlyProjectRoot = startupProjectResolution.root;
   if (!_earlyProjectRoot) _earlyProjectRoot = hostRoot;
   for (const diagnostic of startupProjectResolution.diagnostics) {

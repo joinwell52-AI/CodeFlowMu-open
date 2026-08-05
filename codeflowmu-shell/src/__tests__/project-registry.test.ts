@@ -14,6 +14,8 @@ import { test } from "node:test";
 import {
   buildRuntimeProjectBindingPlan,
   diagnoseRuntimeProjectBinding,
+  enforceOpenEditionStartupProjectBoundary,
+  ensureOpenEditionDefaultProjectRoot,
   loadProjectRegistry,
   projectsRegistryPath,
   resolveActiveProjectRoot,
@@ -59,6 +61,72 @@ test("project-registry round-trip and switch active id", () => {
   assert.equal(raw.activeProjectId, "go");
 
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("Open first run creates newproject and never binds Runtime to the install root", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cf-open-first-run-"));
+  const hostRoot = join(dir, "CodeFlowMu-open");
+  mkdirSync(hostRoot, { recursive: true });
+  try {
+    const defaultRoot = ensureOpenEditionDefaultProjectRoot(hostRoot);
+    assert.equal(defaultRoot, join(hostRoot, "projects", "newproject"));
+    assert.equal(existsSync(defaultRoot), true);
+
+    const resolution = enforceOpenEditionStartupProjectBoundary(
+      {
+        root: hostRoot,
+        source: "instance_project_root",
+        activeProjectId: null,
+        diagnostics: [],
+      },
+      hostRoot,
+      defaultRoot,
+    );
+    assert.equal(resolution.root, defaultRoot);
+    assert.equal(resolution.source, "open_edition_bootstrap_root");
+    assert.ok(resolution.diagnostics.some(({ code }) => code === "OPEN_INSTALL_ROOT_REJECTED"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Open startup reuses an existing newproject without changing its contents", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cf-open-existing-default-"));
+  const hostRoot = join(dir, "CodeFlowMu-open");
+  const existingRoot = join(hostRoot, "projects", "newproject");
+  const marker = join(existingRoot, "existing-project-proof.txt");
+  mkdirSync(existingRoot, { recursive: true });
+  writeFileSync(marker, "preserve-existing-project\n", "utf8");
+  try {
+    const defaultRoot = ensureOpenEditionDefaultProjectRoot(hostRoot);
+    assert.equal(defaultRoot, existingRoot);
+    assert.equal(readFileSync(marker, "utf8"), "preserve-existing-project\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Open startup preserves a valid external active project", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cf-open-external-"));
+  const hostRoot = join(dir, "CodeFlowMu-open");
+  const externalRoot = join(dir, "external-project");
+  mkdirSync(hostRoot, { recursive: true });
+  mkdirSync(externalRoot, { recursive: true });
+  try {
+    const defaultRoot = ensureOpenEditionDefaultProjectRoot(hostRoot);
+    const original = {
+      root: externalRoot,
+      source: "instance_registry_active" as const,
+      activeProjectId: "external",
+      diagnostics: [],
+    };
+    assert.equal(
+      enforceOpenEditionStartupProjectBoundary(original, hostRoot, defaultRoot),
+      original,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("valid instance registry active project wins over stale instance root", () => {
