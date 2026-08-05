@@ -410,7 +410,7 @@ describe("PmGovernancePlanner", () => {
       const judgment = cycle.judgments.find((j) => j.skill_id === "pm.wake_downstream");
       assert.ok(judgment);
       assert.equal(judgment!.mode, "executed");
-      assert.match(judgment!.summary, /已直接唤醒/);
+      assert.match(judgment!.summary, /已 wake DEV-01/);
     });
   });
 
@@ -455,7 +455,7 @@ describe("PmGovernancePlanner", () => {
       );
       assert.ok(judgment);
       assert.equal(judgment!.outcome, "skipped");
-      assert.match(judgment!.summary, /AI 已在运行/);
+      assert.match(judgment!.summary, /wake skipped \(already_running\)/);
       const raw = await readFile(taskPath, "utf-8");
       assert.doesNotMatch(raw, /waiting_pm_attention/);
     });
@@ -507,16 +507,23 @@ describe("PmGovernancePlanner", () => {
       await builder.rebuild();
 
       let wakeCalls = 0;
+      const intakeRequests: import("../PmGovernanceActions.ts").WakeDownstreamRequest[] = [];
       const cycle = await runPmGovernanceCycle(root, {
         triggered_by: "api",
         allow_auto_wake: true,
-        wake_downstream: async () => {
+        wake_downstream: async (req) => {
           wakeCalls += 1;
+          intakeRequests.push(req);
           return { ok: true, session_id: "should-not-run" };
         },
       });
 
       assert.equal(wakeCalls, 1, "PM intake AI should inspect the arrived report");
+      const intakeRequest = intakeRequests[0]!;
+      assert.equal(intakeRequest.wake_kind, "report_intake");
+      assert.equal(intakeRequest.role, "PM");
+      assert.equal(intakeRequest.source_task_id, "TASK-20260531-238");
+      assert.equal(intakeRequest.report_id, "REPORT-20260531-001-DEV-to-PM");
       const wake = cycle.decisions.find((d) => d.suggested_skill === "pm.wake_downstream");
       assert.equal(wake, undefined, "missing_report 不应出现，故无 wake_downstream");
       const review = cycle.decisions.find((d) => d.suggested_skill === "pm.review_check");

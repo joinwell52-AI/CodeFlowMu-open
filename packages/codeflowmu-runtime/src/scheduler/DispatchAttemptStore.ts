@@ -43,7 +43,25 @@ export type ExecutionLease = {
   release_reason?: string;
 };
 
-type DispatchStateFile = { version: 1; attempts: DispatchAttempt[]; leases: ExecutionLease[] };
+export type TaskExecutionDecisionValue = "ALLOW" | "WAIT" | "REJECT" | "NEEDS_PM";
+
+export type TaskExecutionDecision = {
+  decision_id: string;
+  operation_id: string;
+  task_id: string;
+  input_digest: string;
+  decision: TaskExecutionDecisionValue;
+  reason: string;
+  source: string;
+  created_at: string;
+};
+
+type DispatchStateFile = {
+  version: 1;
+  attempts: DispatchAttempt[];
+  leases: ExecutionLease[];
+  decisions: TaskExecutionDecision[];
+};
 export type OfferDispatchAttemptInput = Omit<DispatchAttempt, "attempt_id" | "status" | "created_at" | "updated_at">;
 export type ClaimExecutionLeaseResult =
   | { ok: true; attempt: DispatchAttempt; lease: ExecutionLease; idempotent: boolean }
@@ -52,7 +70,7 @@ export type ClaimExecutionLeaseResult =
 const TERMINAL = new Set<DispatchAttemptStatus>([
   "settled", "rejected", "expired", "stale", "session_failed", "superseded",
 ]);
-const emptyState = (): DispatchStateFile => ({ version: 1, attempts: [], leases: [] });
+const emptyState = (): DispatchStateFile => ({ version: 1, attempts: [], leases: [], decisions: [] });
 
 function dispatchTaskKey(taskId: string): string {
   const normalized = taskId.replace(/\.md$/i, "").trim().toUpperCase();
@@ -80,6 +98,31 @@ export class DispatchAttemptStore {
       attempts: state.attempts.filter((attempt) => dispatchTaskKey(attempt.task_id) === key),
       ...(activeLease ? { active_lease: activeLease } : {}),
     };
+  }
+
+  async recordDecision(input: Omit<TaskExecutionDecision, "decision_id" | "created_at">): Promise<TaskExecutionDecision> {
+    return this.#mutate((state) => {
+      const existing = state.decisions.find((row) =>
+        row.operation_id === input.operation_id &&
+        dispatchTaskKey(row.task_id) === dispatchTaskKey(input.task_id) &&
+        row.input_digest === input.input_digest);
+      if (existing) {
+        if (existing.decision !== input.decision || existing.reason !== input.reason) {
+          throw new Error(
+            `STATE_DECISION_CONFLICT: operation_id=${input.operation_id}; task_id=${input.task_id}; existing=${existing.decision}/${existing.reason}; next=${input.decision}/${input.reason}`,
+          );
+        }
+        return { value: existing, changed: false };
+      }
+      const decision: TaskExecutionDecision = {
+        ...input,
+        decision_id: `decision-${randomUUID()}`,
+        created_at: this.#now().toISOString(),
+      };
+      state.decisions.push(decision);
+      if (state.decisions.length > 2_000) state.decisions.splice(0, state.decisions.length - 2_000);
+      return { value: decision, changed: true };
+    });
   }
 
   async offer(input: OfferDispatchAttemptInput): Promise<{ attempt: DispatchAttempt; idempotent: boolean }> {
@@ -170,7 +213,12 @@ export class DispatchAttemptStore {
   async #read(): Promise<DispatchStateFile> {
     try {
       const parsed = JSON.parse(await fs.readFile(this.path, "utf8")) as Partial<DispatchStateFile>;
-      return { version: 1, attempts: Array.isArray(parsed.attempts) ? parsed.attempts : [], leases: Array.isArray(parsed.leases) ? parsed.leases : [] };
+      return {
+        version: 1,
+        attempts: Array.isArray(parsed.attempts) ? parsed.attempts : [],
+        leases: Array.isArray(parsed.leases) ? parsed.leases : [],
+        decisions: Array.isArray(parsed.decisions) ? parsed.decisions : [],
+      };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return emptyState();
       throw error;

@@ -9,6 +9,7 @@ import {
   evaluateTaskSpecAdmission,
   persistTaskSpecAdmissionResult,
   taskSpecContentDigest,
+  taskSpecAuthoredSnapshot,
   taskSpecAdmissionRecordPath,
   verifyTaskSpecAdmissionForDispatch,
 } from "../TaskSpecAdmissionGate.ts";
@@ -543,9 +544,61 @@ test("dispatch rejects content changed after an accepted submission", async () =
     assert.equal(result.decision, "rejected");
     assert.ok(
       result.blocking_findings.some(
-        (finding) => finding.id === "ADMISSION_PROOF_MISSING",
+        (finding) => finding.id === "ADMISSION_DIGEST_MISMATCH",
       ),
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("continuation ignores runtime projections while preserving authored digest", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cfm-task-admission-"));
+  try {
+    const submissionId = "SUBMISSION-20260730-005";
+    const formal = task("Implement a small feature.", {
+      submission_id: submissionId,
+      admission_revision: 1,
+    });
+    const accepted = await evaluateTaskSpecAdmission({ projectRoot: root, task: formal });
+    assert.equal(accepted.decision, "accepted");
+    formal.frontmatter["admission_digest"] = accepted.content_digest;
+    await persistTaskSpecAdmissionResult(root, accepted, {
+      submission_id: submissionId,
+      formal_task_id: "TASK-20260730-001",
+      admission_revision: 1,
+    });
+    await mkdir(join(root, ".codeflowmu", "task-submissions"), { recursive: true });
+    await writeFile(
+      join(root, ".codeflowmu", "task-submissions", `${submissionId}.json`),
+      JSON.stringify({
+        submission_id: submissionId,
+        status: "created",
+        formal_task_id: "TASK-20260730-001",
+        admission_revision: 1,
+        content_digest: accepted.content_digest,
+      }),
+    );
+    Object.assign(formal.frontmatter, {
+      state: "active",
+      display_status: "waiting_dependency",
+      attempt_id: "ATTEMPT-2",
+      lease_id: "LEASE-2",
+      session_id: "SESSION-2",
+      review_status: "pending",
+      pm_attention_reason: "runtime projection",
+    });
+
+    const result = await verifyTaskSpecAdmissionForDispatch({
+      projectRoot: root,
+      task: formal,
+      stage: "continuation",
+    });
+    assert.equal(result.decision, "accepted");
+    assert.equal(result.content_digest, accepted.content_digest);
+    assert.equal(result.diagnostics?.validation_stage, "continuation");
+    assert.deepEqual(result.diagnostics?.differences, []);
+    assert.deepEqual(taskSpecAuthoredSnapshot(formal).body, accepted.authored_snapshot.body);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

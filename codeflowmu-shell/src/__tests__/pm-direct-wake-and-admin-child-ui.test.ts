@@ -14,6 +14,21 @@ test("PM wake routes canonical TASK work through TaskDispatcher and reserves dir
   assert.doesNotMatch(source.slice(action, dispatch + 900), /useDirectAiWake/);
 });
 
+test("worker REPORT intake is explicitly separated from TASK dispatch", () => {
+  const source = readFileSync(resolve(import.meta.dirname, "..", "web-panel.ts"), "utf8");
+  const action = source.indexOf("const executePmWakeDownstreamRaw");
+  const reportBranch = source.indexOf('if (wakeKind === "report_intake")', action);
+  const canonicalLookup = source.indexOf("let canonicalTaskPath", reportBranch);
+  const dispatch = source.indexOf("runtime.dispatcher.dispatchTaskFromControlPlane", canonicalLookup);
+  assert.ok(action >= 0 && reportBranch > action && canonicalLookup > reportBranch && dispatch > canonicalLookup);
+  const intakeBody = source.slice(reportBranch, canonicalLookup);
+  assert.match(intakeBody, /runtime\.reportDispatcher\.handle/);
+  assert.match(intakeBody, /wake_kind: wakeKind/);
+  assert.doesNotMatch(intakeBody, /dispatchTaskFromControlPlane|dispatch_skipped/);
+  assert.match(source.slice(canonicalLookup, dispatch + 500), /actualTaskRecipient/);
+  assert.doesNotMatch(source.slice(dispatch, dispatch + 220), /plan\.role,\s*\n\s*"pm_wake"/);
+});
+
 test("governance planner no longer hard-codes task-bound direct wake", () => {
   const source = readFileSync(
     resolve(

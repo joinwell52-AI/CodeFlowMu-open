@@ -129,7 +129,9 @@ import {
 } from "./pm-heartbeat-config.ts";
 import {
   clearPmHeartbeatTaskFuses,
+  consumePmHeartbeatContinuationIntent,
   evaluatePmHeartbeatFuse,
+  mergePmHeartbeatContinuationIntent,
   newPmHeartbeatWakeId,
   readPmHeartbeatState,
   registerAcceptedPmHeartbeatWake,
@@ -247,6 +249,8 @@ import {
   persistTaskSpecAdmissionResult,
   taskSpecAdmissionRecordPath,
   verifyTaskSpecAdmissionForDispatch,
+  createProjectExecutionContext,
+  type SessionRecord,
 } from "@codeflowmu/runtime";
 import {
   abandonTaskSubmission,
@@ -404,6 +408,10 @@ import {
   decidePlanningGate,
   recordPlanningGateDelivery,
   currentPlanningGateState,
+  issuePlanningGrant,
+  currentPlanningGrant,
+  FactCheckDecisionService,
+  FactCheckDecisionError,
   readPlanningGateHistory,
   PLANNING_GATE_DECISIONS,
   evaluatePmSummaryGate,
@@ -419,6 +427,7 @@ import {
   type PrepareOperationInput,
   authorizePlanningRuntimeIdentity,
   PlanningRuntimeIdentityError,
+  allocateTaskSequence,
 } from "@codeflowmu/runtime";
 import { buildGitPushApprovalInput, executeGitPushApproval } from "./git-operation-approval.ts";
 import { registerGovernanceApprovalRoutes } from "./governance-approval-routes.ts";
@@ -3663,25 +3672,7 @@ function _wpWriteTaskSeqState(projectRoot: string, state: Record<string, number>
 }
 
 function _wpNextTaskSeq(projectRoot: string, date: string): string {
-  const paths = fcopV3Paths(projectRoot);
-  const scanRoots = [
-    ...fcopV3TaskSearchDirs(paths),
-    paths.reports,
-    paths.reviews,
-    join(projectRoot, "fcop", "history"),
-    join(projectRoot, "fcop", "internal"),
-    join(projectRoot, "fcop", "alerts"),
-    join(projectRoot, "fcop", "logs"),
-    join(projectRoot, "fcop", "chat"),
-  ];
-  let max = 0;
-  for (const root of scanRoots) max = Math.max(max, _wpScanTaskSeqDir(root, date));
-  const state = _wpReadTaskSeqState(projectRoot);
-  max = Math.max(max, state[date] ?? 0);
-  const next = max + 1;
-  state[date] = next;
-  _wpWriteTaskSeqState(projectRoot, state);
-  return String(next).padStart(3, "0");
+  return allocateTaskSequence(projectRoot, date);
 }
 
 /** Short window: duplicate Panel/API submits with identical payload → one TASK file. */
@@ -4167,6 +4158,30 @@ export function buildWebPanelApp(
   let runtimeEventLogger: RuntimeEventFileLogger | null = null;
   /** Unified analytics ledger — `fcop/logs/analytics/events-*.jsonl`. */
   let analyticsLedger: AnalyticsLedger | null = null;
+
+  /**
+   * Production SessionManager exposes the durable store-backed history API.
+   * Lightweight host/test adapters created before that API may only expose
+   * listActive(); keep direct chat and approval recovery compatible without
+   * weakening the durable production path.
+   */
+  async function listTaskSessionHistory(taskId: string): Promise<SessionRecord[]> {
+    const manager = runtime.sessionManager as unknown as {
+      listForTask?: (value: string) => Promise<SessionRecord[]>;
+      listActive: () => Promise<SessionRecord[]>;
+    };
+    if (typeof manager.listForTask === "function") {
+      return manager.listForTask.call(runtime.sessionManager, taskId);
+    }
+    const normalized = taskId.trim().toUpperCase();
+    const active = await manager.listActive.call(runtime.sessionManager);
+    return active.filter((record) => {
+      const candidate = String(
+        record.protocol.task_id ?? record.runtime_root_task_id ?? "",
+      ).trim().toUpperCase();
+      return candidate === normalized;
+    });
+  }
 
   let frozenBootstrapRoot: string | null = null;
 
@@ -7123,6 +7138,11 @@ export function buildWebPanelApp(
       const bodyDigest = String(fm["body_digest"] ?? "");
       const validationDigest = String(fm["validation_digest"] ?? "");
       const state = await currentPlanningGateState(root, taskId, { revision, body_digest: bodyDigest, validation_digest: validationDigest });
+      const planningGrant = await currentPlanningGrant(root, taskId, {
+        briefRevision: revision ?? undefined,
+        briefDigest: bodyDigest || undefined,
+        validationDigest: validationDigest || undefined,
+      });
       res.json({
         ok: true,
         task_id: taskId,
@@ -7133,6 +7153,7 @@ export function buildWebPanelApp(
         status: state.status,
         submission: state.submission,
         decision: state.decision,
+        planning_grant: planningGrant,
         history_count: state.history.length,
         canonical_preview: raw ? raw.slice(0, 120_000) : null,
       });
@@ -7190,6 +7211,22 @@ export function buildWebPanelApp(
         decision: decisionValue,
         reason,
       });
+      const requestedScope = Array.isArray(body["approved_wp_scope"])
+        ? (body["approved_wp_scope"] as unknown[]).map(String).map((value) => value.trim()).filter(Boolean)
+        : [];
+      const planningGrant = decisionValue === "approve_wp00"
+        ? await issuePlanningGrant({
+            projectRoot: root,
+            rootTaskId: taskId,
+            briefRevision: revision,
+            briefDigest: bodyDigest,
+            validationDigest,
+            approvedWpScope: requestedScope.length > 0 ? requestedScope : ["WP-00"],
+            childContractDigest: String(body["child_contract_digest"] ?? validationDigest),
+            decisionId: pending.decision_id,
+            approvedAt: pending.decided_at,
+          })
+        : null;
       const agentId = String(artifactFm["pm"] ?? "PM").trim() || "PM";
       const wakeId = newPmHeartbeatWakeId();
       const message = [
@@ -7231,7 +7268,15 @@ export function buildWebPanelApp(
         notice_detail: delivered ? `wake_id=${wakeId}` : deliveryError,
         wake_detail: delivered ? `session_id=${wakeSessionId}` : deliveryError,
       });
-      res.status(delivered ? 200 : 202).json({ ok: true, decision, delivered, wake_id: wakeId, wake_session_id: wakeSessionId || null, delivery_error: deliveryError || null });
+      res.status(delivered ? 200 : 202).json({
+        ok: true,
+        decision,
+        planning_grant: planningGrant,
+        delivered,
+        wake_id: wakeId,
+        wake_session_id: wakeSessionId || null,
+        delivery_error: deliveryError || null,
+      });
     } catch (err) {
       sendError(res, 400, "PLANNING_GATE_DECIDE_FAILED", String(err));
     }
@@ -7588,6 +7633,8 @@ export function buildWebPanelApp(
       const action = String(req.body?.action ?? "").trim();
       const reason = String(req.body?.reason ?? "").trim();
       const idempotencyKey = String(req.body?.idempotency_key ?? "").trim();
+      const actorRaw = String(req.body?.caller_role ?? "ADMIN").trim().toUpperCase();
+      const actor = actorRaw === "PM" ? "PM" as const : "ADMIN" as const;
       if (!taskId || !allowed.has(action)) {
         sendError(res, 400, "FACT_CHECK_DECISION_INVALID", "task_id and a supported action are required");
         return;
@@ -7600,14 +7647,17 @@ export function buildWebPanelApp(
         sendError(res, 400, "FACT_CHECK_REASON_REQUIRED", "accepting an evidence exception requires a reason");
         return;
       }
-      const decisionDir = join(root, ".codeflowmu", "fact-check-decisions");
-      const decisionPath = join(decisionDir, `${taskId.replace(/[^A-Za-z0-9._-]/g, "_")}.jsonl`);
-      if (existsSync(decisionPath)) {
-        const prior = readFileSync(decisionPath, "utf-8").split(/\r?\n/).filter(Boolean).map((line) => {
-          try { return JSON.parse(line) as Record<string, unknown>; } catch { return {}; }
-        }).find((row) => row["idempotency_key"] === idempotencyKey);
-        if (prior) { res.json({ ok: true, idempotent_replay: true, decision: prior }); return; }
-      }
+      const serviceAction = action === "accept_evidence_exception"
+        ? "overrule_auto_review"
+        : action;
+      const formalDecision = await new FactCheckDecisionService(root).decide({
+        taskId,
+        action: serviceAction as "return_for_evidence" | "confirm_fact_false" | "overrule_auto_review" | "retry_fact_check",
+        actor,
+        reason,
+        idempotencyKey,
+        expectedReviewId: String(req.body?.expected_review_id ?? "").trim() || undefined,
+      });
       const taskHit = findTaskFileByIdPrefix(root, taskId);
       if (!taskHit?.path) {
         sendError(res, 404, "TASK_NOT_FOUND", taskId);
@@ -7622,7 +7672,7 @@ export function buildWebPanelApp(
             "reject_review",
             {
               task_id: taskId,
-              actor: "ADMIN",
+              actor,
               reason: reason || (action === "return_for_evidence" ? "退回补充事实核查证据" : "人工确认事实不成立"),
             },
             root,
@@ -7637,15 +7687,12 @@ export function buildWebPanelApp(
           return;
         }
       } else if (action === "accept_evidence_exception") {
-        const raw = readFileSync(taskHit.path, "utf-8");
-        writeFileSync(taskHit.path, _wpPatchFmFields(raw, {
-          pm_attention_reason: "",
-          fact_check_exception: "true",
-          fact_check_exception_by: "ADMIN",
-          fact_check_exception_at: new Date().toISOString(),
-          fact_check_exception_reason: reason.replace(/\r?\n/g, " ").slice(0, 500),
-        }), "utf-8");
-        result = { attention_cleared: true, high_risk_authorized: false };
+        result = {
+          attention_cleared: formalDecision.projection.root_projection_updated,
+          rework_tasks_cancelled: formalDecision.projection.rework_tasks_cancelled,
+          blocking_issues_resolved: formalDecision.projection.blocking_issues_resolved,
+          high_risk_authorized: false,
+        };
       } else {
         const review = await reviewCheck(root, { task_id: taskId });
         if (!review) {
@@ -7662,22 +7709,23 @@ export function buildWebPanelApp(
         }
       }
       const decision = {
-        event: `fact_check.${action}`,
-        at: new Date().toISOString(),
-        task_id: taskId,
-        action,
-        actor: "ADMIN",
-        reason,
-        expected_review_id: String(req.body?.expected_review_id ?? "").trim(),
-        idempotency_key: idempotencyKey,
+        ...formalDecision.record,
+        requested_action: action,
+        idempotent_replay: formalDecision.idempotent,
         result,
       };
-      mkdirSync(decisionDir, { recursive: true });
-      appendFileSync(decisionPath, `${JSON.stringify(decision)}\n`, "utf-8");
       invalidateLedgerFreshCache(root);
       sseEmit("codeflowmu.fact_check_decision", decision);
-      res.json({ ok: true, decision });
+      res.json({
+        ok: true,
+        ...(formalDecision.idempotent ? { idempotent_replay: true } : {}),
+        decision,
+      });
     } catch (err) {
+      if (err instanceof FactCheckDecisionError) {
+        sendError(res, 409, err.code, err.message);
+        return;
+      }
       sendError(res, 500, "FACT_CHECK_DECISION_FAILED", err instanceof Error ? err.message : String(err));
     }
   });
@@ -8698,6 +8746,10 @@ export function buildWebPanelApp(
       const dependsOn = Array.isArray(req.body?.depends_on)
         ? req.body.depends_on.map(String).map((value: string) => value.trim()).filter(Boolean)
         : [];
+      const wpId = String(req.body?.wp_id ?? "").trim().toUpperCase();
+      const acceptanceItems = Array.isArray(req.body?.acceptance_items)
+        ? req.body.acceptance_items.filter((item: unknown) => item && typeof item === "object")
+        : [];
       const client = await FcopProjectClient.create({
         projectRoot: projectRoot(),
         ensureInitialized: false,
@@ -8708,7 +8760,15 @@ export function buildWebPanelApp(
         priority: priority as "P0" | "P1" | "P2" | "P3",
         subject,
         body:
-          `${body}\n\n## 验收与依赖\n\n` +
+          `${body}\n\n${wpId ? `Work package: ${wpId}\n\n` : ""}` +
+          `${acceptanceItems.length > 0
+            ? `\`\`\`acceptance-contract\n${JSON.stringify({
+                contract_revision: 1,
+                wp_id: wpId || undefined,
+                items: acceptanceItems,
+              }, null, 2)}\n\`\`\`\n\n`
+            : ""}` +
+          `## 验收与依赖\n\n` +
           `- 验收人：${acceptor}\n` +
           `- depends_on：${dependsOn.length ? dependsOn.join(", ") : "无"}`,
         parent,
@@ -8723,6 +8783,8 @@ export function buildWebPanelApp(
         thread_key: threadKey,
         depends_on: dependsOn,
         acceptor,
+        wp_id: wpId || null,
+        acceptance_contract_compiled: acceptanceItems.length > 0,
       });
     } catch (error) {
       sendError(
@@ -11778,6 +11840,15 @@ export function buildWebPanelApp(
           const admission = await verifyTaskSpecAdmissionForDispatch({
             projectRoot: root,
             task,
+            stage: "continuation",
+            projectContext: createProjectExecutionContext({
+              projectRoot: root,
+              runtimeInstanceId: opts.runtimeInstance?.instanceId,
+              hostRoot: opts.runtimeInstance?.hostRoot,
+              registryPath: opts.runtimeInstance?.registryPath,
+              dataRoot: opts.runtimeInstance?.dataRoot,
+              requestId: triggerChatId,
+            }),
           });
           if (admission.decision === "rejected") {
             appendPanelRuntimeAction(root, {
@@ -11796,6 +11867,7 @@ export function buildWebPanelApp(
               task_id: admission.task_id,
               decision: admission.decision,
               blocking_findings: admission.blocking_findings,
+              diagnostics: admission.diagnostics,
             });
             return;
           }
@@ -11811,6 +11883,16 @@ export function buildWebPanelApp(
       }
     }
     const sessionTaskId = boundTaskId || `CHAT-${Date.now()}`;
+    let continuationOfSessionId = "";
+    let logicalExecutionId = "";
+    if (boundTaskId) {
+      const history = await listTaskSessionHistory(boundTaskId).catch(() => []);
+      const previous = history.at(-1);
+      continuationOfSessionId = previous?.protocol.session_id ?? "";
+      logicalExecutionId =
+        previous?.runtime_logical_execution_id ??
+        `TASK-EXECUTION:${boundTaskId.toUpperCase()}`;
+    }
     const isPmTarget =
       intent !== "chat" && (/^PM/i.test(agentId) || (await agentIsPmSeat(agentId)));
     let registryModelId: string | undefined;
@@ -11878,6 +11960,13 @@ export function buildWebPanelApp(
             ...(params.wakeId ? { wake_id: params.wakeId } : {}),
             ...(boundTaskId ? { task_id: boundTaskId } : {}),
             ...(boundThreadKey ? { thread_key: boundThreadKey } : {}),
+            ...(logicalExecutionId ? { logical_execution_id: logicalExecutionId } : {}),
+            ...(continuationOfSessionId
+              ? {
+                  continuation_of_session_id: continuationOfSessionId,
+                  continuation_reason: intent === "patrol" ? "pm_heartbeat" : "task_wake",
+                }
+              : {}),
           },
           ...(sessionImages.length > 0 ? { images: sessionImages } : {}),
         },
@@ -17415,8 +17504,104 @@ export function buildWebPanelApp(
   const executePmWakeDownstreamRaw: WakeDownstreamExecutor = async (plan) =>
     agentWakeMutex.run(plan.agent_id, async () => {
       const root = resolveProjectRoot();
+      // Compatibility fallback is deliberately conservative: historical
+      // persisted wake records represented task dispatch only. New governance
+      // paths must always write an explicit wake_kind.
+      const wakeKind = plan.wake_kind ?? "task_dispatch";
+
+      if (wakeKind === "report_intake") {
+        if (plan.role.toUpperCase() !== "PM") {
+          const error = "report_intake may only wake the PM governance role";
+          sseEmit("wake_agent.failed", {
+            wake_kind: wakeKind,
+            task_id: plan.task_id,
+            report_id: plan.report_id,
+            agent_id: plan.agent_id,
+            error,
+          });
+          return { ok: false, error, agent_id: plan.agent_id };
+        }
+
+        const sourceTaskId = plan.source_task_id || plan.task_id;
+        let reportAbs = "";
+        if (plan.report_id) {
+          const reportName = plan.report_id.endsWith(".md")
+            ? plan.report_id
+            : `${plan.report_id}.md`;
+          const exact = resolveReportPathForAfterWrite(root, reportName);
+          if (existsSync(exact)) reportAbs = exact;
+        }
+        if (!reportAbs) {
+          const reportRel = await findReportPathForTaskOnDisk({
+            projectRoot: root,
+            taskId: sourceTaskId,
+            reporter: "DEV",
+            reportRecipient: "PM",
+          }) ?? await findReportPathForTaskOnDisk({
+            projectRoot: root,
+            taskId: sourceTaskId,
+            reporter: "QA",
+            reportRecipient: "PM",
+          }) ?? await findReportPathForTaskOnDisk({
+            projectRoot: root,
+            taskId: sourceTaskId,
+            reporter: "OPS",
+            reportRecipient: "PM",
+          });
+          if (reportRel) reportAbs = pathResolve(root, reportRel);
+        }
+
+        if (reportAbs && runtime.reportDispatcher) {
+          try {
+            const content = readFileSync(reportAbs, "utf-8");
+            const fm = parseMarkdownFrontmatter(content);
+            const senderRole = String(fm["sender"] ?? fm["reporter"] ?? "")
+              .trim()
+              .toUpperCase();
+            if (!/^(DEV|QA|OPS)$/.test(senderRole)) {
+              throw new Error(`invalid worker REPORT sender: ${senderRole || "missing"}`);
+            }
+            const intake = await runtime.reportDispatcher.handle({
+              filepath: reportAbs,
+              filename: pathBasename(reportAbs),
+              senderRole,
+              content,
+            }, { skipLifecycleTransition: true });
+            const queued = intake.status === "queued";
+            sseEmit(queued ? "wake_agent.queued" : "wake_agent.accepted", {
+              wake_kind: wakeKind,
+              task_id: sourceTaskId,
+              report_id: plan.report_id ?? pathBasename(reportAbs),
+              agent_id: plan.agent_id,
+              thread_key: plan.thread_key,
+              intake_status: intake.status,
+            });
+            return {
+              ok: true,
+              ...(queued ? { queued: true } : {}),
+              ...(intake.status === "duplicate" ? { skipped: true } : {}),
+              reason: intake.status,
+              agent_id: plan.agent_id,
+            };
+          } catch (err) {
+            const error = err instanceof Error ? err.message : String(err);
+            sseEmit("wake_agent.failed", {
+              wake_kind: wakeKind,
+              task_id: sourceTaskId,
+              report_id: plan.report_id,
+              agent_id: plan.agent_id,
+              error,
+            });
+            return { ok: false, error, agent_id: plan.agent_id };
+          }
+        }
+        // A report-bound dispatcher is normally present. If an embedded host
+        // omits it, fall through to a direct governance Session; never route
+        // the immutable worker TASK through TaskDispatcher.
+      }
+
       let canonicalTaskPath: string | undefined;
-      if (plan.task_id) {
+      if (wakeKind === "task_dispatch" && plan.task_id) {
         try {
           canonicalTaskPath = findTaskFileByIdPrefix(root, plan.task_id)?.path;
         } catch {
@@ -17439,6 +17624,7 @@ export function buildWebPanelApp(
           directGate.reason === "agent_running" ||
           directGate.reason === "active_session";
         sseEmit("wake_agent.skipped", {
+          wake_kind: wakeKind,
           task_id: plan.task_id,
           agent_id: plan.agent_id,
           reason: running ? "agent_running" : directGate.reason,
@@ -17454,6 +17640,7 @@ export function buildWebPanelApp(
       }
 
       sseEmit("wake_agent.requested", {
+        wake_kind: wakeKind,
         task_id: plan.task_id,
         agent_id: plan.agent_id,
         role: plan.role,
@@ -17475,8 +17662,11 @@ export function buildWebPanelApp(
             text: wakeText,
             maxToolRounds: DEFAULT_SESSION_MAX_TOOL_ROUNDS,
             context: {
+              wake_kind: wakeKind,
               wake_reason: plan.reason,
               ...(plan.task_id ? { task_id: plan.task_id } : {}),
+              ...(plan.source_task_id ? { source_task_id: plan.source_task_id } : {}),
+              ...(plan.report_id ? { report_id: plan.report_id } : {}),
               ...(plan.thread_key ? { thread_key: plan.thread_key } : {}),
             },
             ...(sessionImages.length > 0 ? { images: sessionImages } : {}),
@@ -17488,6 +17678,7 @@ export function buildWebPanelApp(
         }
         noteSessionThinkingChannel(handle.session_id, "task");
         sseEmit("wake_agent.accepted", {
+          wake_kind: wakeKind,
           task_id: plan.task_id,
           agent_id: plan.agent_id,
           session_id: handle.session_id,
@@ -17814,11 +18005,27 @@ export function buildWebPanelApp(
         const taskPath = hit.path;
         const taskFilename =
           hit.path.split(/[/\\]/).pop() ?? `${plan.task_id}.md`;
+        const taskFm = parseMarkdownFrontmatter(readFileSync(taskPath, "utf-8"));
+        const actualTaskRecipient = (
+          strField(taskFm, "recipient") || strField(taskFm, "to")
+        ).trim().toUpperCase();
+        if (!actualTaskRecipient || actualTaskRecipient !== plan.role.toUpperCase()) {
+          const msg = actualTaskRecipient
+            ? `task dispatch role ${plan.role} does not match TASK recipient ${actualTaskRecipient}`
+            : `TASK recipient is missing for ${plan.task_id}`;
+          sseEmit("wake_agent.failed", {
+            wake_kind: wakeKind,
+            task_id: plan.task_id,
+            agent_id: plan.agent_id,
+            error: msg,
+          });
+          return { ok: false, error: msg, agent_id: plan.agent_id };
+        }
 
         const outcome = await runtime.dispatcher.dispatchTaskFromControlPlane(
           taskPath,
           taskFilename,
-          plan.role,
+          actualTaskRecipient,
           "pm_wake",
           {
             preferredAgentId: plan.agent_id,
@@ -18229,6 +18436,7 @@ export function buildWebPanelApp(
     reportCount: number;
     lastDispatchAt: number;
     oldestRootAt: number;
+    formalLongTask: boolean;
     digest: string;
   }> {
     const root = getProjectRoot();
@@ -18273,13 +18481,48 @@ export function buildWebPanelApp(
       downstream,
       reports: reports as unknown as Record<string, unknown>[],
     });
+    const focusTask = selectPmHeartbeatFocus(activeRoots);
+    let formalLongTask = false;
+    const focusTaskId = rowText(focusTask ?? {}, "task_id");
+    if (focusTaskId) {
+      const taskHit = findTaskFileByIdPrefix(root, focusTaskId);
+      if (taskHit?.path) {
+        try {
+          const fm = parseMarkdownFrontmatter(readFileSync(taskHit.path, "utf8"));
+          const longFlag = String(fm["long_horizon_required"] ?? "").trim().toLowerCase();
+          const planningMethod = String(fm["planning_method"] ?? "").trim().toLowerCase();
+          const taskClass = String(
+            fm["task_classification"] ?? fm["task_class"] ?? fm["execution_class"] ?? "",
+          ).trim().toLowerCase();
+          const planningLevel = Number(fm["planning_level"] ?? fm["pm_planning_level"] ?? 0);
+          const wpId = String(fm["wp_id"] ?? fm["work_package"] ?? "").trim();
+          const planningGateStatus = String(fm["planning_gate_status"] ?? "").trim().toLowerCase();
+          formalLongTask =
+            longFlag === "true" ||
+            longFlag === "yes" ||
+            planningMethod === "long_horizon" ||
+            planningMethod === "long-horizon" ||
+            planningLevel === 3 ||
+            Boolean(wpId) ||
+            ["long_horizon", "long-horizon", "long_task", "long-task"].includes(taskClass) ||
+            ["pending", "approved", "changes_requested", "paused", "replan", "stale"].includes(
+              planningGateStatus,
+            );
+        } catch {
+          // A malformed task must be handled by admission; heartbeat never
+          // guesses a long-task classification from age or prose.
+          formalLongTask = false;
+        }
+      }
+    }
     return {
       activeRoots,
-      focusTask: selectPmHeartbeatFocus(activeRoots),
+      focusTask,
       downstream,
       reportCount: reports.length,
       lastDispatchAt,
       oldestRootAt: Number.isFinite(oldestRootAt) ? oldestRootAt : 0,
+      formalLongTask,
       digest,
     };
   }
@@ -18296,7 +18539,20 @@ export function buildWebPanelApp(
     const persistTick = (
       status: "accepted" | "skipped" | "failed",
       skipReason?: string,
-      extra: { taskId?: string; inputDigest?: string; wakeId?: string; wakeHttpStatus?: string | number; sessionId?: string; detail?: string } = {},
+      extra: {
+        taskId?: string;
+        inputDigest?: string;
+        wakeId?: string;
+        wakeHttpStatus?: string | number;
+        sessionId?: string;
+        detail?: string;
+        transportStatus?: import("./pm-heartbeat-state.ts").PmHeartbeatTickRecord["transport_status"];
+        policyCode?: string;
+        businessState?: string;
+        findingIds?: string[];
+        responseSummary?: string;
+        projectContext?: import("./pm-heartbeat-state.ts").PmHeartbeatTickRecord["project_context"];
+      } = {},
     ): void => {
       registerPmHeartbeatTick(heartbeatState, {
         tick_id: tickId,
@@ -18313,15 +18569,25 @@ export function buildWebPanelApp(
         ...(extra.wakeHttpStatus != null ? { wake_http_status: extra.wakeHttpStatus } : {}),
         ...(extra.sessionId ? { session_id: extra.sessionId } : {}),
         ...(extra.detail ? { detail: extra.detail } : {}),
+        ...(extra.transportStatus ? { transport_status: extra.transportStatus } : {}),
+        ...(extra.policyCode ? { policy_code: extra.policyCode } : {}),
+        ...(extra.businessState ? { business_state: extra.businessState } : {}),
+        ...(extra.findingIds?.length ? { finding_ids: extra.findingIds } : {}),
+        ...(extra.responseSummary ? { response_summary: extra.responseSummary } : {}),
+        ...(extra.projectContext ? { project_context: extra.projectContext } : {}),
       });
       writePmHeartbeatState(root, heartbeatState);
     };
     const activeSessions = await runtime.sessionManager.listActive();
+    let snap: Awaited<ReturnType<typeof buildPmHeartbeatSnapshot>> | null = null;
     const activePmSession = activeSessions.find(
       (session) => String(session.protocol.agent_id ?? "").toUpperCase() === "PM-01",
     );
     if (activePmSession) {
       observedActiveSession = activePmSession.protocol.session_id;
+      snap = await buildPmHeartbeatSnapshot().catch(() => null);
+      const activeFocusTaskId = rowText(snap?.focusTask ?? {}, "task_id");
+      const activeFocusThreadKey = rowText(snap?.focusTask ?? {}, "thread_key");
       const lastActivityMs = Date.parse(
         activePmSession.runtime_last_event_at ?? activePmSession.protocol.started_at ?? "",
       );
@@ -18341,6 +18607,24 @@ export function buildWebPanelApp(
           required_action: "AGENT_OR_ADMIN_INSPECTION",
         });
       }
+      if (!stalled && snap && activeFocusTaskId && snap.activeRoots.length > 0) {
+        const pending = mergePmHeartbeatContinuationIntent(heartbeatState, {
+          task_id: activeFocusTaskId,
+          ...(activeFocusThreadKey ? { thread_key: activeFocusThreadKey } : {}),
+          input_digest: snap.digest,
+          observed_at: observedAt,
+          active_session: observedActiveSession,
+        });
+        persistTick("accepted", "pm_session_active_continuation_merged", {
+          taskId: activeFocusTaskId,
+          inputDigest: snap.digest,
+          sessionId: observedActiveSession,
+          transportStatus: "ok",
+          businessState: "continuation_merged",
+          detail: `logical continuation queued; merge_count=${pending.merge_count}`,
+        });
+        return;
+      }
       persistTick("skipped", stalled ? "pm_session_stuck" : "pm_session_active", {
         sessionId: observedActiveSession,
         ...(stalled ? { detail: "stalled session retained; inspection notification emitted" } : {}),
@@ -18353,7 +18637,7 @@ export function buildWebPanelApp(
       persistTick("skipped", "pm_queue_busy");
       return;
     }
-    const snap = await buildPmHeartbeatSnapshot().catch(() => null);
+    snap = await buildPmHeartbeatSnapshot().catch(() => null);
     if (!snap) {
       persistTick("failed", "snapshot_failed");
       return;
@@ -18462,6 +18746,7 @@ export function buildWebPanelApp(
       activeRootCount: snap.activeRoots.length,
       lastDispatchAtMs: snap.lastDispatchAt,
       oldestRootAtMs: snap.oldestRootAt,
+      formalLongTask: snap.formalLongTask,
       digest: snap.digest,
     });
     if (!decision.shouldRun) {
@@ -18472,12 +18757,18 @@ export function buildWebPanelApp(
     const focusTitle =
       rowText(snap.focusTask ?? {}, "subject") ||
       rowText(snap.focusTask ?? {}, "title");
+    const pendingContinuation = focusTaskId
+      ? heartbeatState.pending_continuations[focusTaskId.toUpperCase()]
+      : undefined;
     const message = [
       focusTaskId
         ? `PM 自动恢复：优先处理当前最新未收口叶子任务 ${focusTaskId}${focusTitle ? `（${focusTitle}）` : ""}。这是正式待执行任务，不是泛化巡检；请先读取该 TASK 正文并完成其要求。`
         : "PM 自动巡检：请检查当前进行中的主任务、下游回执、待汇总报告和需要催办项。",
       "如果下游已回执，请完成 review_check / 汇总报告 / 提交 ADMIN 验收；如果超过阈值无回执，请自动催办下游。",
       "请用中文简短汇报变化；没有变化时只说明当前等待点。自动巡检结论由 Runtime 写入治理日志，禁止为巡检、等待或重复催办调用 write_report。只有正式下游回执、明确终态阻塞升级或 PM 最终汇总才生成 REPORT。",
+      ...(pendingContinuation
+        ? [`已有 PM Session 活跃期间合并了 ${pendingContinuation.merge_count} 次同任务续办意图；请以当前磁盘事实继续该 logical execution。`]
+        : []),
     ].join("\n");
     const response = await fetch(`${panelUrl}/api/v2/agents/PM-01/wake`, {
       method: "POST",
@@ -18500,17 +18791,66 @@ export function buildWebPanelApp(
       return null;
     });
     if (!response) {
-      persistTick("failed", "wake_http_failed", { taskId: focusTaskId, inputDigest: snap.digest, wakeId, wakeHttpStatus: "network_error" });
+      persistTick("failed", "wake_http_failed", {
+        taskId: focusTaskId,
+        inputDigest: snap.digest,
+        wakeId,
+        wakeHttpStatus: "network_error",
+        transportStatus: "network_error",
+      });
       return;
     }
     if (!response.ok) {
-      persistTick("failed", `wake_http_${response.status}`, { taskId: focusTaskId, inputDigest: snap.digest, wakeId, wakeHttpStatus: response.status });
+      const rawError = await response.text().catch(() => "");
+      let payload: Record<string, unknown> = {};
+      try { payload = JSON.parse(rawError) as Record<string, unknown>; } catch { /* text summary retained */ }
+      const findings = Array.isArray(payload["blocking_findings"])
+        ? payload["blocking_findings"] as Array<Record<string, unknown>>
+        : [];
+      const diagnostics = payload["diagnostics"] && typeof payload["diagnostics"] === "object"
+        ? payload["diagnostics"] as Record<string, unknown>
+        : {};
+      const policyCode = String(payload["code"] ?? `HTTP_${response.status}`).trim();
+      const findingIds = findings
+        .map((finding) => String(finding["finding_id"] ?? finding["id"] ?? "").trim())
+        .filter(Boolean);
+      const responseSummary = String(payload["error"] ?? rawError ?? "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 1000);
+      persistTick("failed", "wake_policy_rejected", {
+        taskId: focusTaskId,
+        inputDigest: snap.digest,
+        wakeId,
+        wakeHttpStatus: response.status,
+        transportStatus: "http_error",
+        policyCode,
+        businessState: policyCode === "AGENT_BUSY" ? "agent_busy" : "continuation_rejected",
+        findingIds,
+        responseSummary,
+        projectContext: {
+          project_root: String(diagnostics["project_root"] ?? root),
+          project_context_id: String(diagnostics["project_context_id"] ?? "") || undefined,
+          project_context_digest: String(diagnostics["project_context_digest"] ?? "") || undefined,
+          proof_path: String(diagnostics["proof_path"] ?? "") || undefined,
+          submission_path: diagnostics["submission_path"] == null
+            ? null
+            : String(diagnostics["submission_path"]),
+          validation_stage: String(diagnostics["validation_stage"] ?? "") || undefined,
+        },
+      });
       return;
     }
     const accepted = await response.json().catch(() => null) as Record<string, unknown> | null;
     const sessionId = String(accepted?.["session_id"] ?? "").trim();
     if (accepted?.["ok"] !== true || !sessionId) {
-      persistTick("failed", "wake_response_invalid", { taskId: focusTaskId, inputDigest: snap.digest, wakeId, wakeHttpStatus: response.status });
+      persistTick("failed", "wake_response_invalid", {
+        taskId: focusTaskId,
+        inputDigest: snap.digest,
+        wakeId,
+        wakeHttpStatus: response.status,
+        transportStatus: "invalid_response",
+      });
       return;
     }
     registerAcceptedPmHeartbeatWake(heartbeatState, {
@@ -18523,7 +18863,16 @@ export function buildWebPanelApp(
       started_at: new Date(now).toISOString(),
       business_progress_digest_before: snap.digest,
     });
-    persistTick("accepted", undefined, { taskId: focusTaskId, inputDigest: snap.digest, wakeId, wakeHttpStatus: response.status, sessionId });
+    if (focusTaskId) consumePmHeartbeatContinuationIntent(heartbeatState, focusTaskId);
+    persistTick("accepted", undefined, {
+      taskId: focusTaskId,
+      inputDigest: snap.digest,
+      wakeId,
+      wakeHttpStatus: response.status,
+      sessionId,
+      transportStatus: "ok",
+      businessState: "continuation_started",
+    });
   }
 
   function restartPmHeartbeatScheduler(): void {

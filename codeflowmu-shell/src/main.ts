@@ -58,6 +58,7 @@ import {
   PlanScheduler,
   FixedTaskRunner,
   buildDefaultRules,
+  createProjectExecutionContext,
   plantPmSkillManifestIfMissing,
   plantAgentSkillsManifestIfMissing,
 } from "@codeflowmu/runtime";
@@ -90,6 +91,7 @@ import {
   ensureRuntimeInstance,
   loadRuntimeInstance,
   parseRuntimeLaunchArgs,
+  resolveRuntimeHostRoot,
   runtimeInstanceBelongsHere,
   runtimeInstanceRegistryPath,
   runtimeInstanceStateRoot,
@@ -309,11 +311,18 @@ function resolveOpenEditionHostRoot(): string | null {
 
 async function main(): Promise<void> {
   const launchArgs = parseRuntimeLaunchArgs();
-  const hostRoot = pathResolve(
-    process.env["CODEFLOWMU_HOST_ROOT"]?.trim() ||
-      resolveOpenEditionHostRoot() ||
-      dirname(SHELL_PKG_ROOT),
-  );
+  const hostRootResolution = resolveRuntimeHostRoot({
+    shellPackageRoot: SHELL_PKG_ROOT,
+    inheritedHostRoot: process.env["CODEFLOWMU_HOST_ROOT"],
+    openEditionHostRoot: resolveOpenEditionHostRoot(),
+  });
+  const hostRoot = hostRootResolution.root;
+  if (hostRootResolution.ignored_inherited_root) {
+    consoleLogger.warn(
+      `[shell] ignored foreign CODEFLOWMU_HOST_ROOT=${hostRootResolution.ignored_inherited_root}; ` +
+        `installed host_root=${hostRoot}`,
+    );
+  }
   process.env["CODEFLOWMU_HOST_ROOT"] = hostRoot;
   const priorDataDirOverride = Boolean(
     launchArgs.dataDir || process.env["CODEFLOW_DATA_DIR"]?.trim(),
@@ -705,12 +714,21 @@ async function main(): Promise<void> {
       : {}),
   };
 
+  const runtimeProjectRoot = projectBindingPlan?.runtimeProjectRoot ?? _earlyProjectRoot;
+  const runtimeProjectContext = createProjectExecutionContext({
+    projectRoot: runtimeProjectRoot,
+    runtimeInstanceId: activeRuntimeInstance.instance_id,
+    hostRoot,
+    registryPath: runtimeInstanceRegistryPath(activeRuntimeInstance.instance_id),
+    dataRoot: dataDir,
+  });
   const runtime = await Runtime.create({
     sdkAdapter,
     persistDir: dataDir,
     inboxDir,
     skillsDir,
     logger: consoleLogger,
+    projectExecutionContext: runtimeProjectContext,
     ...(mcpBridgeCfg.pythonBin && mcpBridgeCfg.projectRoot
       ? {
           resolveMcpServers: ({ agentId, layer, sessionId, currentTaskId }) =>

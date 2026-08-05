@@ -203,10 +203,17 @@ export interface ReviewCheckInput {
   report_id?: string;
 }
 
+export type WakeKind = "task_dispatch" | "report_intake" | "governance_resume";
+
 export interface WakeDownstreamRequest {
+  wake_kind: WakeKind;
   role: string;
   agent_id: string;
   task_id: string;
+  /** Immutable worker TASK that produced a REPORT; used only by report intake. */
+  source_task_id?: string;
+  /** Immutable worker REPORT being handed to PM for governance review. */
+  report_id?: string;
   thread_key: string | null;
   reason: string;
   source?: string;
@@ -218,8 +225,11 @@ export interface WakeDownstreamRequest {
   journal_entry: {
     at: string;
     action: "wake_agent";
+    wake_kind: WakeKind;
     role: string;
     task_id: string;
+    source_task_id?: string;
+    report_id?: string;
     thread_key: string | null;
     reason: string;
     operator: "PM";
@@ -1370,6 +1380,7 @@ export function buildWakeDownstreamRequest(opts: {
   ].join("\n");
 
   return {
+    wake_kind: "task_dispatch",
     role,
     agent_id: agentId,
     task_id: taskId,
@@ -1384,6 +1395,7 @@ export function buildWakeDownstreamRequest(opts: {
     journal_entry: {
       at,
       action: "wake_agent",
+      wake_kind: "task_dispatch",
       role,
       task_id: taskId,
       thread_key: threadKey,
@@ -1426,9 +1438,12 @@ export function buildPmReportIntakeWakeRequest(opts: {
   ].join("\n");
 
   return {
+    wake_kind: "report_intake",
     role,
     agent_id: agentId,
     task_id: taskId,
+    source_task_id: taskId,
+    ...(reportId ? { report_id: reportId } : {}),
     thread_key: threadKey,
     reason,
     intent: "wake",
@@ -1437,8 +1452,11 @@ export function buildPmReportIntakeWakeRequest(opts: {
     journal_entry: {
       at,
       action: "wake_agent",
+      wake_kind: "report_intake",
       role,
       task_id: taskId,
+      source_task_id: taskId,
+      ...(reportId ? { report_id: reportId } : {}),
       thread_key: threadKey,
       reason: `pm_report_intake:${reason}`,
       operator: "PM",
@@ -1514,6 +1532,7 @@ export function buildAdminRejectPmWakeRequest(opts: {
       ].join("\n");
 
   return {
+    wake_kind: "governance_resume",
     role,
     agent_id: agentId,
     task_id: taskId,
@@ -1525,6 +1544,7 @@ export function buildAdminRejectPmWakeRequest(opts: {
     journal_entry: {
       at,
       action: "wake_agent",
+      wake_kind: "governance_resume",
       role,
       task_id: taskId,
       thread_key: threadKey,

@@ -13,6 +13,7 @@ import { test } from "node:test";
 import {
   ensureRuntimeInstance,
   parseRuntimeLaunchArgs,
+  resolveRuntimeHostRoot,
   runtimeInstancePath,
   runtimeInstanceRegistryPath,
   runtimeInstanceStateRoot,
@@ -137,6 +138,40 @@ test("runtime launch args expose first-class isolation controls", () => {
   assert.equal(parsed.dataDir, join(cwd, "runtime-data"));
   assert.equal(parsed.registryPath, join(cwd, "registry.json"));
   assert.equal(parsed.noGateway, true);
+});
+
+test("candidate code root ignores an inherited stable CODEFLOWMU_HOST_ROOT", () => {
+  const sandbox = mkdtempSync(join(tmpdir(), "cf-runtime-host-root-"));
+  const stable = join(sandbox, "stable");
+  const candidateShell = join(sandbox, "candidate", "codeflowmu-shell");
+  mkdirSync(stable, { recursive: true });
+  mkdirSync(candidateShell, { recursive: true });
+  try {
+    const result = resolveRuntimeHostRoot({
+      shellPackageRoot: candidateShell,
+      inheritedHostRoot: stable,
+    });
+    assert.equal(result.root, join(sandbox, "candidate"));
+    assert.equal(result.source, "installed_code");
+    assert.equal(result.ignored_inherited_root, stable);
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true });
+  }
+});
+
+test("Open Edition explicit host root remains authoritative", () => {
+  const sandbox = mkdtempSync(join(tmpdir(), "cf-runtime-open-host-"));
+  try {
+    const result = resolveRuntimeHostRoot({
+      shellPackageRoot: join(sandbox, "copied", "codeflowmu-shell"),
+      inheritedHostRoot: join(sandbox, "stable"),
+      openEditionHostRoot: join(sandbox, "open"),
+    });
+    assert.equal(result.root, join(sandbox, "open"));
+    assert.equal(result.source, "open_edition");
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true });
+  }
 });
 
 test("same project and FCoP root reject a second live writer", () => {

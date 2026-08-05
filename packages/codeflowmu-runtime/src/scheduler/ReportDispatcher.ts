@@ -34,6 +34,8 @@ import {
 } from "../_internal/SdkCooldownRegistry.ts";
 import { formatPmBuiltinSkillsPlaybookBlock } from "../pm/PmSkillManifest.ts";
 import type { PmQueueGuard } from "./PmQueueGuard.ts";
+import { parseMarkdownFrontmatter, strField } from "../ledger/frontmatter.ts";
+import { appendWakeJournal } from "../pm/PmGovernanceActions.ts";
 
 const MAX_QUEUE = 50;
 
@@ -44,6 +46,8 @@ export interface ReportDispatcherOpts {
   fcopTasksDir?: string;
   /** fcop/reports/ */
   fcopReportsDir?: string;
+  /** Active project root used for the durable report-intake audit journal. */
+  projectRoot?: string;
   /** Async TASK inbox/active → review when a worker REPORT arrives. */
   lifecycleGovernor?: LifecycleGovernor;
   /** PM queue busy guard — releases stale/failed drain states. */
@@ -55,11 +59,18 @@ export interface ReportDispatcherOpts {
   };
 }
 
+export interface ReportIntakeResult {
+  wake_kind: "report_intake";
+  status: "started" | "queued" | "duplicate" | "ignored";
+  filename: string;
+}
+
 export class ReportDispatcher {
   private readonly _registry: AgentRegistry;
   private readonly _session: SessionManager;
   private readonly _fcopTasksDir: string | undefined;
   private readonly _fcopReportsDir: string | undefined;
+  private readonly _projectRoot: string | undefined;
   private readonly _lifecycleGovernor: LifecycleGovernor | undefined;
   private readonly _pmQueueGuard: PmQueueGuard | undefined;
   private readonly _log: NonNullable<ReportDispatcherOpts["logger"]>;
@@ -71,6 +82,9 @@ export class ReportDispatcher {
   /** Parallel metadata array for monitoring (filename + queuedAt timestamp). */
   private readonly _queueMeta: Array<{ filename: string; senderRole: string; queuedAt: number }> = [];
   private readonly _nextBatchMeta: Array<{ filename: string; senderRole: string; queuedAt: number }> = [];
+  /** REPORTs already handed to a PM governance session in this Runtime. */
+  private readonly _acceptedReports = new Set<string>();
+  private readonly _acceptedReportOrder: string[] = [];
   /** Prevents concurrent drains racing each other. */
   private _draining = false;
 
@@ -79,6 +93,7 @@ export class ReportDispatcher {
     this._session = opts.sessionManager;
     this._fcopTasksDir = opts.fcopTasksDir;
     this._fcopReportsDir = opts.fcopReportsDir;
+    this._projectRoot = opts.projectRoot;
     this._lifecycleGovernor = opts.lifecycleGovernor;
     this._pmQueueGuard = opts.pmQueueGuard;
     this._log = opts.logger ?? {};
@@ -137,9 +152,20 @@ export class ReportDispatcher {
 
   private _isDuplicateQueued(filename: string): boolean {
     return (
+      this._acceptedReports.has(filename) ||
       this._queue.some((q) => q.filename === filename) ||
       this._nextBatch.some((q) => q.filename === filename)
     );
+  }
+
+  private _rememberAccepted(filename: string): void {
+    if (this._acceptedReports.has(filename)) return;
+    this._acceptedReports.add(filename);
+    this._acceptedReportOrder.push(filename);
+    while (this._acceptedReportOrder.length > 1_000) {
+      const oldest = this._acceptedReportOrder.shift();
+      if (oldest) this._acceptedReports.delete(oldest);
+    }
   }
 
   private _mergeNextBatchIntoQueue(): void {
@@ -177,36 +203,65 @@ export class ReportDispatcher {
   }
 
   /** Enqueue a report and immediately attempt to drain. */
-  async handle(evt: ReportEvent): Promise<void> {
+  async handle(
+    evt: ReportEvent,
+    options: { skipLifecycleTransition?: boolean } = {},
+  ): Promise<ReportIntakeResult> {
     if (shouldIgnoreCoordinationWatchPath(evt.filepath)) {
       this._log.info?.(
         `[ReportDispatcher] ignore ephemeral report path: ${evt.filename}`,
       );
-      return;
+      return { wake_kind: "report_intake", status: "ignored", filename: evt.filename };
     }
     if (isGovernanceReportToPm(evt.filename, evt.senderRole)) {
       this._log.info?.(
         `[ReportDispatcher] skip governance report (not for PM): ${evt.filename}`,
       );
-      return;
+      return { wake_kind: "report_intake", status: "ignored", filename: evt.filename };
     }
     if (this._isDuplicateQueued(evt.filename)) {
       this._log.info?.(
         `[ReportDispatcher] skip duplicate queued report: ${evt.filename}`,
       );
-      return;
+      return { wake_kind: "report_intake", status: "duplicate", filename: evt.filename };
     }
     this._enqueueReport(evt);
+    if (this._projectRoot) {
+      const sourceTaskId = _sourceTaskIdForEvent(evt);
+      await appendWakeJournal(this._projectRoot, {
+        at: new Date().toISOString(),
+        action: "wake_agent",
+        wake_kind: "report_intake",
+        role: "PM",
+        task_id: sourceTaskId,
+        ...(sourceTaskId ? { source_task_id: sourceTaskId } : {}),
+        report_id: evt.filename.replace(/\.md$/i, ""),
+        thread_key: _threadKeyForEvent(evt),
+        reason: "report_arrival",
+        operator: "PM",
+      }).catch((err) => {
+        this._log.warn?.(
+          `[ReportDispatcher] report-intake audit append failed: ${String(err)}`,
+        );
+      });
+    }
     if (/^(DEV|OPS|QA)$/i.test(evt.senderRole)) {
       this._pmQueueGuard?.clearWaitingDownstream();
       this._pmQueueGuard?.clearAutoNudge();
     }
-    this._lifecycleGovernor?.scheduleTaskToReviewOnReport(evt.filepath);
+    if (!options.skipLifecycleTransition) {
+      this._lifecycleGovernor?.scheduleTaskToReviewOnReport(evt.filepath);
+    }
     const depth = this._queue.length + this._nextBatch.length;
     this._log.info?.(
-      `[ReportDispatcher] queued ${evt.filename} (queue depth: ${depth}${this.isPmRunning() ? ", PM running → next batch" : ""})`,
+      `[ReportDispatcher] wake_kind=report_intake queued ${evt.filename} (queue depth: ${depth}${this.isPmRunning() ? ", PM running → next batch" : ""})`,
     );
     await this._drain();
+    return {
+      wake_kind: "report_intake",
+      status: this._acceptedReports.has(evt.filename) ? "started" : "queued",
+      filename: evt.filename,
+    };
   }
 
   /** Process as many queued reports as PM can accept right now. */
@@ -247,9 +302,18 @@ export class ReportDispatcher {
         const pmId = pm.protocol.agent_id;
         const batchKey = _batchKey(batch);
         const taskId = `consolidate-${batchKey}-${Date.now()}`;
+        const sourceTaskIds = [
+          ...new Set(batch.map(_sourceTaskIdForEvent).filter(Boolean)),
+        ];
+        const reportIds = batch.map((report) => report.filename.replace(/\.md$/i, ""));
         const payload = {
           text: _buildConsolidationPrompt(batch, this._fcopTasksDir, this._fcopReportsDir),
           context: {
+            wake_kind: "report_intake",
+            source_task_id: sourceTaskIds[0] ?? null,
+            report_id: reportIds[0] ?? null,
+            source_task_ids: sourceTaskIds,
+            report_ids: reportIds,
             task_filepath: evt.filepath,
             task_filename: batch.map((b) => b.filename).join(","),
             frontmatter: {
@@ -263,9 +327,10 @@ export class ReportDispatcher {
 
         try {
           await this._session.startSession(pmId, taskId, payload);
+          for (const report of batch) this._rememberAccepted(report.filename);
           this._setPmRunning(true, "session_started");
           this._log.info?.(
-            `[ReportDispatcher] PM-01 batch session started for ${batch.length} report(s) ` +
+            `[ReportDispatcher] wake_kind=report_intake PM-01 batch session started for ${batch.length} report(s) ` +
               `(${this._queue.length} pending, ${this._nextBatch.length} next batch)`,
           );
           // PM is now running — stop loop; next item will be handled after session ends.
@@ -404,6 +469,11 @@ ${formatPmBuiltinSkillsPlaybookBlock()}
 - If closure is achieved: one PM->ADMIN \`write_report\`
 - If a terminal blocker must be escalated: one PM->ADMIN \`write_report(status=blocked)\`
 - Otherwise: **do not call write_report**. Return a concise session conclusion only; Runtime already persists report-intake and patrol decisions in the PM governance journal.`;
+}
+
+function _sourceTaskIdForEvent(evt: ReportEvent): string {
+  const fm = parseMarkdownFrontmatter(evt.content);
+  return strField(fm, "task_id") || strField(fm, "source_task_id");
 }
 
 function _threadKeyForEvent(evt: ReportEvent): string {

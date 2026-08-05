@@ -202,7 +202,7 @@ describe("ReportActionResolver", () => {
       const inboxNames = await readdir(join(lifecycleRoot, "inbox"));
       const reworkFile = inboxNames.find((n) => n.includes("-rework-"));
       assert.ok(reworkFile, "expected rework TASK in inbox");
-      assert.match(reworkFile!, /^TASK-20260605-002-/);
+      assert.match(reworkFile!, /^TASK-20260605-004-/);
       const raw = await readFile(join(lifecycleRoot, "inbox", reworkFile!), "utf-8");
       const fm = parseMarkdownFrontmatter(raw);
       assert.match(
@@ -217,7 +217,7 @@ describe("ReportActionResolver", () => {
     });
   });
 
-  it("rework limit reached writes ISSUE with REWORK_LIMIT_REACHED", async () => {
+  it("rework limit reached routes to PM without creating a blocking ISSUE", async () => {
     await withTempLifecycle(async ({ lifecycleRoot, rootDir }) => {
       await ensureLedgerLayout(rootDir);
       const parentId = "TASK-20260605-004-ADMIN-to-DEV";
@@ -259,17 +259,14 @@ describe("ReportActionResolver", () => {
       );
       const gov = mockGovernor();
       const outcome = await resolver(rootDir, gov).resolve(reportPath);
-      assert.equal(outcome, "issue_created");
+      assert.equal(outcome, "waiting_pm_attention");
 
       const issueNames = await readdir(join(rootDir, "fcop", "issues"));
-      const issueFile = issueNames.find((n) => n.startsWith("ISSUE-"));
-      assert.ok(issueFile);
-      const issueRaw = await readFile(
-        join(rootDir, "fcop", "issues", issueFile!),
-        "utf-8",
+      assert.equal(issueNames.some((n) => n.startsWith("ISSUE-")), false);
+      const source = parseMarkdownFrontmatter(
+        await readFile(join(lifecycleRoot, "active", `${parentId}.md`), "utf-8"),
       );
-      const issueFm = parseMarkdownFrontmatter(issueRaw);
-      assert.equal(issueFm.alert_code, "REWORK_LIMIT_REACHED");
+      assert.equal(source.display_status, "waiting_pm_attention");
     });
   });
 
@@ -420,6 +417,38 @@ describe("ReportActionResolver", () => {
     });
   });
 
+  it("legacy Python-like references with source_task_id do not create a false ISSUE", async () => {
+    await withTempLifecycle(async ({ lifecycleRoot, rootDir }) => {
+      await ensureLedgerLayout(rootDir);
+      const taskId = "TASK-20260731-002";
+      await writeTaskAt(lifecycleRoot, "active", `${taskId}-PM-to-DEV.md`, {
+        protocol: "fcop",
+        version: 1,
+        kind: "task",
+        sender: "PM",
+        recipient: "DEV",
+        task_id: taskId,
+      });
+      const reportPath = await writeReportAt(
+        lifecycleRoot,
+        "REPORT-20260731-002-DEV-to-PM.md",
+        {
+          sender: "DEV",
+          recipient: "PM",
+          status: "done",
+          source_task_id: taskId,
+          task_id: taskId,
+          references: `['${taskId}']`,
+        },
+      );
+      const gov = mockGovernor();
+      const outcome = await resolver(rootDir, gov).resolve(reportPath);
+      assert.notEqual(outcome, "issue_created");
+      const issueNames = await readdir(join(rootDir, "fcop", "issues"));
+      assert.equal(issueNames.some((name) => name.endsWith("-REPORT-action.md")), false);
+    });
+  });
+
   it("QA missing acceptance evidence is rejected and creates a QA rework task", async () => {
     await withTempLifecycle(async ({ lifecycleRoot, rootDir }) => {
       resetActionEventIdCounterForTests();
@@ -454,9 +483,9 @@ describe("ReportActionResolver", () => {
       const rejectedReport = parseMarkdownFrontmatter(
         await readFile(reportPath, "utf-8"),
       );
-      assert.equal(rejectedReport.status, "rejected");
-      assert.equal(rejectedReport.valid, false);
-      assert.equal(rejectedReport.invalidated_by, "REVIEW-GATE");
+      assert.equal(rejectedReport.status, "done", "REPORT business conclusion stays immutable");
+      assert.equal(rejectedReport.valid, undefined);
+      assert.equal(rejectedReport.invalidated_by, undefined);
 
       const sourceTask = parseMarkdownFrontmatter(
         await readFile(join(lifecycleRoot, "done", `${taskId}.md`), "utf-8"),
@@ -473,11 +502,49 @@ describe("ReportActionResolver", () => {
       assert.equal(reworkFm.recipient, "QA");
       assert.equal(reworkFm.thread_key, "panel-task-001");
       assert.equal(sourceTask.superseded_by, reworkFm.task_id);
-      assert.equal(rejectedReport.superseded_by, reworkFm.task_id);
+      assert.equal(rejectedReport.superseded_by, undefined);
       assert.match(
         String(reworkFm.task_id),
         /^TASK-\d{8}-\d{3}-PM-to-QA-rework-1$/,
       );
+    });
+  });
+
+  it("QA business FAIL never settles lifecycle or rewrites the REPORT", async () => {
+    await withTempLifecycle(async ({ lifecycleRoot, rootDir }) => {
+      await ensureLedgerLayout(rootDir);
+      const taskId = "TASK-20260712-004-PM-to-QA";
+      await writeTaskAt(lifecycleRoot, "active", `${taskId}.md`, {
+        protocol: "fcop",
+        version: 1,
+        kind: "task",
+        task_id: "TASK-20260712-004",
+        sender: "PM",
+        recipient: "QA",
+        thread_key: "panel-task-002",
+      });
+      const reportPath = await writeReportAt(
+        lifecycleRoot,
+        "REPORT-20260712-004-QA-to-PM.md",
+        {
+          sender: "QA",
+          recipient: "PM",
+          status: "done",
+          action_request: "submit_task",
+          task_id: "TASK-20260712-004",
+        },
+        "# QA Report\n\n## 结论\n\n**FAIL**\n",
+      );
+      const before = await readFile(reportPath, "utf-8");
+      const gov = mockGovernor();
+      const outcome = await resolver(rootDir, gov).resolve(reportPath);
+      assert.equal(outcome, "waiting_pm_attention");
+      assert.deepEqual(gov.scheduled, []);
+      assert.equal(await readFile(reportPath, "utf-8"), before);
+      const source = parseMarkdownFrontmatter(
+        await readFile(join(lifecycleRoot, "active", `${taskId}.md`), "utf-8"),
+      );
+      assert.equal(source.display_status, "waiting_pm_attention");
     });
   });
 
@@ -629,8 +696,18 @@ describe("ReportActionResolver", () => {
       assert.equal(issueFm.source_report, "REPORT-20260605-007-PM-blocked");
       assert.equal(issueFm.source_task, taskId);
       assert.equal(issueFm.thread_key, threadKey);
-      assert.equal(issueFm.owner, "ADMIN");
-      assert.equal(issueFm.severity, "medium");
+      assert.equal(issueFm.owner, "PM");
+      assert.equal(issueFm.handling_role, "PM");
+      assert.equal(issueFm.blocking, true);
+      assert.equal(issueFm.blocking_level, "blocking");
+      assert.equal(issueFm.severity, "high");
+      const taskFm = parseMarkdownFrontmatter(
+        await readFile(join(lifecycleRoot, "active", `${taskId}.md`), "utf-8"),
+      );
+      assert.equal(taskFm.display_status, "blocked");
+      assert.equal(taskFm.dispatch_state, "blocked");
+      assert.equal(taskFm.issue_blocking, true);
+      assert.equal(taskFm.blocking_issue_id, issueFm.issue_id);
       assert.match(issueRaw, /## 问题摘要/);
       assert.match(issueRaw, /QA 验证未通过/);
       assert.match(issueRaw, /## 影响范围/);

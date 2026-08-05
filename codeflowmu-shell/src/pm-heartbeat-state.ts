@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -31,6 +31,15 @@ export type PmHeartbeatFuse = {
   alert_emitted: boolean;
 };
 
+export type PmHeartbeatContinuationIntent = {
+  task_id: string;
+  thread_key?: string;
+  input_digest: string;
+  observed_at: string;
+  active_session: string;
+  merge_count: number;
+};
+
 export type PmHeartbeatTickRecord = {
   tick_id: string;
   observed_at: string;
@@ -44,8 +53,24 @@ export type PmHeartbeatTickRecord = {
   active_session?: string;
   queue_guard?: Record<string, unknown>;
   wake_http_status?: string | number;
+  transport_status?: "ok" | "http_error" | "network_error" | "invalid_response";
+  policy_code?: string;
+  business_state?: string;
+  finding_ids?: string[];
+  response_summary?: string;
+  project_context?: {
+    project_root?: string;
+    project_context_id?: string;
+    project_context_digest?: string;
+    proof_path?: string;
+    submission_path?: string | null;
+    validation_stage?: string;
+  };
   session_id?: string;
   detail?: string;
+  finding_digest?: string;
+  repeat_count?: number;
+  last_observed_at?: string;
 };
 
 export type PmHeartbeatState = {
@@ -55,6 +80,7 @@ export type PmHeartbeatState = {
   wakes: PmHeartbeatWakeRecord[];
   fuses: Record<string, PmHeartbeatFuse>;
   ticks: PmHeartbeatTickRecord[];
+  pending_continuations: Record<string, PmHeartbeatContinuationIntent>;
   recovered_policy_freezes: Record<string, string>;
 };
 
@@ -70,6 +96,7 @@ export function emptyPmHeartbeatState(): PmHeartbeatState {
     wakes: [],
     fuses: {},
     ticks: [],
+    pending_continuations: {},
     recovered_policy_freezes: {},
   };
 }
@@ -90,6 +117,10 @@ export function readPmHeartbeatState(projectRoot: string): PmHeartbeatState {
             decision: tick.decision ?? tick.status,
           }))
         : [],
+      pending_continuations:
+        parsed.pending_continuations && typeof parsed.pending_continuations === "object"
+          ? parsed.pending_continuations
+          : {},
       recovered_policy_freezes:
         parsed.recovered_policy_freezes && typeof parsed.recovered_policy_freezes === "object"
           ? parsed.recovered_policy_freezes
@@ -98,6 +129,33 @@ export function readPmHeartbeatState(projectRoot: string): PmHeartbeatState {
   } catch {
     return emptyPmHeartbeatState();
   }
+}
+
+export function mergePmHeartbeatContinuationIntent(
+  state: PmHeartbeatState,
+  intent: Omit<PmHeartbeatContinuationIntent, "merge_count">,
+): PmHeartbeatContinuationIntent {
+  const key = intent.task_id.toUpperCase();
+  const prior = state.pending_continuations[key];
+  const merged: PmHeartbeatContinuationIntent = {
+    ...intent,
+    merge_count:
+      prior?.input_digest === intent.input_digest
+        ? prior.merge_count + 1
+        : 1,
+  };
+  state.pending_continuations[key] = merged;
+  return merged;
+}
+
+export function consumePmHeartbeatContinuationIntent(
+  state: PmHeartbeatState,
+  taskId: string,
+): PmHeartbeatContinuationIntent | null {
+  const key = taskId.toUpperCase();
+  const pending = state.pending_continuations[key] ?? null;
+  if (pending) delete state.pending_continuations[key];
+  return pending;
 }
 
 export function writePmHeartbeatState(projectRoot: string, state: PmHeartbeatState): void {
@@ -124,6 +182,28 @@ export function registerPmHeartbeatTick(
   state: PmHeartbeatState,
   tick: PmHeartbeatTickRecord,
 ): void {
+  const findingDigest = createHash("sha256").update(JSON.stringify({
+    task_id: tick.task_id ?? "",
+    gate: tick.policy_code ?? tick.skip_reason ?? "",
+    findings: [...(tick.finding_ids ?? [])].sort(),
+    input_digest: tick.input_digest ?? "",
+  })).digest("hex");
+  tick.finding_digest = `sha256:${findingDigest}`;
+  const observed = Date.parse(tick.observed_at);
+  const duplicate = [...state.ticks].reverse().find((prior) =>
+    prior.finding_digest === tick.finding_digest &&
+    Math.abs(observed - Date.parse(prior.last_observed_at ?? prior.observed_at)) <= 5 * 60_000);
+  if (duplicate) {
+    duplicate.repeat_count = (duplicate.repeat_count ?? 1) + 1;
+    duplicate.last_observed_at = tick.observed_at;
+    duplicate.status = tick.status;
+    duplicate.decision = tick.decision;
+    duplicate.transport_status = tick.transport_status;
+    duplicate.business_state = tick.business_state;
+    duplicate.response_summary = tick.response_summary;
+    return;
+  }
+  tick.repeat_count = 1;
   state.ticks.push(tick);
   state.ticks = state.ticks.slice(-200);
 }

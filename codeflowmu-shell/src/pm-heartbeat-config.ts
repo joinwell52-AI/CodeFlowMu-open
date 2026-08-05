@@ -21,6 +21,11 @@ export interface PmHeartbeatPolicyInput {
   activeRootCount: number;
   lastDispatchAtMs: number;
   oldestRootAtMs: number;
+  /**
+   * Derived from durable task/planning metadata. Task age must never turn an
+   * ordinary task into a long-horizon task; age only selects a patrol cadence.
+   */
+  formalLongTask?: boolean;
   digest: string;
 }
 
@@ -125,10 +130,11 @@ export function decidePmHeartbeatPolicy(
     input.oldestRootAtMs > 0 ? (input.nowMs - input.oldestRootAtMs) / 60_000 : 0;
 
   const inInitialWindow = sinceDispatchMin <= cfg.initialWindowMin;
-  const isLongTask = oldestRootMin >= cfg.longTaskAfterMin;
+  const isLongTask = input.formalLongTask === true;
+  const useLongTaskCadence = isLongTask && oldestRootMin >= cfg.longTaskAfterMin;
   const intervalMin = inInitialWindow
     ? cfg.initialIntervalMin
-    : isLongTask
+    : useLongTaskCadence
       ? cfg.longTaskIntervalMin
       : cfg.normalIntervalMin;
 
@@ -149,7 +155,7 @@ export function decidePmHeartbeatPolicy(
     intervalMin,
     reason: inInitialWindow
       ? "initial_dispatch_window"
-      : isLongTask
+      : useLongTaskCadence
         ? "long_task_changed"
         : "normal_interval",
   };

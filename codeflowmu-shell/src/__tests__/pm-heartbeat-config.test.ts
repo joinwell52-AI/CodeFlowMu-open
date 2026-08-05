@@ -109,6 +109,7 @@ describe("pm-heartbeat-config", () => {
       activeRootCount: 1,
       lastDispatchAtMs: 0,
       oldestRootAtMs: now - 20 * 60_000,
+      formalLongTask: true,
       digest: "new",
     });
     assert.equal(decision.shouldRun, true);
@@ -126,6 +127,7 @@ describe("pm-heartbeat-config", () => {
       activeRootCount: 1,
       lastDispatchAtMs: 0,
       oldestRootAtMs: now - 20 * 60_000,
+      formalLongTask: true,
       digest: "same",
     });
     assert.equal(decision.shouldRun, false);
@@ -147,5 +149,23 @@ describe("pm-heartbeat-config", () => {
     });
     assert.equal(decision.shouldRun, false);
     assert.equal(decision.reason, "state_unchanged");
+  });
+
+  it("does not classify an old ordinary task as long-horizon", () => {
+    const now = Date.UTC(2026, 6, 9, 10, 0, 0);
+    const decision = decidePmHeartbeatPolicy({
+      config: DEFAULT_PM_HEARTBEAT_CONFIG,
+      nowMs: now,
+      lastRunAtMs: now - 3 * 60_000,
+      lastDigest: "old",
+      activeRootCount: 1,
+      lastDispatchAtMs: 0,
+      oldestRootAtMs: now - 60 * 60_000,
+      formalLongTask: false,
+      digest: "new",
+    });
+    assert.equal(decision.shouldRun, true);
+    assert.equal(decision.intervalMin, 3);
+    assert.equal(decision.reason, "normal_interval");
   });
 });

@@ -357,11 +357,14 @@ export {
   evaluateTaskSpecAdmission,
   persistTaskSpecAdmissionResult,
   taskSpecContentDigest,
+  taskSpecAuthoredSnapshot,
   taskSpecAdmissionRecordPath,
   verifyTaskSpecAdmissionForDispatch,
   TASK_SPEC_INVALID,
   TASK_SPEC_VALID,
   type TaskSpecAdmissionAccepted,
+  type TaskSpecAdmissionDiagnostics,
+  type TaskSpecAuthoredSnapshot,
   type TaskSpecCapabilityMatrixRow,
   type TaskSpecAdmissionFinding,
   type TaskSpecAdmissionFindingId,
@@ -432,6 +435,14 @@ export {
   type PlanningGateDecision,
   type PlanningGateRecord,
 } from "./PlanningGateStore.ts";
+export {
+  planningGrantHistoryPath,
+  readPlanningGrantHistory,
+  issuePlanningGrant,
+  currentPlanningGrant,
+  planningGrantAllows,
+  type PlanningGrant,
+} from "./PlanningGrantStore.ts";
 export {
   evaluatePmSummaryGate,
   type PmSummaryGateResult,

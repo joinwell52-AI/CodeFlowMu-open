@@ -1100,6 +1100,14 @@ html[data-bound="0"]:not([data-tab="home"]) #bindBanner.hidden { display: none !
   opacity: 0.55;
   cursor: not-allowed;
 }
+#fpFactCheckPanel select,
+#fpFactCheckPanel textarea {
+  width: 100%;
+  margin: 8px 0 12px;
+}
+#fpFactCheckPanel .btn-block-primary {
+  width: 100%;
+}
 .tasks-list-collapse-chevron {
   flex-shrink: 0;
   font-size: 10px;

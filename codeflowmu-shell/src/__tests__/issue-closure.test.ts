@@ -202,7 +202,7 @@ test("same idempotency key replays one closure and conflicting body is rejected"
     assert.equal(replay.idempotent, true);
     assert.equal(replay.closure_id, first.closure_id);
     await expectCode(() => service.close(ISSUE_FILENAME, { ...draft, reason: "A different closure decision with the same key." }), "IDEMPOTENCY_CONFLICT");
-    const files = readdirSync(join(f.root, "fcop", "internal", "issue-closures", "20260804"));
+    const files = readdirSync(join(f.root, ...first.closure_record.split("/").slice(0, -1)));
     assert.equal(files.filter((name) => name.endsWith(".md")).length, 1);
   } finally { await f.cleanup(); }
 });
@@ -222,7 +222,12 @@ test("concurrent distinct closure decisions commit exactly one immutable attempt
     ]);
     assert.equal(outcomes.filter((outcome) => outcome.status === "fulfilled").length, 1);
     assert.equal(outcomes.filter((outcome) => outcome.status === "rejected").length, 1);
-    const closureDir = join(f.root, "fcop", "internal", "issue-closures", "20260804");
+    const committed = outcomes.find(
+      (outcome): outcome is PromiseFulfilledResult<Awaited<ReturnType<IssueClosureService["close"]>>> =>
+        outcome.status === "fulfilled",
+    );
+    assert.ok(committed);
+    const closureDir = join(f.root, ...committed.value.closure_record.split("/").slice(0, -1));
     assert.equal(readdirSync(closureDir).filter((name) => name.endsWith(".md")).length, 1);
     assert.equal(parseMarkdownFrontmatter(readFileSync(f.issuePath, "utf8")).status, "closed");
     assert.equal(existsSync(join(f.root, ".codeflowmu", "issue-closure-locks", `${ISSUE_FILENAME}.lock`)), false);

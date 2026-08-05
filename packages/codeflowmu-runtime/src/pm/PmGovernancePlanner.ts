@@ -134,11 +134,13 @@ export interface PmGovernanceCycleRecord {
 
 export interface WakeDownstreamExecutorResult {
   ok: boolean;
+  wake_kind?: WakeDownstreamRequest["wake_kind"];
   outcome?: "ok" | "skipped" | "delayed" | "error";
   session_id?: string;
   agent_id?: string;
   error?: string;
   skipped?: boolean;
+  queued?: boolean;
   reason?: string;
   /** Transient SDK backoff exhausted — not a hard task failure. */
   delayed?: boolean;
@@ -940,14 +942,15 @@ async function executeJudgmentCore(
           (cycleOpts?.allow_auto_wake !== false && Boolean(executor));
 
         if (taskId && finding && executor && allowAuto) {
+          const review = await reviewCheck(projectRoot, { task_id: taskId });
           const wakeReq = buildPmReportIntakeWakeRequest({
             task_id: taskId,
-            report_id: null,
+            report_id: review?.report_id ?? null,
             thread_key: plan.thread_key,
             reason: "active_stalled_done_report",
           });
           const wakeResult = await executor(wakeReq);
-          wakePayload = { wakeReq, wakeResult };
+          wakePayload = { wakeReq, wakeResult, review_ok: review?.ok ?? false };
           wakeNote = wakeResult.ok
             ? ` · 已直接 wake PM report-intake（session=${wakeResult.session_id ?? "—"}）`
             : ` · PM report-intake wake failed: ${wakeResult.error ?? "unknown"}`;

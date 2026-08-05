@@ -313,7 +313,7 @@ export class DownstreamAutoNudge {
           !merged.recoverable
         ) {
           this.#pmQueueGuard.markDownstreamWorkerFailed(receipt.workerTaskId);
-          void persistWorkerReceiptFailed(
+          await persistWorkerReceiptFailed(
             root,
             receipt.workerTaskId,
             receipt.reason,
@@ -353,7 +353,7 @@ export class DownstreamAutoNudge {
       const nudgeCount = merged.nudgeCount;
       if (nudgeCount >= MAX_DOWNSTREAM_AUTO_NUDGES) {
         this.#pmQueueGuard.markDownstreamWorkerFailed(task.task_id);
-        void persistWorkerReceiptFailed(root, task.task_id, "max_nudges_exceeded");
+        await persistWorkerReceiptFailed(root, task.task_id, "max_nudges_exceeded");
         continue;
       }
 
@@ -393,7 +393,7 @@ export class DownstreamAutoNudge {
         const nextCount = this.#pmQueueGuard.bumpNudgeCount(task.task_id);
         if (nextCount >= MAX_DOWNSTREAM_AUTO_NUDGES) {
           this.#pmQueueGuard.markDownstreamWorkerFailed(task.task_id);
-          void persistWorkerReceiptFailed(root, task.task_id, "max_nudges_exceeded");
+          await persistWorkerReceiptFailed(root, task.task_id, "max_nudges_exceeded");
         }
         continue;
       }
@@ -421,7 +421,7 @@ export class DownstreamAutoNudge {
         const nextCount = this.#pmQueueGuard.bumpNudgeCount(task.task_id);
         if (nextCount >= MAX_DOWNSTREAM_AUTO_NUDGES) {
           this.#pmQueueGuard.markDownstreamWorkerFailed(task.task_id);
-          void persistWorkerReceiptFailed(root, task.task_id, "max_nudges_exceeded");
+          await persistWorkerReceiptFailed(root, task.task_id, "max_nudges_exceeded");
         }
         continue;
       }

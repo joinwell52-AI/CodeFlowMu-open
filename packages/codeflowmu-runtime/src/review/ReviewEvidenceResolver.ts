@@ -27,12 +27,16 @@ export interface ReviewEvidenceResolveInput {
 export interface EvidenceSummarySession {
   found: boolean;
   session_id?: string;
+  run_id?: string;
   status?: string;
   tool_calls_count?: number;
 }
 
 export interface EvidenceSummaryCommand {
   command: string;
+  cwd?: string;
+  started_at?: string;
+  ended_at?: string;
   exit_code?: number | null;
   stdout_ref?: string;
   stderr_ref?: string;
@@ -145,13 +149,20 @@ export function resolveReviewEvidence(
     filtered = inWindow.filter(
       (rec) =>
         (!explicitSession || rec.session_id === explicitSession) &&
-        (!explicitRun || rec.run_id === explicitRun),
+        (!explicitRun || rec.run_id === explicitRun) &&
+        (!taskId || sameTaskId(rec.task_id, taskId)) &&
+        (rec.event_type !== "report.write" || !reportId || rec.report_id === reportId),
     );
+    if (filtered.length === 0) {
+      warnings.push(
+        `bound evidence unavailable for session=${explicitSession || "(none)"} run=${explicitRun || "(none)"}; cross-session fallback is disabled`,
+      );
+    }
   }
-  if (filtered.length === 0 && taskId) {
+  if (filtered.length === 0 && !explicitSession && !explicitRun && taskId) {
     filtered = inWindow.filter((rec) => sameTaskId(rec.task_id, taskId));
   }
-  if (filtered.length === 0 && reportId) {
+  if (filtered.length === 0 && !explicitSession && !explicitRun && reportId) {
     const reportWrite = inWindow.find(
       (rec) => rec.event_type === "report.write" && rec.report_id === reportId,
     );
@@ -159,7 +170,12 @@ export function resolveReviewEvidence(
       filtered = inWindow.filter((rec) => rec.session_id === reportWrite.session_id);
     }
   }
-  if (filtered.length === 0 && (input.agent_id || input.role || input.thread_key)) {
+  if (
+    filtered.length === 0 &&
+    !explicitSession &&
+    !explicitRun &&
+    (input.agent_id || input.role || input.thread_key)
+  ) {
     filtered = inWindow.filter(
       (rec) =>
         (!input.agent_id || rec.agent_id === input.agent_id) &&
@@ -199,6 +215,11 @@ export function resolveReviewEvidence(
       case "command.run":
         commands.push({
           command: rec.command,
+          cwd: rec.cwd,
+          started_at: rec.at,
+          ...(rec.duration_ms != null
+            ? { ended_at: new Date(Date.parse(rec.at) + rec.duration_ms).toISOString() }
+            : {}),
           exit_code: rec.exit_code,
           stdout_ref: rec.stdout_ref,
           stderr_ref: rec.stderr_ref,
@@ -231,6 +252,7 @@ export function resolveReviewEvidence(
 
   const resolvedSessionId =
     explicitSession || filtered.find((r) => r.session_id)?.session_id || "";
+  const resolvedRunId = explicitRun || filtered.find((r) => r.run_id)?.run_id || "";
 
   // report.write 只证明落盘，不算 session 执行证据（否则 fact gate 的 session_evidence_gap 永远触发不了）
   const sessionToolEvidence = filtered.filter(
@@ -247,6 +269,7 @@ export function resolveReviewEvidence(
     session: {
       found: Boolean(resolvedSessionId && sessionToolEvidence.length > 0),
       session_id: resolvedSessionId || undefined,
+      run_id: resolvedRunId || undefined,
       tool_calls_count: callIds.size > 0 ? callIds.size : filtered.length || undefined,
     },
     files: {

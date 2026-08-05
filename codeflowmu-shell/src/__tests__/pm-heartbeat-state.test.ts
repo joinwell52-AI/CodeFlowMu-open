@@ -6,10 +6,12 @@ import { describe, it } from "node:test";
 
 import {
   emptyPmHeartbeatState,
+  consumePmHeartbeatContinuationIntent,
   evaluatePmHeartbeatFuse,
   readPmHeartbeatState,
   registerAcceptedPmHeartbeatWake,
   registerPmHeartbeatTick,
+  mergePmHeartbeatContinuationIntent,
   settlePmHeartbeatWake,
   writePmHeartbeatState,
 } from "../pm-heartbeat-state.ts";
@@ -50,6 +52,29 @@ describe("PM heartbeat result state", () => {
     }
   });
 
+  it("aggregates repeated task/gate/finding events inside the log window", () => {
+    const state = emptyPmHeartbeatState();
+    for (const [index, at] of [
+      "2026-08-03T00:00:00.000Z",
+      "2026-08-03T00:01:00.000Z",
+    ].entries()) {
+      registerPmHeartbeatTick(state, {
+        tick_id: `TICK-${index + 1}`,
+        observed_at: at,
+        project_root: "D:/project",
+        status: "failed",
+        decision: "failed",
+        task_id: "TASK-1",
+        input_digest: "input-1",
+        policy_code: "TASK_SPEC_INVALID",
+        finding_ids: ["ADMISSION_PROOF_MISSING"],
+      });
+    }
+    assert.equal(state.ticks.length, 1);
+    assert.equal(state.ticks[0]?.repeat_count, 2);
+    assert.equal(state.ticks[0]?.last_observed_at, "2026-08-03T00:01:00.000Z");
+  });
+
   it("persists an accepted wake and blocks another wake while its session is pending", () => {
     const root = mkdtempSync(join(tmpdir(), "cf-pm-wake-state-"));
     try {
@@ -75,6 +100,28 @@ describe("PM heartbeat result state", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("idempotently merges a continuation while PM is active and consumes it for the successor", () => {
+    const state = emptyPmHeartbeatState();
+    mergePmHeartbeatContinuationIntent(state, {
+      task_id: "TASK-1",
+      thread_key: "thread-1",
+      input_digest: "digest-1",
+      observed_at: "2026-08-05T00:00:00.000Z",
+      active_session: "session-1",
+    });
+    const merged = mergePmHeartbeatContinuationIntent(state, {
+      task_id: "task-1",
+      thread_key: "thread-1",
+      input_digest: "digest-1",
+      observed_at: "2026-08-05T00:01:00.000Z",
+      active_session: "session-1",
+    });
+    assert.equal(merged.merge_count, 2);
+    assert.equal(Object.keys(state.pending_continuations).length, 1);
+    assert.equal(consumePmHeartbeatContinuationIntent(state, "TASK-1")?.input_digest, "digest-1");
+    assert.equal(consumePmHeartbeatContinuationIntent(state, "TASK-1"), null);
   });
 
   it("backs off after two no-progress outcomes and opens one deduplicated fuse after three", () => {

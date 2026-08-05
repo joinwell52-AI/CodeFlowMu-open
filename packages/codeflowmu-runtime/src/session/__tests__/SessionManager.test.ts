@@ -307,6 +307,9 @@ test("TS-4.2: startSession success → record persisted + session_started emitte
       context: {
         trigger_chat_id: "CHAT-1783845104910",
         thread_key: "panel-task-001",
+        logical_execution_id: "TASK-EXECUTION:TASK-20260712-003",
+        continuation_of_session_id: "session-previous",
+        continuation_reason: "task_wake",
       },
       },
     );
@@ -323,6 +326,18 @@ test("TS-4.2: startSession success → record persisted + session_started emitte
     assert.equal(persisted!.protocol.task_id, "TASK-20260712-003");
     assert.equal(persisted!.runtime_trigger_chat_id, "CHAT-1783845104910");
     assert.equal(persisted!.runtime_thread_key, "panel-task-001");
+    assert.equal(
+      persisted!.runtime_logical_execution_id,
+      "TASK-EXECUTION:TASK-20260712-003",
+    );
+    assert.equal(persisted!.runtime_continuation_of_session_id, "session-previous");
+    assert.equal(persisted!.runtime_continuation_reason, "task_wake");
+    assert.deepEqual(
+      (await manager.listForTask("TASK-20260712-003-PM-to-QA")).map(
+        (record) => record.protocol.session_id,
+      ),
+      [handle.session_id],
+    );
     assert.equal(persisted!.protocol.runs.length, 1);
     assert.equal(persisted!.protocol.runs[0]!.status, "running");
 
@@ -334,6 +349,11 @@ test("TS-4.2: startSession success → record persisted + session_started emitte
     assert.equal(startedPayload.task_id, "TASK-20260712-003");
     assert.equal(startedPayload.trigger_chat_id, "CHAT-1783845104910");
     assert.equal(startedPayload.thread_key, "panel-task-001");
+    assert.equal(
+      startedPayload.logical_execution_id,
+      "TASK-EXECUTION:TASK-20260712-003",
+    );
+    assert.equal(startedPayload.continuation_of_session_id, "session-previous");
 
     // Settle the in-mem run so the natural-settle path persists status=completed.
     // The default InMemoryRunHandle auto-settles on setImmediate after construction;

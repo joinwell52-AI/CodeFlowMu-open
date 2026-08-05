@@ -6,10 +6,11 @@
   "use strict";
 
   /** 本机当前运行的 PWA 包版本（发版时与 version.json / index.html ?v= 对齐） */
-  var BUNDLE_VERSION = "V1.0.62";
-  var PWA_CACHE_BUST = "1.0.62";
+  var BUNDLE_VERSION = "V1.0.63";
+  var PWA_CACHE_BUST = "1.0.63";
   var PWA_VERSION_STORAGE_KEY = "cfm_pwa_installed_version";
   var PWA_LEGACY_CACHE_NAMES = [
+    "codeflowmu-pwa-v1.0.62",
     "codeflowmu-pwa-v1.0.61",
     "codeflowmu-pwa-v1.0.60",
     "codeflowmu-pwa-v1.0.59",
@@ -1319,6 +1320,10 @@
       parent: row.parent || row.parent_task_id || (row.yaml && row.yaml.parent) || "",
       parent_task_id: row.parent_task_id || row.parent || (row.yaml && row.yaml.parent) || "",
       task_spec_admission: row.task_spec_admission || null,
+      fact_check_state:
+        row.fact_check_state || row.review_state || (row.yaml && row.yaml.fact_check_state) || "",
+      fact_check_review_id:
+        row.fact_check_review_id || row.review_id || (row.yaml && row.yaml.fact_check_review_id) || "",
       failure_code: row.failure_code || (row.yaml && row.yaml.failure_code) || "",
       failure_category: row.failure_category || (row.yaml && row.yaml.failure_category) || "",
       retry_policy: row.retry_policy || (row.yaml && row.yaml.retry_policy) || "",
@@ -3209,6 +3214,7 @@
       "fpRelatedIssuesSection",
       "fpReportActions",
       "fpApprovalPanel",
+      "fpFactCheckPanel",
       "fpRelatedTasksSection",
       "fpChildTasksSection",
       "fpFlowOverviewSection",
@@ -3339,6 +3345,69 @@
     });
   }
 
+  function renderFactCheckCorrection(task) {
+    var panel = $("fpFactCheckPanel");
+    if (!panel) return;
+    var status = String((task && task.status) || "").toLowerCase();
+    var reviewState = String((task && task.fact_check_state) || "").toLowerCase();
+    var visible = status === "waiting_pm_attention" || reviewState === "needs_pm";
+    panel.classList.toggle("hidden", !visible);
+    if (visible) {
+      var reason = $("fpFactCheckReason");
+      if (reason) reason.value = "";
+    }
+  }
+
+  function factCheckDecisionKey(taskId, action) {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return "pwa:" + taskId + ":" + action + ":" + window.crypto.randomUUID();
+    }
+    return (
+      "pwa:" +
+      taskId +
+      ":" +
+      action +
+      ":" +
+      Date.now() +
+      ":" +
+      Math.random().toString(16).slice(2)
+    );
+  }
+
+  async function submitFactCheckCorrection() {
+    var task = state.currentDetail;
+    if (!task || state.detailKind !== "task") return;
+    var taskId = task.task_id || task.filename || task.id;
+    var action = String(($("fpFactCheckAction") && $("fpFactCheckAction").value) || "");
+    var reason = String(($("fpFactCheckReason") && $("fpFactCheckReason").value) || "").trim();
+    if (!taskId || !action) return;
+    if (action === "accept_evidence_exception" && !reason) {
+      showErrorToast(t("factCheckCorrectionReasonRequired"));
+      return;
+    }
+    var button = $("fpFactCheckSubmit");
+    if (button) button.disabled = true;
+    try {
+      await api("/api/v2/mobile/tasks/" + encodeURIComponent(taskId) + "/fact-check-decisions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: {
+          action: action,
+          reason: reason,
+          expected_review_id: task.fact_check_review_id || undefined,
+          idempotency_key: factCheckDecisionKey(taskId, action),
+        },
+      });
+      showToast(t("factCheckCorrectionSuccess"));
+      await refreshAll();
+      await openDetail("task", task.filename || taskId, { preserveScroll: false });
+    } catch (e) {
+      showErrorToast(t("toastError") + ": " + userFacingError(e));
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
   async function runTaskAction(actionId) {
     if (!actionId || actionId === "back") {
       closeTaskDetail();
@@ -3462,6 +3531,7 @@
 
     renderFlowOverview(extras.flow_overview || []);
     renderChildTasks(extras.child_tasks || []);
+    renderFactCheckCorrection(task);
     renderRelatedList("fpRelatedReports", "fpNoReports", relatedReports || [], "report");
 
     var issSec = $("fpRelatedIssuesSection");
@@ -5631,6 +5701,8 @@
 
     $("taskDetailBackBtn") &&
       $("taskDetailBackBtn").addEventListener("click", closeTaskDetail);
+    $("fpFactCheckSubmit") &&
+      $("fpFactCheckSubmit").addEventListener("click", submitFactCheckCorrection);
     $("micBack") && $("micBack").addEventListener("click", closeMobileIssueClosure);
     $("micPreviewBtn") && $("micPreviewBtn").addEventListener("click", previewMobileIssueClosure);
     $("micSubmit") && $("micSubmit").addEventListener("click", submitMobileIssueClosure);

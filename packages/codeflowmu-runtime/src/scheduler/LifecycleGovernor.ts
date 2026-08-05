@@ -35,6 +35,7 @@ import { resolveLedgerLayout } from "../ledger/paths.ts";
 import type { PanelEventBridge } from "../panel/PanelEventBridge.ts";
 import { taskLifecycleMutex } from "../_internal/KeyedMutex.ts";
 import { YamlFallbackWriteBlockedError } from "../lifecycle/yamlFallbackGuard.ts";
+import type { TaskExecutionDecision } from "./DispatchAttemptStore.ts";
 
 export interface LifecycleGovernorLogger {
   info?: (msg: string) => void;
@@ -133,8 +134,18 @@ export class LifecycleGovernor {
   /** Await explicit dispatch: inbox → active before session start. */
   async awaitDispatchInboxToActive(
     taskFilePath: string,
-    claim?: { attemptId?: string; leaseId?: string; agentId?: string },
+    claim?: {
+      attemptId?: string;
+      leaseId?: string;
+      agentId?: string;
+      decision?: TaskExecutionDecision;
+    },
   ): Promise<string> {
+    if (claim?.decision && claim.decision.decision !== "ALLOW") {
+      throw new Error(
+        `LIFECYCLE_DECISION_REJECTED: ${claim.decision.decision}/${claim.decision.reason}`,
+      );
+    }
     await this._moveInboxToActive(taskFilePath, claim);
     const resolved = await resolveTaskFileForMutation(
       taskFilePath,
@@ -153,7 +164,13 @@ export class LifecycleGovernor {
   /** Await report settlement (active→review / pending_pm_review projection). */
   async resolveReportSettlement(
     reportFilePath: string,
+    executionDecision?: import("./DispatchAttemptStore.ts").TaskExecutionDecision,
   ): Promise<import("../ledger/ReportResolver.ts").ReportResolveOutcome> {
+    if (executionDecision && executionDecision.decision !== "ALLOW") {
+      throw new Error(
+        `LIFECYCLE_DECISION_NOT_ALLOWED: ${executionDecision.operation_id}=${executionDecision.decision}`,
+      );
+    }
     return this._resolver.resolve(reportFilePath);
   }
 

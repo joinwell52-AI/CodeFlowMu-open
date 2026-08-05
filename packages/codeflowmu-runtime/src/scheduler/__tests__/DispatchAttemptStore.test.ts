@@ -59,4 +59,23 @@ describe("DispatchAttemptStore", () => {
     assert.deepEqual(state.attempts.map((attempt) => attempt.status), ["session_failed", "offered"]);
     assert.equal(state.active_lease, undefined);
   });
+
+  it("stores one immutable decision per operation/task/input digest", async () => {
+    const { store } = await fixture();
+    const input = {
+      operation_id: "operation-1",
+      task_id: "TASK-1",
+      input_digest: "digest-1",
+      decision: "WAIT" as const,
+      reason: "dependency_pending",
+      source: "test",
+    };
+    const first = await store.recordDecision(input);
+    const replay = await store.recordDecision(input);
+    assert.equal(first.decision_id, replay.decision_id);
+    await assert.rejects(
+      () => store.recordDecision({ ...input, decision: "ALLOW", reason: "all_dispatch_gates_passed" }),
+      /STATE_DECISION_CONFLICT/,
+    );
+  });
 });

@@ -7,6 +7,7 @@ export const PM_RUNTIME_CONTROL_TOOL_NAMES = [
   "pm.wake_downstream",
   "pm.redispatch_task",
   "pm.review_check",
+  "pm.fact_check_decision",
   "pm.validate_long_horizon_plan",
   "pm.write_planning_artifact",
   "pm.record_planning_skill_evidence",
@@ -271,6 +272,25 @@ export const PM_RUNTIME_CONTROL_TOOL_DEFINITIONS: readonly PmRuntimeControlToolD
     },
   },
   {
+    name: "pm.fact_check_decision",
+    description: "对 needs_pm 的错误自动 REVIEW 形成正式、幂等、不可变的 PM 纠正记录；不能覆盖确定性事实失败。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: stringProp("目标 task_id"),
+        action: {
+          type: "string",
+          enum: ["return_for_evidence", "confirm_fact_false", "accept_evidence_exception", "retry_fact_check"],
+        },
+        reason: stringProp("正式纠正或补证理由"),
+        idempotency_key: stringProp("幂等键"),
+        expected_review_id: stringProp("可选的目标 REVIEW id"),
+      },
+      required: ["task_id", "action", "reason", "idempotency_key"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "pm.inspect_task_spec",
     description: "在正式投递前运行 TaskSpecAdmission 2.0，返回四态决策和逐条修改建议。",
     inputSchema: {
@@ -328,6 +348,11 @@ export const PM_RUNTIME_CONTROL_TOOL_DEFINITIONS: readonly PmRuntimeControlToolD
         priority: stringProp("P0/P1/P2/P3"),
         depends_on: { type: "array", items: { type: "string" } },
         acceptor: stringProp("验收角色"),
+        wp_id: stringProp("Planning Grant 授权的工作包，例如 WP-00"),
+        acceptance_items: {
+          type: "array",
+          items: { type: "object", additionalProperties: true },
+        },
       },
       required: ["recipient", "subject", "body_markdown", "parent", "thread_key", "acceptor"],
       additionalProperties: false,
@@ -697,6 +722,18 @@ export async function invokePmRuntimeControlTool(input: {
         task_id: optionalString(input.args, "task_id"),
         report_id: optionalString(input.args, "report_id"),
       });
+      break;
+    case "pm.fact_check_decision":
+      method = "POST";
+      path = `/api/v2/tasks/${encodeURIComponent(requiredString(input.args, "task_id"))}/fact-check-decisions`;
+      body = {
+        action: requiredString(input.args, "action"),
+        reason: requiredString(input.args, "reason"),
+        idempotency_key: requiredString(input.args, "idempotency_key"),
+        expected_review_id: optionalString(input.args, "expected_review_id") || undefined,
+        caller_role: "PM",
+        session_id: input.sessionId,
+      };
       break;
     case "pm.wake_downstream":
       method = "POST";

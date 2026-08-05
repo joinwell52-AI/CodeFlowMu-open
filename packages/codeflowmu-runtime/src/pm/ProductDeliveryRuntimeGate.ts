@@ -4,6 +4,7 @@ import type { ParsedTask } from "../scheduler/TaskParser.ts";
 import { resolveRoleFromAgentId } from "../registry/ToolAuthorityGuard.ts";
 import { classifyProductTask, evaluateProductDeliveryGate, type ProductDeliveryGateStatus } from "./ProductDeliveryGovernance.ts";
 import { resolveThreadContext } from "./PmGovernanceActions.ts";
+import { currentPlanningGrant, planningGrantAllows } from "./PlanningGrantStore.ts";
 
 export type ProductDispatchGateResult =
   | { allowed: true; status?: ProductDeliveryGateStatus }
@@ -16,8 +17,8 @@ export type ProductDispatchGateResult =
     }
   | {
       allowed: false;
-      code: "PRODUCT_BRIEF_REQUIRED";
-      reason: "product_brief_required";
+      code: "PRODUCT_BRIEF_REQUIRED" | "PLANNING_GRANT_REQUIRED";
+      reason: "product_brief_required" | "planning_grant_required";
       required_action: string;
       findings: string[];
       status?: ProductDeliveryGateStatus;
@@ -35,6 +36,13 @@ function list(value: unknown): string[] {
 
 function taskPrefix(value: unknown): string {
   return String(value ?? "").trim().match(/^(TASK-\d{8}-\d{3,})/i)?.[1] ?? "";
+}
+
+function declaredWpId(frontmatter: Record<string, unknown>, body: string): string {
+  const direct = [frontmatter["wp_id"], frontmatter["work_package"], frontmatter["phase"]]
+    .map((value) => String(value ?? "").trim().toUpperCase())
+    .find((value) => /^WP-\d+$/i.test(value));
+  return direct ?? body.match(/\bWP-\d+\b/i)?.[0]?.toUpperCase() ?? "";
 }
 
 /** Pin a new PM worker task to the TASK owned by the current PM session. */
@@ -69,6 +77,7 @@ async function evaluateRootGate(
   projectRoot: string,
   lookup: { task_id?: string; thread_key?: string },
   fallbackBody: string,
+  childFrontmatter: Record<string, unknown> = {},
 ): Promise<ProductDispatchGateResult> {
   const ctx = await resolveThreadContext(projectRoot, lookup);
   if (!ctx || !ctx.root_task_id) {
@@ -111,6 +120,32 @@ async function evaluateRootGate(
       };
     }
   }
+  const planningGrant = await currentPlanningGrant(projectRoot, ctx.root_task_id);
+  if (planningGrant) {
+    let wpId = declaredWpId(childFrontmatter, fallbackBody);
+    if (!wpId) {
+      const reworkOf = String(childFrontmatter["rework_of"] ?? "").trim();
+      const parent = reworkOf
+        ? ctx.tasks.find((task) => task.task_id === reworkOf)
+        : undefined;
+      if (parent) wpId = declaredWpId(parent.yaml ?? {}, "");
+    }
+    if (!wpId || !planningGrantAllows(planningGrant, wpId)) {
+      return {
+        allowed: false,
+        code: "PLANNING_GRANT_REQUIRED",
+        reason: "planning_grant_required",
+        required_action: !wpId
+          ? "declare_wp_id_and_child_acceptance_contract"
+          : `obtain_admin_planning_grant_for_${wpId.toLowerCase()}`,
+        findings: [
+          !wpId ? "child_wp_id_missing" : `planning_grant_scope_missing:${wpId}`,
+          `planning_grant_id:${planningGrant.grant_id}`,
+        ],
+      };
+    }
+    return { allowed: true };
+  }
   const status = await evaluateProductDeliveryGate({
     projectRoot,
     taskId: ctx.root_task_id,
@@ -146,7 +181,7 @@ export async function guardPmProductWorkerWriteTask(input: {
   return evaluateRootGate(input.projectRoot, {
     ...(taskId ? { task_id: taskId } : {}),
     ...(threadKey ? { thread_key: threadKey } : {}),
-  }, String(input.args["body"] ?? ""));
+  }, String(input.args["body"] ?? ""), input.args);
 }
 
 /** Fail-safe dispatch guard for TASK files already landed through another path. */
@@ -171,5 +206,5 @@ export async function guardLandedPmProductWorkerTask(
   return evaluateRootGate(projectRoot, {
     ...(taskId ? { task_id: taskId } : {}),
     ...(threadKey ? { thread_key: threadKey } : {}),
-  }, parsed.body);
+  }, parsed.body, parsed.frontmatter);
 }

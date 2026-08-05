@@ -1159,7 +1159,7 @@ Recovery succeeded while the mother root cause remains open.
     const detail = await request(app)
       .get(`/api/v2/mobile/issues/${filename}`)
       .set("Authorization", `Bearer ${token}`);
-    assert.equal(detail.status, 200);
+    assert.equal(detail.status, 200, JSON.stringify(detail.body));
     assert.equal(detail.body.current_closure.closure_digest, closed.body.closure_digest);
     assert.equal(detail.body.promotion.status, "published");
     assert.equal(detail.body.promotion.target_issue_number, 902);
@@ -1246,7 +1246,7 @@ test("mobile API: tasks recipient filter and admin PM detail", async () => {
     const detail = await request(app)
       .get("/api/v2/mobile/tasks/TASK-20260617-001-ADMIN-to-PM.md")
       .set("Authorization", `Bearer ${token}`);
-    assert.equal(detail.status, 200);
+    assert.equal(detail.status, 200, JSON.stringify(detail.body));
     assert.ok(Array.isArray(detail.body.child_tasks));
     assert.equal(detail.body.child_tasks.length, 3);
     const childRecipients = detail.body.child_tasks.map(
@@ -1375,6 +1375,78 @@ test("mobile task reject without reason returns REJECT_REASON_REQUIRED", async (
     assert.equal(res.status, 400);
     assert.equal(res.body.ok, false);
     assert.equal(res.body.error, "REJECT_REASON_REQUIRED");
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    });
+    cleanupPanel(app);
+  }
+});
+
+test("mobile fact-check correction proxies to the shared append-only decision service", async () => {
+  const { root, reviews } = makeV3ProjectRoot();
+  seedMinimalRule45ForTeam(root);
+  const activeDir = join(root, "fcop", "_lifecycle", "active");
+  mkdirSync(activeDir, { recursive: true });
+  const taskId = "TASK-20260805-101-ADMIN-to-PM";
+  const filename = `${taskId}.md`;
+  writeFileSync(
+    join(activeDir, filename),
+    `---
+protocol: fcop
+version: 1
+kind: task
+task_id: ${taskId}
+sender: ADMIN
+recipient: PM
+status: waiting_pm_attention
+fact_check_state: needs_pm
+---
+# fact-check correction
+`,
+    "utf-8",
+  );
+  writeFileSync(
+    join(reviews, `REVIEW-20260805-101-${taskId}.md`),
+    `---
+review_id: REVIEW-20260805-101
+task_id: ${taskId}
+report_id: REPORT-20260805-101-PM-to-ADMIN
+review_state: needs_pm
+fact_check_verdict: needs_admin
+---
+# review
+`,
+    "utf-8",
+  );
+  const dataDir = mkdtempSync(join(tmpdir(), "cf-mobile-fact-decision-"));
+  const port = await reserveListenPort();
+  const app = buildMobilePanelWithPort(root, reviews, dataDir, port) as MobileApp;
+  const server = await startPanelServer(app, port);
+  try {
+    const token = await bindMobileTestSession(app);
+    const body = {
+      action: "accept_evidence_exception",
+      reason: "ADMIN verified the documented exception",
+      idempotency_key: "mobile-fact-check-decision-101",
+      expected_review_id: "REVIEW-20260805-101",
+    };
+    const first = await request(app)
+      .post(`/api/v2/mobile/tasks/${filename}/fact-check-decisions`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(body);
+    assert.equal(first.status, 200);
+    assert.equal(first.body.ok, true);
+    assert.equal(first.body.decision.action, "overrule_auto_review");
+    const updated = readFileSync(join(activeDir, filename), "utf-8");
+    assert.match(updated, /fact_check_exception:\s*true/);
+
+    const replay = await request(app)
+      .post(`/api/v2/mobile/tasks/${filename}/fact-check-decisions`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(body);
+    assert.equal(replay.status, 200);
+    assert.equal(replay.body.idempotent_replay, true);
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));

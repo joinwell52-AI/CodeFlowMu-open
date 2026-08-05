@@ -11,6 +11,11 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import { atomicWriteJson } from "../_internal/atomic-write.ts";
+import {
+  assertProjectExecutionContext,
+  createProjectExecutionContext,
+  type ProjectExecutionContext,
+} from "../project/ProjectExecutionContext.ts";
 import type { ParsedTask } from "../scheduler/TaskParser.ts";
 import {
   classifyProductTask,
@@ -82,6 +87,8 @@ export interface TaskSpecAdmissionAccepted {
   planning_level?: PmPlanningLevel;
   blocking_findings: [];
   capability_matrix: TaskSpecCapabilityMatrixRow[];
+  authored_snapshot: TaskSpecAuthoredSnapshot;
+  diagnostics?: TaskSpecAdmissionDiagnostics;
 }
 
 export interface TaskSpecAdmissionBlocked {
@@ -92,6 +99,25 @@ export interface TaskSpecAdmissionBlocked {
   planning_level?: PmPlanningLevel;
   blocking_findings: TaskSpecAdmissionFinding[];
   capability_matrix: TaskSpecCapabilityMatrixRow[];
+  authored_snapshot: TaskSpecAuthoredSnapshot;
+  diagnostics?: TaskSpecAdmissionDiagnostics;
+}
+
+export interface TaskSpecAuthoredSnapshot {
+  schema_version: 1;
+  frontmatter: Record<string, unknown>;
+  body: string;
+}
+
+export interface TaskSpecAdmissionDiagnostics {
+  validation_stage: "first_admission" | "continuation";
+  project_context_id: string;
+  project_context_digest: string;
+  project_root: string;
+  proof_path: string;
+  submission_path: string | null;
+  compared_fields: string[];
+  differences: string[];
 }
 
 /** Backward-compatible name retained for existing callers. */
@@ -115,6 +141,7 @@ const SUPPORTED_PM_FORMAL_TOOLS = new Set([
   "pm.close_admin_task",
   "pm.wake_downstream",
   "pm.review_check",
+  "pm.fact_check_decision",
   "pm.inspect_task_spec",
   "pm.inspect_capability_matrix",
   "pm.inspect_project_baseline",
@@ -169,7 +196,71 @@ const RUNTIME_OWNED_DIGEST_FIELDS = new Set([
   "admission_digest",
   "created_at",
   "updated_at",
+  "display_status",
+  "lifecycle_projection",
+  "physical_scope",
+  "attempt_id",
+  "lease_id",
+  "session_id",
+  "run_id",
+  "dispatch_attempt",
+  "dispatch_attempt_id",
+  "dispatch_lease_id",
+  "dispatch_last_error",
+  "dispatch_next_retry_at",
+  "dispatch_started_at",
+  "dispatch_completed_at",
+  "review_status",
+  "pm_attention_reason",
+  "pm_attention_report_id",
+  "issue_blocking",
+  "blocking_issue_id",
+  "blocking_issue_reason",
+  "superseded_by",
+  "resolved_at",
+  "finished_at",
+  "approved_at",
+  "archived_at",
 ]);
+
+function canonicalJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJsonValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, canonicalJsonValue(item)]),
+    );
+  }
+  return value;
+}
+
+function authoredBody(body: string): string {
+  return (body.split(/\n---\n\n## state_history \(auto-appended by runtime\)/, 1)[0] ?? body)
+    .replace(/\r\n/g, "\n")
+    .trim();
+}
+
+export function taskSpecAuthoredSnapshot(task: ParsedTask): TaskSpecAuthoredSnapshot {
+  return {
+    schema_version: 1,
+    frontmatter: Object.fromEntries(
+      Object.entries(task.frontmatter)
+        .filter(([key]) => !RUNTIME_OWNED_DIGEST_FIELDS.has(key))
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, value]) => [key, canonicalJsonValue(value)]),
+    ),
+    body: authoredBody(task.body),
+  };
+}
+
+function digestSnapshot(snapshot: TaskSpecAuthoredSnapshot): string {
+  return createHash("sha256")
+    .update(JSON.stringify(snapshot.frontmatter))
+    .update("\n")
+    .update(snapshot.body)
+    .digest("hex");
+}
 
 /**
  * Digest only the authored task specification. Runtime-owned formal identity
@@ -177,24 +268,7 @@ const RUNTIME_OWNED_DIGEST_FIELDS = new Set([
  * created from it have the same digest.
  */
 export function taskSpecContentDigest(task: ParsedTask): string {
-  const authoredBody = (
-    task.body.split(
-      /\n---\n\n## state_history \(auto-appended by runtime\)/,
-      1,
-    )[0] ?? task.body
-  )
-    .replace(/\r\n/g, "\n")
-    .trim();
-  const authoredFrontmatter = Object.fromEntries(
-    Object.entries(task.frontmatter)
-      .filter(([key]) => !RUNTIME_OWNED_DIGEST_FIELDS.has(key))
-      .sort(([left], [right]) => left.localeCompare(right)),
-  );
-  return createHash("sha256")
-    .update(JSON.stringify(authoredFrontmatter))
-    .update("\n")
-    .update(authoredBody)
-    .digest("hex");
+  return digestSnapshot(taskSpecAuthoredSnapshot(task));
 }
 
 type TaskSpecAdmissionFindingInput = Pick<
@@ -1007,6 +1081,7 @@ export async function evaluateTaskSpecAdmission(
   const base = {
     task_id: taskIdOf(task),
     content_digest: taskSpecContentDigest(task),
+    authored_snapshot: taskSpecAuthoredSnapshot(task),
     ...(planningLevel != null ? { planning_level: planningLevel } : {}),
     capability_matrix: buildCapabilityMatrix(task),
   };
@@ -1066,7 +1141,9 @@ export async function persistTaskSpecAdmissionResult(
       Number(existing["admission_revision"] ?? 0) ===
         Number(metadata.admission_revision ?? 0) &&
       JSON.stringify(existing["blocking_findings"] ?? []) ===
-        JSON.stringify(result.blocking_findings)
+        JSON.stringify(result.blocking_findings) &&
+      JSON.stringify(existing["authored_snapshot"] ?? null) ===
+        JSON.stringify(result.authored_snapshot)
     ) {
       return { path, changed: false };
     }
@@ -1078,6 +1155,8 @@ export async function persistTaskSpecAdmissionResult(
     `${JSON.stringify(
       {
         ...result,
+        authored_snapshot_schema: "task-authored-spec/v1",
+        project_root: resolve(projectRoot),
         ...(metadata.submission_id
           ? { submission_id: metadata.submission_id }
           : {}),
@@ -1094,24 +1173,117 @@ export async function persistTaskSpecAdmissionResult(
   return { path, changed: true };
 }
 
+function parseRecordedSnapshot(value: unknown): TaskSpecAuthoredSnapshot | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  if (row["schema_version"] !== 1 || !row["frontmatter"] || typeof row["frontmatter"] !== "object") {
+    return null;
+  }
+  return {
+    schema_version: 1,
+    frontmatter: canonicalJsonValue(row["frontmatter"]) as Record<string, unknown>,
+    body: String(row["body"] ?? "").replace(/\r\n/g, "\n").trim(),
+  };
+}
+
+/** Reconstruct pre-v1 snapshot proofs from the immutable submission record. */
+function snapshotFromSubmissionRecord(
+  submission: Record<string, unknown> | null,
+): TaskSpecAuthoredSnapshot | null {
+  if (!submission) return null;
+  const subject = String(submission["subject"] ?? "").trim();
+  const draftBody = String(submission["draft_body"] ?? "").trim();
+  const priority = String(submission["requested_priority"] ?? "").trim();
+  const threadKey = String(submission["formal_thread_key"] ?? "").trim();
+  if (!subject || !threadKey) return null;
+  const references = Array.isArray(submission["requested_references"])
+    ? submission["requested_references"]
+    : [];
+  const attachments = Array.isArray(submission["requested_attachments"])
+    ? submission["requested_attachments"]
+    : [];
+  return {
+    schema_version: 1,
+    frontmatter: canonicalJsonValue({
+      protocol: "fcop",
+      version: "1.0",
+      sender: "ADMIN",
+      recipient: "PM",
+      priority: priority || "P2",
+      thread_key: threadKey,
+      parent: submission["requested_parent"] ?? "",
+      references,
+      ...(attachments.length > 0 ? { attachments } : {}),
+    }) as Record<string, unknown>,
+    body: `# ${subject}\n\n${draftBody}`.trim(),
+  };
+}
+
+function projectTaskOntoSnapshot(
+  task: ParsedTask,
+  expected: TaskSpecAuthoredSnapshot,
+): TaskSpecAuthoredSnapshot {
+  const frontmatter = Object.fromEntries(
+    Object.keys(expected.frontmatter)
+      .sort((left, right) => left.localeCompare(right))
+      .map((key) => [key, canonicalJsonValue(task.frontmatter[key])]),
+  );
+  return { schema_version: 1, frontmatter, body: authoredBody(task.body) };
+}
+
+function diffAuthoredSnapshots(
+  expected: TaskSpecAuthoredSnapshot,
+  actual: TaskSpecAuthoredSnapshot,
+): string[] {
+  const differences: string[] = [];
+  for (const key of new Set([
+    ...Object.keys(expected.frontmatter),
+    ...Object.keys(actual.frontmatter),
+  ])) {
+    if (JSON.stringify(expected.frontmatter[key]) !== JSON.stringify(actual.frontmatter[key])) {
+      differences.push(`frontmatter.${key}`);
+    }
+  }
+  if (expected.body !== actual.body) differences.push("task_body");
+  return differences;
+}
+
+function resultFromAdmissionRecord(
+  record: Record<string, unknown> | null,
+  taskId: string,
+  fallbackSnapshot: TaskSpecAuthoredSnapshot,
+): TaskSpecAdmissionResult {
+  const snapshot = parseRecordedSnapshot(record?.["authored_snapshot"]) ?? fallbackSnapshot;
+  const matrix = Array.isArray(record?.["capability_matrix"])
+    ? record!["capability_matrix"] as TaskSpecCapabilityMatrixRow[]
+    : [];
+  const planningLevel = Number(record?.["planning_level"]);
+  return {
+    decision: "accepted",
+    code: TASK_SPEC_VALID,
+    task_id: taskId,
+    content_digest: String(record?.["content_digest"] ?? digestSnapshot(snapshot)),
+    ...([0, 1, 2, 3].includes(planningLevel)
+      ? { planning_level: planningLevel as PmPlanningLevel }
+      : {}),
+    blocking_findings: [],
+    capability_matrix: matrix,
+    authored_snapshot: snapshot,
+  };
+}
+
 export async function verifyTaskSpecAdmissionForDispatch(input: {
   projectRoot: string;
   task: ParsedTask;
+  stage?: "first_admission" | "continuation";
+  projectContext?: ProjectExecutionContext;
 }): Promise<TaskSpecAdmissionResult> {
-  const evaluated = await evaluateTaskSpecAdmission(input);
-  if (evaluated.decision !== "accepted") {
-    await persistTaskSpecAdmissionResult(input.projectRoot, evaluated);
-    // A non-accepted preview must never enter Runtime. If such a file already
-    // exists in the formal inbox (legacy/manual write), dispatch treats it as
-    // rejected while the persisted admission record keeps the precise
-    // needs_revision / needs_approval authoring decision.
-    return {
-      ...evaluated,
-      decision: "rejected",
-      code: TASK_SPEC_INVALID,
-    };
-  }
-
+  const stage = input.stage ?? "first_admission";
+  const projectContext = input.projectContext ?? createProjectExecutionContext({
+    projectRoot: input.projectRoot,
+  });
+  assertProjectExecutionContext(projectContext, input.projectRoot);
+  const projectRoot = projectContext.project_root;
   const sender = String(
     input.task.sender ?? input.task.frontmatter["sender"] ?? "",
   ).toUpperCase();
@@ -1119,7 +1291,10 @@ export async function verifyTaskSpecAdmissionForDispatch(input: {
     input.task.recipient ?? input.task.frontmatter["recipient"] ?? "",
   ).toUpperCase();
   if (sender !== "ADMIN" || recipient !== "PM") {
-    return evaluated;
+    const evaluated = await evaluateTaskSpecAdmission({ projectRoot, task: input.task });
+    return evaluated.decision === "accepted"
+      ? evaluated
+      : { ...evaluated, decision: "rejected", code: TASK_SPEC_INVALID };
   }
 
   const submissionId = String(
@@ -1128,12 +1303,20 @@ export async function verifyTaskSpecAdmissionForDispatch(input: {
   if (!submissionId) {
     // Legacy valid tasks are admitted once on first dispatch. Legacy invalid
     // tasks are rejected by the evaluation above and can never reach Session.
-    await persistTaskSpecAdmissionResult(input.projectRoot, evaluated);
-    return evaluated;
+    const evaluated = await evaluateTaskSpecAdmission({ projectRoot, task: input.task });
+    await persistTaskSpecAdmissionResult(projectRoot, evaluated);
+    return evaluated.decision === "accepted"
+      ? evaluated
+      : { ...evaluated, decision: "rejected", code: TASK_SPEC_INVALID };
   }
 
   const taskId = taskIdOf(input.task);
-  const recordPath = taskSpecAdmissionRecordPath(input.projectRoot, taskId);
+  const recordPath = taskSpecAdmissionRecordPath(projectRoot, taskId);
+  const safeSubmissionId = submissionId.replace(/[^A-Za-z0-9._-]/g, "-");
+  const submissionPath = join(
+    projectContext.task_submission_root,
+    `${safeSubmissionId}.json`,
+  );
   let record: Record<string, unknown> | null = null;
   try {
     record = JSON.parse(await readFile(recordPath, "utf8")) as Record<
@@ -1143,6 +1326,19 @@ export async function verifyTaskSpecAdmissionForDispatch(input: {
   } catch {
     record = null;
   }
+  const recordSnapshot = parseRecordedSnapshot(record?.["authored_snapshot"]);
+  const fallbackSnapshot = taskSpecAuthoredSnapshot(input.task);
+  const baseResult = resultFromAdmissionRecord(record, taskId, fallbackSnapshot);
+  const makeDiagnostics = (differences: string[] = []): TaskSpecAdmissionDiagnostics => ({
+    validation_stage: stage,
+    project_context_id: projectContext.context_id,
+    project_context_digest: projectContext.context_digest,
+    project_root: projectRoot,
+    proof_path: recordPath,
+    submission_path: submissionPath,
+    compared_fields: Object.keys(recordSnapshot?.frontmatter ?? fallbackSnapshot.frontmatter).sort(),
+    differences,
+  });
   if (
     !record ||
     record["decision"] !== "accepted" ||
@@ -1152,7 +1348,7 @@ export async function verifyTaskSpecAdmissionForDispatch(input: {
     record["blocking_findings"].length !== 0
   ) {
     return {
-      ...evaluated,
+      ...baseResult,
       decision: "rejected",
       code: TASK_SPEC_INVALID,
       blocking_findings: [
@@ -1164,27 +1360,20 @@ export async function verifyTaskSpecAdmissionForDispatch(input: {
           expected: `${submissionId} -> ${taskId}`,
           actual: record ? "invalid admission proof" : "missing admission proof",
           suggested_fix:
-            "review the submission in Task Delivery Review and formalize it again",
+            stage === "continuation"
+              ? `repair the proof binding at ${recordPath}; do not create a replacement TASK`
+              : "review the submission transaction; do not copy proof files across project roots",
           can_auto_fix: false,
         }),
       ],
-      capability_matrix: evaluated.capability_matrix,
+      diagnostics: makeDiagnostics([record ? "proof_record_invalid" : "proof_record_missing"]),
     };
   }
 
   let submission: Record<string, unknown> | null = null;
   try {
-    const safeSubmissionId = submissionId.replace(/[^A-Za-z0-9._-]/g, "-");
     submission = JSON.parse(
-      await readFile(
-        join(
-          input.projectRoot,
-          ".codeflowmu",
-          "task-submissions",
-          `${safeSubmissionId}.json`,
-        ),
-        "utf8",
-      ),
+      await readFile(submissionPath, "utf8"),
     ) as Record<string, unknown>;
   } catch {
     submission = null;
@@ -1193,12 +1382,11 @@ export async function verifyTaskSpecAdmissionForDispatch(input: {
     !submission ||
     submission["status"] !== "created" ||
     submission["formal_task_id"] !== taskId ||
-    submission["content_digest"] !== evaluated.content_digest ||
     Number(submission["admission_revision"] ?? 0) !==
       Number(input.task.frontmatter["admission_revision"] ?? 0)
   ) {
     return {
-      ...evaluated,
+      ...baseResult,
       decision: "rejected",
       code: TASK_SPEC_INVALID,
       blocking_findings: [
@@ -1212,25 +1400,35 @@ export async function verifyTaskSpecAdmissionForDispatch(input: {
             ? `status=${String(submission["status"] ?? "unknown")}`
             : "missing submission record",
           suggested_fix:
-            "retry formalization from Task Delivery Review; do not wake the task directly",
+            stage === "continuation"
+              ? `repair the incomplete submission transaction at ${submissionPath}; do not re-formalize the accepted TASK`
+              : "complete the atomic Task Delivery Review transaction before first dispatch",
           can_auto_fix: false,
         }),
       ],
-      capability_matrix: evaluated.capability_matrix,
+      diagnostics: makeDiagnostics([submission ? "submission_record_invalid" : "submission_record_missing"]),
     };
   }
 
+  const expectedSnapshot =
+    recordSnapshot ?? snapshotFromSubmissionRecord(submission) ?? fallbackSnapshot;
+  const currentAuthored = projectTaskOntoSnapshot(input.task, expectedSnapshot);
+  const currentDigest = digestSnapshot(currentAuthored);
+  const expectedDigest = String(record["content_digest"] ?? submission["content_digest"] ?? "").trim();
+  const differences = diffAuthoredSnapshots(expectedSnapshot, currentAuthored);
   const declaredDigest = String(
     input.task.frontmatter["admission_digest"] ?? "",
   ).trim();
   const recordedDigest = String(record["content_digest"] ?? "").trim();
   if (
     !declaredDigest ||
-    declaredDigest !== evaluated.content_digest ||
-    recordedDigest !== evaluated.content_digest
+    declaredDigest !== expectedDigest ||
+    recordedDigest !== expectedDigest ||
+    String(submission["content_digest"] ?? "").trim() !== expectedDigest ||
+    currentDigest !== expectedDigest
   ) {
     return {
-      ...evaluated,
+      ...baseResult,
       decision: "rejected",
       code: TASK_SPEC_INVALID,
       blocking_findings: [
@@ -1240,14 +1438,22 @@ export async function verifyTaskSpecAdmissionForDispatch(input: {
           message:
             "formal task content changed after admission or does not match its submission",
           expected: recordedDigest || declaredDigest || "(missing)",
-          actual: evaluated.content_digest,
+          actual: currentDigest,
           suggested_fix:
             "create a new submission revision and run admission again",
           can_auto_fix: false,
         }),
       ],
-      capability_matrix: evaluated.capability_matrix,
+      diagnostics: makeDiagnostics(differences.length > 0 ? differences : ["digest_binding_mismatch"]),
     };
   }
-  return evaluated;
+  return {
+    ...baseResult,
+    decision: "accepted",
+    code: TASK_SPEC_VALID,
+    content_digest: expectedDigest,
+    blocking_findings: [],
+    authored_snapshot: expectedSnapshot,
+    diagnostics: makeDiagnostics(),
+  };
 }

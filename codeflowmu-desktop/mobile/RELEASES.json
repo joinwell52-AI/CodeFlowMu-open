@@ -2,6 +2,17 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "V1.0.63",
+      "resource_version": "1.0.63",
+      "released_at": "2026-08-05T03:16:29Z",
+      "name": "长期任务续办与事实证据门禁统一",
+      "changes": [
+        "任务详情新增事实检查修正入口，统一调用 PC、Mobile API 与 MCP 共用的正式决定服务",
+        "等待 PM 判断时可退回补证、确认事实不成立、接受证据例外或重新检查，并保留幂等审计记录",
+        "长期任务状态展示区分逻辑任务与物理 Session，避免把续办误显示为新任务或任务完成"
+      ]
+    },
+    {
       "version": "V1.0.62",
       "resource_version": "1.0.62",
       "released_at": "2026-08-04T06:47:17Z",

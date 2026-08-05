@@ -41,7 +41,7 @@
  */
 
 import { promises as fs, readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { toLocalIsoString } from "../_internal/local-iso.ts";
@@ -161,6 +161,8 @@ import {
   DispatchAttemptStore,
   type DispatchAttempt,
   type ExecutionLease,
+  type TaskExecutionDecision,
+  type TaskExecutionDecisionValue,
 } from "./DispatchAttemptStore.ts";
 import {
   classifyTaskDispatchStall,
@@ -168,9 +170,15 @@ import {
 } from "./TaskDispatchStall.ts";
 import {
   taskSpecAdmissionRecordPath,
+  taskSpecContentDigest,
   verifyTaskSpecAdmissionForDispatch,
   type TaskSpecAdmissionRejected,
 } from "../pm/TaskSpecAdmissionGate.ts";
+import {
+  assertProjectExecutionContext,
+  createProjectExecutionContext,
+  type ProjectExecutionContext,
+} from "../project/ProjectExecutionContext.ts";
 
 /** Align session/prompt task_id with LedgerBuilder.canonicalTaskId semantics. */
 function resolveCanonicalTaskId(
@@ -236,6 +244,8 @@ export interface TaskDispatcherOpts {
   now?: () => Date;
   /** Repo root — enables PM playbook auto_inject on dispatch. */
   projectRoot?: string;
+  /** Immutable request/composition context shared by Runtime writers. */
+  projectContext?: ProjectExecutionContext;
   /** Dispatch failure backoff; defaults to runtime singleton. */
   dispatchRetryRegistry?: DispatchRetryRegistry;
   /**
@@ -475,6 +485,7 @@ export type DispatchOutcome =
         | "already_done"
         | "execution_blocked"
         | "product_brief_required"
+        | "planning_grant_required"
         | "invalid_task_file"
         | "cancelled"
         | "superseded";
@@ -565,6 +576,7 @@ export class TaskDispatcher {
   private readonly _projectRoot: string | undefined;
   private readonly _dispatchRetryRegistry: DispatchRetryRegistry;
   private readonly _dispatchAttemptStore: DispatchAttemptStore | undefined;
+  private readonly _projectContext: ProjectExecutionContext | undefined;
   private readonly _minScheduleRetryDelayMs: number;
   private _dispatchRetryHook: DispatchRetryHook | null = null;
 
@@ -586,7 +598,13 @@ export class TaskDispatcher {
     this._reportGate = opts.reportGate;
     this._panelEvents = opts.panelEvents;
     this._pmQueueGuard = opts.pmQueueGuard;
-    this._projectRoot = opts.projectRoot;
+    this._projectRoot = opts.projectContext?.project_root ?? opts.projectRoot;
+    this._projectContext = opts.projectContext ?? (this._projectRoot
+      ? createProjectExecutionContext({ projectRoot: this._projectRoot })
+      : undefined);
+    if (opts.projectContext && opts.projectRoot) {
+      assertProjectExecutionContext(opts.projectContext, opts.projectRoot);
+    }
     this._dispatchRetryRegistry =
       opts.dispatchRetryRegistry ?? dispatchRetryRegistry;
     this._dispatchAttemptStore = this._projectRoot
@@ -1235,6 +1253,15 @@ export class TaskDispatcher {
     }
     const dependency = await evaluateTaskDependencyGate(task, this._projectRoot);
     if (!dependency.allowed) throw new Error(`DEPENDENCY_PENDING:${dependency.dependencyTaskIds.join(",")}`);
+    const claimOperationId = input.idempotencyKey ?? `agent-claim:${taskId}:${input.sessionId}`;
+    const claimDecision = await this._dispatchAttemptStore.recordDecision({
+      operation_id: claimOperationId,
+      task_id: taskId,
+      input_digest: taskSpecContentDigest(task),
+      decision: "ALLOW",
+      reason: "agent_identity_and_dependency_gates_passed",
+      source: "agent_self_claim",
+    });
     const offered = await this._dispatchAttemptStore.offer({
       task_id: taskId,
       task_path: located.path,
@@ -1244,7 +1271,7 @@ export class TaskDispatcher {
       target_agent_id: input.agentId,
       source: "agent_self_claim",
       mode: "agent_claim",
-      idempotency_key: input.idempotencyKey ?? `agent-claim:${taskId}:${input.sessionId}`,
+      idempotency_key: claimOperationId,
     });
     const claimed = await this._dispatchAttemptStore.claim({
       taskId,
@@ -1257,6 +1284,7 @@ export class TaskDispatcher {
       attemptId: offered.attempt.attempt_id,
       leaseId: claimed.lease.lease_id,
       agentId: input.agentId,
+      decision: claimDecision,
     });
     await this._dispatchAttemptStore.markRunning(offered.attempt.attempt_id, input.sessionId);
     return {
@@ -1412,6 +1440,39 @@ export class TaskDispatcher {
       expectedRecipient: recipient,
       expectedSender: extractSenderFromFilename(filename),
     });
+    const decisionTaskId = resolveCanonicalTaskId(filename, parsedForGate);
+    const decisionInputDigest = taskSpecContentDigest(parsedForGate);
+    const decisionOperationId = options?.idempotencyKey ??
+      `dispatch:${options?.mode ?? "initial"}:${randomUUID()}`;
+    const recordDecision = async (
+      decision: TaskExecutionDecisionValue,
+      reason: string,
+    ): Promise<TaskExecutionDecision | undefined> => {
+      try {
+        return await this._dispatchAttemptStore?.recordDecision({
+          operation_id: decisionOperationId,
+          task_id: decisionTaskId,
+          input_digest: decisionInputDigest,
+          decision,
+          reason,
+          source: _source ?? "control_plane",
+        });
+      } catch (error) {
+        if (String(error).includes("STATE_DECISION_CONFLICT")) {
+          this._panelEvents?.emit("codeflowmu.state_decision_conflict", {
+            event: "STATE_DECISION_CONFLICT",
+            priority: "high",
+            operation_id: decisionOperationId,
+            task_id: decisionTaskId,
+            input_digest: decisionInputDigest,
+            attempted_decision: decision,
+            attempted_reason: reason,
+            at: toLocalIsoString(this._now()),
+          });
+        }
+        throw error;
+      }
+    };
     if (durableErrors.length > 0) {
       const detail = durableErrors.join(", ");
       this._logger.warn(
@@ -1426,6 +1487,7 @@ export class TaskDispatcher {
         role: recipient,
         at: toLocalIsoString(this._now()),
       });
+      await recordDecision("REJECT", `invalid_task_file:${detail}`);
       return { kind: "dispatch_skipped", reason: "invalid_task_file", detail };
     }
 
@@ -1433,8 +1495,17 @@ export class TaskDispatcher {
       const admission = await verifyTaskSpecAdmissionForDispatch({
         projectRoot: this._projectRoot,
         task: parsedForGate,
+        stage:
+          options?.mode && options.mode !== "initial"
+            ? "continuation"
+            : "first_admission",
+        projectContext: this._projectContext,
       });
       if (admission.decision === "rejected") {
+        await recordDecision(
+          "REJECT",
+          `task_spec:${admission.blocking_findings.map((finding) => finding.id).join(",")}`,
+        );
         const resultPath = taskSpecAdmissionRecordPath(
           this._projectRoot,
           admission.task_id,
@@ -1495,6 +1566,7 @@ export class TaskDispatcher {
               `[TaskDispatcher] ${productGate.reason} ${filename}: ${detail}`,
             );
           }
+          await recordDecision("WAIT", productGate.reason);
           return {
             kind: "dispatch_skipped",
             reason: productGate.reason,
@@ -1523,6 +1595,7 @@ export class TaskDispatcher {
             at: toLocalIsoString(this._now()),
           });
         }
+        await recordDecision("WAIT", "dependency_pending");
         return {
           kind: "dependency_pending",
           reason,
@@ -1583,6 +1656,7 @@ export class TaskDispatcher {
               `[TaskDispatcher] qa_dispatch_blocked ${filename}: ${skipReason}${qaGate.detail ? ` (${qaGate.detail})` : ""}`,
             );
           }
+          await recordDecision("WAIT", skipReason);
           return {
             kind: "dispatch_skipped",
             reason: skipReason,
@@ -1650,6 +1724,7 @@ export class TaskDispatcher {
               `[TaskDispatcher] dispatch_skipped ${filename}: ${skipReason}${gate.detail ? ` (${gate.detail})` : ""}`,
             );
           }
+          await recordDecision("WAIT", skipReason);
           return {
             kind: "dispatch_skipped",
             reason: skipReason,
@@ -1660,8 +1735,10 @@ export class TaskDispatcher {
       }
     }
 
+    const allowDecision = await recordDecision("ALLOW", "all_dispatch_gates_passed");
     const outcome = await this._dispatch(filepath, filename, recipient, {
       controlPlane: options,
+      executionDecision: allowDecision,
     });
     if (outcome.kind === "dependency_pending") {
       return outcome;
@@ -1979,6 +2056,7 @@ export class TaskDispatcher {
     opts: {
       silentAlreadyDispatched?: boolean;
       controlPlane?: DispatchControlPlaneOptions;
+      executionDecision?: TaskExecutionDecision;
     } = {},
   ): Promise<DispatchOutcome> {
     const cp = opts.controlPlane;
@@ -2306,6 +2384,7 @@ export class TaskDispatcher {
                 attemptId: claimed.attempt.attempt_id,
                 leaseId: claimed.lease.lease_id,
                 agentId: agent.protocol.agent_id,
+                decision: opts.executionDecision,
               }
             : undefined,
         );

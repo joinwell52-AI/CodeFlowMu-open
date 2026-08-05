@@ -57,10 +57,28 @@ export {
   detectReportClaims,
   evaluateReviewFactGate,
   type FactCheckVerdict,
+  type ReviewFactState,
   type FactCheckReasonCode,
   type ReportClaims,
   type FactCheckResult,
 } from "./ReviewFactGate.ts";
+
+export {
+  compileAcceptanceContract,
+  evaluateAcceptanceContract,
+  type AcceptanceContract,
+  type AcceptanceContractItem,
+  type AcceptanceContractEvaluation,
+  type AcceptanceEvidenceType,
+  type EvidenceEnvelope,
+} from "./AcceptanceContract.ts";
+
+export {
+  FactCheckDecisionService,
+  FactCheckDecisionError,
+  type FactCheckDecisionAction,
+  type FactCheckDecisionRecord,
+} from "./FactCheckDecisionService.ts";
 
 export {
   writeFactCheckReview,

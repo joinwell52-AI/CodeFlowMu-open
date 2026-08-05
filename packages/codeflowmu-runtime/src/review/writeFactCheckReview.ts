@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import {
@@ -20,6 +21,12 @@ export type WriteFactCheckReviewInput = {
   evidence: EvidenceSummary;
   result: FactCheckResult;
   now?: () => Date;
+};
+
+export type WriteFactCheckReviewResult = {
+  path: string;
+  created: boolean;
+  review_input_digest: string;
 };
 
 function dateKey(d: Date): string {
@@ -69,6 +76,7 @@ async function findExistingFactCheckReview(
   reviewsDir: string,
   taskId: string,
   reportId: string,
+  reviewInputDigest: string,
 ): Promise<string | null> {
   const suffix = `-on-${taskId}.md`;
   const wantReport = normalizeReportRef(reportId);
@@ -86,7 +94,11 @@ async function findExistingFactCheckReview(
     const rid = normalizeReportRef(
       strField(fm, "report_id") || strField(fm, "subject_id"),
     );
-    if (rid && rid === wantReport) return path;
+    if (
+      rid &&
+      rid === wantReport &&
+      strField(fm, "review_input_digest") === reviewInputDigest
+    ) return path;
   }
   return null;
 }
@@ -96,17 +108,31 @@ async function findExistingFactCheckReview(
  */
 export async function writeFactCheckReview(
   input: WriteFactCheckReviewInput,
-): Promise<string> {
+): Promise<WriteFactCheckReviewResult> {
   const now = input.now?.() ?? new Date();
   const layout = resolveLedgerLayout(input.projectRoot);
   await fs.mkdir(layout.reviewsDir, { recursive: true });
+
+  const reviewInputDigest = `sha256:${createHash("sha256").update(JSON.stringify({
+    task_id: input.taskId,
+    report_id: input.reportId,
+    result: input.result,
+    evidence: input.evidence,
+  })).digest("hex")}`;
 
   const existing = await findExistingFactCheckReview(
     layout.reviewsDir,
     input.taskId,
     input.reportId,
+    reviewInputDigest,
   );
-  if (existing) return existing;
+  if (existing) {
+    return {
+      path: existing,
+      created: false,
+      review_input_digest: reviewInputDigest,
+    };
+  }
 
   const dk = dateKey(now);
   const seq = await nextReviewSeq(layout.reviewsDir, dk);
@@ -131,7 +157,13 @@ export async function writeFactCheckReview(
       decision,
       reviewed_at: reviewedAt,
       fact_check_verdict: input.result.verdict,
+      review_state: input.result.review_state ??
+        (input.result.verdict === "pass" ? "pass" : input.result.verdict === "fail" ? "deterministic_fail" : "needs_pm"),
       reason_code: input.result.reason_code,
+      review_input_digest: reviewInputDigest,
+      acceptance_contract_digest: input.result.acceptance_contract_digest,
+      evidence_digest: input.result.evidence_digest,
+      failed_item_ids: input.result.failed_item_ids ?? [],
     }),
     "",
     "# Review Fact Check / 事实核查",
@@ -180,5 +212,9 @@ export async function writeFactCheckReview(
   }
 
   await fs.writeFile(path, bodyLines.join("\n"), "utf-8");
-  return path;
+  return {
+    path,
+    created: true,
+    review_input_digest: reviewInputDigest,
+  };
 }

@@ -1,6 +1,7 @@
 import type { EvidenceSummary } from "./ReviewEvidenceResolver.ts";
 
 export type FactCheckVerdict = "pass" | "fail" | "needs_admin";
+export type ReviewFactState = "pass" | "deterministic_fail" | "needs_pm";
 
 export type FactCheckReasonCode =
   | "missing_test_evidence"
@@ -15,7 +16,11 @@ export type FactCheckReasonCode =
   | "evidence_verified"
   | "ack_only_done_report"
   | "qa_acceptance_evidence_missing"
-  | "browser_evidence_required";
+  | "browser_evidence_required"
+  | "acceptance_contract_failed"
+  | "acceptance_contract_needs_pm"
+  | "acceptance_contract_missing"
+  | "qa_business_fail";
 
 export type ReportClaims = {
   claimsTestRun: boolean;
@@ -28,10 +33,14 @@ export type ReportClaims = {
 
 export type FactCheckResult = {
   verdict: FactCheckVerdict;
+  review_state?: ReviewFactState;
   reason_code: FactCheckReasonCode;
   unsupported_claims: string[];
   required_changes: string[];
   claims: ReportClaims;
+  acceptance_contract_digest?: string;
+  evidence_digest?: string;
+  failed_item_ids?: string[];
 };
 
 const TEST_RUN_PATTERNS = [

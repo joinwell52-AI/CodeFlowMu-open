@@ -26262,6 +26262,13 @@ async function loadPmHeartbeatSettingsUi(){
         '定时器：'+(h.scheduler_running?'运行中':'未运行'),
         '最近判定：'+(tick?(String(tick.status||'—')+' · '+String(tick.observed_at||'—')):'暂无 tick'),
         '跳过/失败原因：'+(tick&&tick.skip_reason?String(tick.skip_reason):'无'),
+        '策略裁决：'+(tick&&tick.policy_code?String(tick.policy_code):'—'),
+        'Wake 传输：'+(tick&&tick.transport_status?String(tick.transport_status):'—'),
+        '业务进展：'+(tick&&tick.business_state?String(tick.business_state):'—'),
+        '失败 findings：'+(tick&&Array.isArray(tick.finding_ids)&&tick.finding_ids.length?tick.finding_ids.join(', '):'无'),
+        '响应摘要：'+(tick&&tick.response_summary?String(tick.response_summary):'—'),
+        '相同首因累计：'+(tick?String(tick.repeat_count||1):'—'),
+        '逻辑任务 / Session：'+(tick?(String(tick.task_id||'—')+' / '+String(tick.session_id||tick.active_session||'—')):'—'),
         '最近成功 wake：'+(wake?(String(wake.started_at||'—')+' · '+String(wake.session_id||'—')):'暂无'),
       ].join('\n');
     }

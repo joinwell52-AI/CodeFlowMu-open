@@ -1,5 +1,7 @@
 ﻿import path from "node:path";
 
+import { unlink } from "node:fs/promises";
+
 /**
  * `FcopProjectClient` — pythonia-backed bridge to `fcop@1.1.0` Python API.
  *
@@ -321,6 +323,27 @@ export interface WriteTaskSpec {
   parent?: string;
   slot?: string;
   risk_level?: RiskLevel;
+}
+
+export function validateWrittenTaskIdentity(
+  task: FcopTask,
+  spec: WriteTaskSpec,
+): string[] {
+  const errors: string[] = [];
+  const sender = spec.sender.trim().toUpperCase();
+  const recipient = spec.recipient.trim().toUpperCase();
+  if (task.sender.trim().toUpperCase() !== sender) errors.push("sender_mismatch");
+  if (task.recipient.trim().toUpperCase() !== recipient) errors.push("recipient_mismatch");
+  if (spec.parent != null && String(task.parent ?? "").trim() !== spec.parent.trim()) {
+    errors.push("parent_mismatch");
+  }
+  if (!task.filename.toUpperCase().includes(`-${sender}-TO-${recipient}`)) {
+    errors.push("recipient_filename_mismatch");
+  }
+  if (!task.filename.toUpperCase().startsWith(task.task_id.toUpperCase())) {
+    errors.push("task_id_filename_mismatch");
+  }
+  return errors;
 }
 
 /** Filter for `listTasks`. */
@@ -658,7 +681,26 @@ export class FcopProjectClient {
       if (spec.slot !== undefined) kwargs["slot"] = spec.slot;
       if (spec.risk_level !== undefined) kwargs["risk_level"] = spec.risk_level;
       const taskProxy = await p.write_task$(kwargs);
-      return await readTask(taskProxy);
+      const task = await readTask(taskProxy);
+      const identityErrors = validateWrittenTaskIdentity(task, spec);
+      if (identityErrors.length > 0) {
+        const projectRoot = path.resolve(this.projectRoot);
+        const taskPath = path.resolve(task.path);
+        if (
+          taskPath !== projectRoot &&
+          taskPath.toLowerCase().startsWith(`${projectRoot.toLowerCase()}${path.sep}`)
+        ) {
+          // The invalid file was created by this call. Roll it back before
+          // surfacing the transaction failure; never leave watcher-visible
+          // recipient/filename drift on disk.
+          await unlink(taskPath).catch(() => undefined);
+        }
+        throw new FcopClientError(
+          `TASK_WRITE_IDENTITY_CONFLICT:${identityErrors.join(",")}`,
+          "FcopProjectClient.writeTask",
+        );
+      }
+      return task;
     } catch (err) {
       if (err instanceof FcopClientError) throw err;
       throw new FcopClientError(

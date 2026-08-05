@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { createHash } from "node:crypto";
 import { basename, join } from "node:path";
 
 import {
@@ -16,7 +17,11 @@ import { TaskFrontmatterStore } from "../lifecycle/TaskFrontmatterStore.ts";
 import { LifecycleKernel } from "../lifecycle/LifecycleKernel.ts";
 import { bodyAfterFrontmatter } from "../ledger/leaderLedgerContextPack.ts";
 import { resolveReviewEvidence } from "../review/ReviewEvidenceResolver.ts";
-import { evaluateReviewFactGate } from "../review/ReviewFactGate.ts";
+import { detectReportClaims, evaluateReviewFactGate } from "../review/ReviewFactGate.ts";
+import {
+  compileAcceptanceContract,
+  evaluateAcceptanceContract,
+} from "../review/AcceptanceContract.ts";
 import {
   buildPmAttentionReason,
   writeFactCheckReview,
@@ -26,6 +31,17 @@ import type { LifecycleGovernor } from "./LifecycleGovernor.ts";
 import { tryApplyLateReportIntake } from "../pm/lateReportIntake.ts";
 import { isWorkerReportToPm } from "../fcop/governance.ts";
 import { buildReportIssueDoc } from "./reportIssueTemplate.ts";
+import { evaluateQaReportAcceptance } from "../pm/qaAcceptanceFromReport.ts";
+import { allocateTaskSequence } from "./TaskIdentityAllocator.ts";
+import {
+  DispatchAttemptStore,
+  type TaskExecutionDecision,
+} from "./DispatchAttemptStore.ts";
+import {
+  assertProjectExecutionContext,
+  createProjectExecutionContext,
+  type ProjectExecutionContext,
+} from "../project/ProjectExecutionContext.ts";
 
 export type ReportActionRequest =
   | "submit_task"
@@ -47,6 +63,7 @@ export type ReportActionOutcome =
 
 export interface ReportActionResolverOpts {
   projectRoot: string;
+  projectContext?: ProjectExecutionContext;
   lifecycleGovernor: LifecycleGovernor;
   logger?: {
     info?(msg: string): void;
@@ -115,6 +132,22 @@ async function nextSequencedPath(
   collisionDirs: string[] = [dir],
 ): Promise<string> {
   await fs.mkdir(dir, { recursive: true });
+  if (prefix === "TASK") {
+    const projectRoot = join(dir, "..", "..", "..");
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const seq = allocateTaskSequence(projectRoot, dateKey);
+      const path = join(dir, `${prefix}-${dateKey}-${seq}${suffix}.md`);
+      try {
+        const handle = await fs.open(path, "wx");
+        await handle.close();
+        return path;
+      } catch (error) {
+        if ((error as { code?: string }).code === "EEXIST") continue;
+        throw error;
+      }
+    }
+    throw new Error(`no ${prefix} identity available for ${dateKey}`);
+  }
   for (let i = 1; i <= 999; i += 1) {
     const seq = String(i).padStart(3, "0");
     const filename = `${prefix}-${dateKey}-${seq}${suffix}.md`;
@@ -165,14 +198,19 @@ export class ReportActionResolver {
   readonly #now: () => Date;
   readonly #processed = new Set<string>();
   readonly #store = new TaskFrontmatterStore();
+  readonly #projectContext: ProjectExecutionContext;
+  readonly #decisionStore: DispatchAttemptStore;
 
   constructor(opts: ReportActionResolverOpts) {
-    this.#projectRoot = opts.projectRoot;
+    this.#projectRoot = opts.projectContext?.project_root ?? opts.projectRoot;
+    this.#projectContext = opts.projectContext ?? createProjectExecutionContext({ projectRoot: opts.projectRoot });
+    assertProjectExecutionContext(this.#projectContext, opts.projectRoot);
     this.#layout = resolveLedgerLayout(opts.projectRoot);
     this.#lifecycleGovernor = opts.lifecycleGovernor;
     this.#log = opts.logger ?? {};
     this.#panelEvents = opts.panelEvents;
     this.#now = opts.now ?? (() => new Date());
+    this.#decisionStore = new DispatchAttemptStore({ projectRoot: this.#projectRoot, now: this.#now });
   }
 
   scheduleResolve(reportFilePath: string): void {
@@ -186,18 +224,30 @@ export class ReportActionResolver {
   }
 
   async resolve(reportFilePath: string): Promise<ReportActionOutcome> {
+    assertProjectExecutionContext(this.#projectContext, this.#projectRoot);
     const raw = await fs.readFile(reportFilePath, "utf-8");
     const fm = parseMarkdownFrontmatter(raw);
     const reportId = reportIdFromPath(reportFilePath, fm);
-    if (this.#processed.has(reportId)) return "duplicate";
-    if (await this.#hasProcessedArtifact(reportId)) {
-      this.#processed.add(reportId);
-      return "duplicate";
-    }
-
     const action = inferAction(fm);
+    const sourceProcessingKey = createHash("sha256")
+      .update(reportId)
+      .update("\n")
+      .update(raw)
+      .digest("hex");
+    // submit_task must reach the fact/evidence gate on every observation:
+    // external evidence can be revised without mutating the immutable REPORT.
+    // The fact review and rework-key stores provide durable idempotency after
+    // evidence resolution. Other explicit actions remain source-revision
+    // idempotent here.
+    if (action !== "submit_task") {
+      if (this.#processed.has(sourceProcessingKey)) return "duplicate";
+      if (await this.#hasProcessedArtifact(reportId)) {
+        this.#processed.add(sourceProcessingKey);
+        return "duplicate";
+      }
+    }
     if (action === "none") {
-      this.#processed.add(reportId);
+      this.#processed.add(sourceProcessingKey);
       return "noop";
     }
 
@@ -268,7 +318,6 @@ export class ReportActionResolver {
           now: this.#now,
         });
         if (late) {
-          this.#processed.add(reportId);
           return "late_intake";
         }
       }
@@ -280,7 +329,6 @@ export class ReportActionResolver {
         located,
         taskId,
       );
-      this.#processed.add(reportId);
       return outcome;
     }
     if (action === "request_rework") {
@@ -291,7 +339,7 @@ export class ReportActionResolver {
         fm,
         located,
       );
-      this.#processed.add(reportId);
+      this.#processed.add(sourceProcessingKey);
       return outcome;
     }
     if (action === "raise_issue") {
@@ -305,10 +353,10 @@ export class ReportActionResolver {
         raw,
         fm,
       );
-      this.#processed.add(reportId);
+      this.#processed.add(sourceProcessingKey);
       return outcome;
     }
-    this.#processed.add(reportId);
+    this.#processed.add(sourceProcessingKey);
     return "noop";
   }
 
@@ -363,13 +411,75 @@ export class ReportActionResolver {
       thread_key: strField(fm, "thread_key") || undefined,
     });
     const reportBody = bodyAfterFrontmatter(raw);
-    const factResult = evaluateReviewFactGate(evidence, reportBody, {
-      session_id: sessionId || undefined,
-      report_status: strField(fm, "status") || undefined,
-      reporter_role: reporterRole || undefined,
+    const taskRaw = await fs.readFile(located.path, "utf-8");
+    const taskFm = parseMarkdownFrontmatter(taskRaw);
+    const contract = compileAcceptanceContract({
+      taskId,
+      taskFrontmatter: taskFm,
+      taskBody: bodyAfterFrontmatter(taskRaw),
     });
+    const qaBusiness = evaluateQaReportAcceptance({
+      status: strField(fm, "status") || undefined,
+      body: reportBody,
+      sender: reporterRole || undefined,
+      recipient: strField(fm, "recipient") || undefined,
+    });
+    let contractEvaluation: Awaited<ReturnType<typeof evaluateAcceptanceContract>> | null = null;
+    let factResult: FactCheckResult;
+    if (qaBusiness?.verdict === "fail") {
+      factResult = {
+        verdict: "needs_admin",
+        review_state: "needs_pm",
+        reason_code: "qa_business_fail",
+        unsupported_claims: [],
+        required_changes: [qaBusiness.reason],
+        claims: detectReportClaims(reportBody),
+        acceptance_contract_digest: contract.contract_digest,
+      };
+    } else if (contract.source === "task") {
+      contractEvaluation = await evaluateAcceptanceContract({
+        projectRoot: this.#projectRoot,
+        contract,
+        evidence,
+        reportId,
+        reportRevision: Number(fm["report_revision"] ?? fm["revision"] ?? 1) || 1,
+        sessionId: sessionId || undefined,
+        runId: runId || undefined,
+        producer: reporterRole || "runtime",
+      });
+      factResult = {
+        verdict: contractEvaluation.state === "pass"
+          ? "pass"
+          : contractEvaluation.state === "deterministic_fail"
+            ? "fail"
+            : "needs_admin",
+        review_state: contractEvaluation.state,
+        reason_code: contractEvaluation.state === "deterministic_fail"
+          ? "acceptance_contract_failed"
+          : contractEvaluation.state === "needs_pm"
+            ? "acceptance_contract_needs_pm"
+            : "evidence_verified",
+        unsupported_claims: contractEvaluation.findings,
+        required_changes: contractEvaluation.state === "pass"
+          ? []
+          : contractEvaluation.findings,
+        claims: detectReportClaims(reportBody),
+        acceptance_contract_digest: contract.contract_digest,
+        evidence_digest: contractEvaluation.evidence_digest,
+        failed_item_ids: contractEvaluation.failed_item_ids,
+      };
+    } else {
+      // Legacy compatibility only validates explicit factual claims made by
+      // this REPORT. Deliberately omit reporter_role so the former universal
+      // QA/browser checklist cannot invent acceptance items.
+      factResult = evaluateReviewFactGate(evidence, reportBody, {
+        session_id: sessionId || undefined,
+        report_status: strField(fm, "status") || undefined,
+      });
+      factResult.acceptance_contract_digest = contract.contract_digest;
+    }
 
-    await writeFactCheckReview({
+    const reviewWrite = await writeFactCheckReview({
       projectRoot: this.#projectRoot,
       taskId,
       reportId,
@@ -377,41 +487,63 @@ export class ReportActionResolver {
       result: factResult,
       now: this.#now,
     });
+    const duplicateReview = !reviewWrite.created;
 
-    if (factResult.verdict === "fail") {
-      if (reporterRole.toUpperCase() === "QA") {
-        const invalidFm = {
-          ...fm,
-          status: "rejected",
-          valid: false,
-          invalidated_by: "REVIEW-GATE",
-          invalid_reason: factResult.reason_code,
-          superseded_by: "pending_qa_rework",
-        };
-        await fs.writeFile(
-          reportFilePath,
-          `${renderFrontmatter(invalidFm)}\n\n${reportBody}\n`,
-          "utf-8",
-        );
+    const reviewState = factResult.review_state ??
+      (factResult.verdict === "pass" ? "pass" : factResult.verdict === "fail" ? "deterministic_fail" : "needs_pm");
+    let executionDecision: TaskExecutionDecision;
+    try {
+      executionDecision = await this.#decisionStore.recordDecision({
+        operation_id: `report-settlement:${reportId}`,
+        task_id: taskId,
+        input_digest: reviewWrite.review_input_digest,
+        decision:
+          reviewState === "pass"
+            ? "ALLOW"
+            : reviewState === "deterministic_fail"
+              ? "REJECT"
+              : "NEEDS_PM",
+        reason: factResult.reason_code || reviewState,
+        source: "ReportActionResolver",
+      });
+    } catch (error) {
+      this.#panelEvents?.emit("codeflowmu.state_decision_conflict", {
+        event: "STATE_DECISION_CONFLICT",
+        priority: "high",
+        task_id: taskId,
+        report_id: reportId,
+        operation_id: `report-settlement:${reportId}`,
+        input_digest: reviewWrite.review_input_digest,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+    if (reviewState === "deterministic_fail") {
+      if (contract.source === "task" || reporterRole.toUpperCase() === "QA") {
         await this.#markQaReworkRequired(located, taskId, reportId, factResult);
-        return this.#createReworkTask(
+        const outcome = await this.#createReworkTask(
           reportFilePath,
           reportId,
           raw,
           {
             ...fm,
             sender: "PM",
-            recipient: "QA",
+            recipient: reporterRole || "QA",
             rework_reason: buildPmAttentionReason(factResult),
+            report_revision: Number(fm["report_revision"] ?? fm["revision"] ?? 1) || 1,
+            acceptance_contract_digest: contract.contract_digest,
+            evidence_digest: contractEvaluation?.evidence_digest ?? "",
+            failed_item_ids: contractEvaluation?.failed_item_ids ?? [],
           },
           located,
         );
+        return duplicateReview ? "duplicate" : outcome;
       }
       await this.#markWaitingPmAttention(located, taskId, reportId, factResult);
-      return "waiting_pm_attention";
+      return duplicateReview ? "duplicate" : "waiting_pm_attention";
     }
 
-    if (factResult.verdict === "needs_admin") {
+    if (reviewState === "needs_pm") {
       await this.#markWaitingPmAttention(located, taskId, reportId, factResult);
       this.#panelEvents?.emit("codeflowmu.review.fact_check_needs_admin", {
         event: "fact_check_needs_admin",
@@ -419,12 +551,13 @@ export class ReportActionResolver {
         task_id: taskId,
         reason_code: factResult.reason_code,
       });
-      return "waiting_pm_attention";
+      return duplicateReview ? "duplicate" : "waiting_pm_attention";
     }
 
     await this.#clearPmAttentionIfStale(located);
     const settled =
-      await this.#lifecycleGovernor.resolveReportSettlement(reportFilePath);
+      await this.#lifecycleGovernor.resolveReportSettlement(reportFilePath, executionDecision);
+    if (duplicateReview) return "duplicate";
     if (settled === "reconciled") return "reconciled";
     return "submitted";
   }
@@ -507,8 +640,17 @@ export class ReportActionResolver {
       strField(reportFm, "parent") ||
         strField(taskFm, "parent") ||
         strField(taskFm, "parent_task") ||
-        taskId,
+      taskId,
     );
+    const failedItemIds = listField(reportFm, "failed_item_ids").sort();
+    const reworkKey = createHash("sha256").update(JSON.stringify({
+      source_report_id: reportId,
+      report_revision: Number(reportFm["report_revision"] ?? reportFm["revision"] ?? 1) || 1,
+      acceptance_contract_digest: strField(reportFm, "acceptance_contract_digest"),
+      evidence_digest: strField(reportFm, "evidence_digest"),
+      failed_item_ids: failedItemIds,
+    })).digest("hex");
+    if (await this.#hasReworkKey(reworkKey)) return "duplicate";
     const existingCount = await this.#countReworksForParent(parent);
     const requestedIndex = Number(strField(reportFm, "rework_index"));
     const reworkIndex =
@@ -517,16 +659,12 @@ export class ReportActionResolver {
         : existingCount + 1;
 
     if (existingCount >= MAX_REWORKS_PER_PARENT) {
-      const outcome = await this.#writeIssue(
-        reportFilePath,
-        reportId,
-        `rework limit reached for parent ${parent}`,
-        taskId,
-        strField(reportFm, "sender") || "runtime",
-        "REWORK_LIMIT_REACHED",
-        reportRaw,
-        reportFm,
-      );
+      const { fm, body } = await this.#store.read(located.path);
+      fm.display_status = "waiting_pm_attention";
+      fm.pm_attention_reason = `rework limit reached for parent ${parent}; PM decision required`;
+      fm.pm_attention_report_id = reportId;
+      await this.#store.write(located.path, fm, body);
+      await new LedgerBuilder({ projectRoot: this.#projectRoot }).rebuild();
       this.#panelEvents?.emit("codeflowmu.alert.rework_limit_reached", {
         event: "REWORK_LIMIT_REACHED",
         parent,
@@ -534,7 +672,7 @@ export class ReportActionResolver {
         report_id: reportId,
         max_reworks: MAX_REWORKS_PER_PARENT,
       });
-      return outcome;
+      return "waiting_pm_attention";
     }
 
     const dateKey = this.#dateKey();
@@ -569,6 +707,11 @@ export class ReportActionResolver {
         rework_index: reworkIndex,
         rework_reason: reason,
         source_report: reportId,
+        source_report_revision: Number(reportFm["report_revision"] ?? reportFm["revision"] ?? 1) || 1,
+        rework_key: reworkKey,
+        acceptance_contract_digest: strField(reportFm, "acceptance_contract_digest"),
+        evidence_digest: strField(reportFm, "evidence_digest"),
+        failed_item_ids: failedItemIds,
         references: [taskId, reportId],
         thread_key: strField(taskFm, "thread_key") || strField(reportFm, "thread_key"),
         priority: strField(taskFm, "priority") || "P1",
@@ -587,19 +730,6 @@ export class ReportActionResolver {
       "",
     ].join("\n");
     await writeExclusive(path, taskDoc);
-
-    // Replace the temporary marker written by the fact gate with the concrete
-    // rework task id so report history and task history point to the same edge.
-    const latestReportRaw = await fs.readFile(reportFilePath, "utf-8");
-    const latestReportFm = parseMarkdownFrontmatter(latestReportRaw);
-    await fs.writeFile(
-      reportFilePath,
-      `${renderFrontmatter({
-        ...latestReportFm,
-        superseded_by: newTaskId,
-      })}\n\n${bodyAfterFrontmatter(latestReportRaw)}\n`,
-      "utf-8",
-    );
     await new LifecycleKernel({
       lifecycleRoot: this.#layout.lifecycleRoot,
     }).runtimeSupersedeForRework({
@@ -627,7 +757,7 @@ export class ReportActionResolver {
     reportId: string,
     reason: string,
   ): Promise<ReportActionOutcome> {
-    this.#processed.add(reportId);
+    if (await this.#hasProcessedArtifact(reportId)) return "duplicate";
     let reportRaw = "";
     try {
       reportRaw = await fs.readFile(reportFilePath, "utf-8");
@@ -740,6 +870,26 @@ export class ReportActionResolver {
       }
     }
     return count;
+  }
+
+  async #hasReworkKey(reworkKey: string): Promise<boolean> {
+    const dirs = [
+      join(this.#layout.lifecycleRoot, "inbox"),
+      join(this.#layout.lifecycleRoot, "active"),
+      join(this.#layout.lifecycleRoot, "review"),
+      join(this.#layout.lifecycleRoot, "done"),
+      join(this.#layout.lifecycleRoot, "archive"),
+      this.#layout.tasksDir,
+    ];
+    for (const dir of dirs) {
+      const names = await fs.readdir(dir).catch(() => [] as string[]);
+      for (const name of names) {
+        if (!/^TASK-/i.test(name) || !name.endsWith(".md")) continue;
+        const raw = await fs.readFile(join(dir, name), "utf-8").catch(() => "");
+        if (strField(parseMarkdownFrontmatter(raw), "rework_key") === reworkKey) return true;
+      }
+    }
+    return false;
   }
 
   async #hasProcessedArtifact(reportId: string): Promise<boolean> {

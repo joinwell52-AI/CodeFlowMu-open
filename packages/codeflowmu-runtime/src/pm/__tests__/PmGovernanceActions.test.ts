@@ -11,6 +11,7 @@ import {
   detectThreadStall,
   closeAdminTaskDraft,
   buildWakeDownstreamRequest,
+  buildPmReportIntakeWakeRequest,
   buildAdminRejectPmWakeRequest,
   reviewCheck,
 } from "../PmGovernanceActions.ts";
@@ -218,11 +219,28 @@ describe("PmGovernanceActions", () => {
       thread_key: THREAD,
     });
     assert.equal(req.intent, "wake");
+    assert.equal(req.wake_kind, "task_dispatch");
     assert.equal(req.operator_role, "PM");
     assert.equal(req.agent_id, "OPS-01");
     assert.match(req.message, /非新派单/);
     assert.equal(req.journal_entry.action, "wake_agent");
+    assert.equal(req.journal_entry.wake_kind, "task_dispatch");
     assert.equal(req.journal_entry.reason, "nudge");
+  });
+
+  it("buildPmReportIntakeWakeRequest keeps worker TASK identity and wakes PM for review", () => {
+    const req = buildPmReportIntakeWakeRequest({
+      task_id: "TASK-20260805-010-PM-to-DEV",
+      report_id: "REPORT-20260805-011-DEV-to-PM",
+      thread_key: "wp-10",
+    });
+    assert.equal(req.wake_kind, "report_intake");
+    assert.equal(req.role, "PM");
+    assert.equal(req.task_id, "TASK-20260805-010-PM-to-DEV");
+    assert.equal(req.source_task_id, "TASK-20260805-010-PM-to-DEV");
+    assert.equal(req.report_id, "REPORT-20260805-011-DEV-to-PM");
+    assert.equal(req.journal_entry.wake_kind, "report_intake");
+    assert.equal(req.journal_entry.report_id, "REPORT-20260805-011-DEV-to-PM");
   });
 
   it("reviewCheck validates REPORT on disk with status done", async () => {
@@ -660,6 +678,7 @@ describe("PmGovernanceActions", () => {
     assert.match(plan.message, /write_task/);
     assert.match(plan.message, /禁止.*write_report/);
     assert.match(plan.journal_entry.reason, /admin_reject:TASK-20260606-007/);
+    assert.equal(plan.wake_kind, "governance_resume");
   });
 
   it("buildAdminRejectPmWakeRequest uses Hot Path when task body on disk declares PM 亲自执行", async () => {

@@ -119,6 +119,12 @@ export interface SessionRecord {
   runtime_thread_key?: string;
   /** Canonical ADMIN root task bound to this runtime session. */
   runtime_root_task_id?: string;
+  /** Stable logical execution shared by successor physical sessions for one task. */
+  runtime_logical_execution_id?: string;
+  /** Previous physical session when this session is an explicit continuation. */
+  runtime_continuation_of_session_id?: string;
+  /** Durable reason for creating a successor physical session. */
+  runtime_continuation_reason?: string;
   /** Team-config selection captured when this session started. */
   runtime_configured_model_id?: string;
   /** Final model id sent to the SDK for this immutable session. */

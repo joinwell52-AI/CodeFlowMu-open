@@ -1,12 +1,12 @@
 {
-  "app_version": "V1.0.62",
-  "resource_version": "1.0.62",
-  "cache_name": "codeflowmu-pwa-v1.0.62",
-  "updated_at": "2026-08-04T06:47:17Z",
-  "release_name": "ISSUE 结构化结案与母版证据闭环",
+  "app_version": "V1.0.63",
+  "resource_version": "1.0.63",
+  "cache_name": "codeflowmu-pwa-v1.0.63",
+  "updated_at": "2026-08-05T03:16:29Z",
+  "release_name": "长期任务续办与事实证据门禁统一",
   "changes": [
-    "移动端新增 ISSUE 结构化结案预览、必填校验、关闭与历史记录查看",
-    "统一展示结案摘要、根因状态、不可变摘要和母版证据升级状态",
-    "默认只生成本地脱敏证据包，不经 ADMIN 审批不会写入 GitHub"
+    "任务详情新增事实检查修正入口，统一调用 PC、Mobile API 与 MCP 共用的正式决定服务",
+    "等待 PM 判断时可退回补证、确认事实不成立、接受证据例外或重新检查，并保留幂等审计记录",
+    "长期任务状态展示区分逻辑任务与物理 Session，避免把续办误显示为新任务或任务完成"
   ]
 }

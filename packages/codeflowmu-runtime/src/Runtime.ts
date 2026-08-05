@@ -107,8 +107,15 @@ import {
   SkillRegistry,
 } from "./skill/index.ts";
 import type { ReconciliationReport } from "./types/state.ts";
+import {
+  assertProjectExecutionContext,
+  createProjectExecutionContext,
+  type ProjectExecutionContext,
+} from "./project/ProjectExecutionContext.ts";
 
 export interface RuntimeCreateOptions {
+  /** Request/composition root identity supplied by the Shell instance. */
+  projectExecutionContext?: ProjectExecutionContext;
   /**
    * SDK adapter (real `CursorSdkAdapter` for production, `InMemorySdkAdapter`
    * for the Phase C E2E demo). Caller owns construction so they can plant
@@ -205,18 +212,17 @@ export interface RuntimeCreateOptions {
    * Absolute path to fcop/reports/ directory.
    *
    * When provided, a `ReportWatcher` is wired to the default hot path:
-   * REPORT arrival -> referenced active TASK -> review. PM consolidation
-   * sessions are legacy behavior and require `legacyReportDispatcher=true`.
-   *
-   * Omitting this leaves loop closure as a manual step (operator drops
-   * a task to PM-01 themselves).
+   * REPORT arrival -> referenced active TASK -> review -> PM consolidation
+   * Session. The PM handoff is report-bound and must never redispatch the
+   * worker's `PM-to-DEV` TASK as though its filename recipient were PM.
    *
    * Added in v0.3 (report-triggered PM sprint).
    */
   fcopReportsDir?: string;
   /**
-   * Legacy report-triggered PM consolidation sessions. Default false.
-   * REPORT files still drive active -> review through LifecycleGovernor.
+   * Compatibility switch for the legacy ReportDispatcher-owned lifecycle
+   * move. Default false: ReportActionResolver owns lifecycle settlement while
+   * ReportDispatcher only owns the durable worker-report -> PM wake queue.
    */
   legacyReportDispatcher?: boolean;
   /**
@@ -425,6 +431,9 @@ export class Runtime {
         : opts.fcopTasksDir
           ? join(opts.fcopTasksDir, "..", "..")
           : join(opts.inboxDir, "..", "..", ".."));
+    const projectContext = opts.projectExecutionContext ??
+      createProjectExecutionContext({ projectRoot, dataRoot: opts.persistDir });
+    assertProjectExecutionContext(projectContext, projectRoot);
 
     if (projectRoot) {
       try {
@@ -627,6 +636,7 @@ export class Runtime {
       ...(opts.fcopClient ? { fcopClient: opts.fcopClient } : {}),
       ...(opts.logger ? { logger: opts.logger } : {}),
       ...(projectRoot ? { projectRoot } : {}),
+      projectContext,
       minScheduleRetryDelayMs: AUTO_RECOVERY_MIN_RETRY_MS,
     });
 
@@ -690,30 +700,32 @@ export class Runtime {
         ...(opts.fcopClient ? { fcopClient: opts.fcopClient } : {}),
         ...(opts.logger ? { logger: opts.logger } : {}),
         ...(projectRoot ? { projectRoot } : {}),
+        projectContext,
         minScheduleRetryDelayMs: AUTO_RECOVERY_MIN_RETRY_MS,
       });
     });
 
     // --- report-watcher for task-report lifecycle closure ---
-    // Default path: REPORT arrival moves the referenced active TASK to review.
-    // Legacy PM consolidation sessions are opt-in via legacyReportDispatcher.
+    // Default path: REPORT arrival settles the referenced TASK, then a
+    // report-bound dispatcher wakes PM. Never route the worker TASK itself to
+    // PM: its canonical filename remains PM-to-WORKER and is immutable.
     let reportWatcher: ReportWatcher | null = null;
     let reportDispatcher: ReportDispatcher | null = null;
     let reportActionResolver: ReportActionResolver | null = null;
     if (opts.fcopReportsDir) {
-      if (opts.legacyReportDispatcher === true) {
-        reportDispatcher = new ReportDispatcher({
-          registry,
-          sessionManager,
-          fcopTasksDir: opts.fcopTasksDir,
-          fcopReportsDir: opts.fcopReportsDir,
-          lifecycleGovernor,
-          pmQueueGuard,
-          ...(opts.logger ? { logger: opts.logger } : {}),
-        });
-      }
+      reportDispatcher = new ReportDispatcher({
+        registry,
+        sessionManager,
+        fcopTasksDir: opts.fcopTasksDir,
+        fcopReportsDir: opts.fcopReportsDir,
+        ...(projectRoot ? { projectRoot } : {}),
+        ...(opts.legacyReportDispatcher === true ? { lifecycleGovernor } : {}),
+        pmQueueGuard,
+        ...(opts.logger ? { logger: opts.logger } : {}),
+      });
       reportActionResolver = new ReportActionResolver({
         projectRoot,
+        projectContext,
         lifecycleGovernor,
         panelEvents: panelEventBridge,
         ...(opts.logger ? { logger: opts.logger } : {}),
@@ -834,7 +846,11 @@ export class Runtime {
             });
           }
           if (reportDispatcher && !isPmToAdminReport) {
-            if (outcome !== "submitted" && outcome !== "noop") return;
+            if (
+              outcome !== "submitted" &&
+              outcome !== "reconciled" &&
+              outcome !== "noop"
+            ) return;
             await reportDispatcher.handle(evt);
             return;
           }

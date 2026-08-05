@@ -37,6 +37,8 @@ export {
   type DispatchControlPlaneOptions,
 } from "./TaskDispatcher.ts";
 
+export { allocateTaskSequence } from "./TaskIdentityAllocator.ts";
+
 export {
   PlanScheduler,
   type PlanSchedulerOptions,

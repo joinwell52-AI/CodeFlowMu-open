@@ -30,6 +30,7 @@ import {
   FcopProjectClient,
   FcopClientError,
   normalizeTaskIdentifier,
+  validateWrittenTaskIdentity,
   assertFcopReady,
   __setPythonForTests,
   __resetFcopBridgeForTests,
@@ -38,6 +39,47 @@ import {
   type WriteReviewSpec,
   type MarkHumanApprovedSpec,
 } from "../fcop-client.ts";
+
+test("written TASK identity rejects recipient/filename drift inside the creation transaction", () => {
+  const errors = validateWrittenTaskIdentity({
+    task_id: "TASK-20260805-021",
+    filename: "TASK-20260805-021-PM-to-QA.md",
+    path: "D:/project/fcop/_lifecycle/inbox/TASK-20260805-021-PM-to-QA.md",
+    date: "20260805",
+    sequence: 21,
+    body: "",
+    is_archived: false,
+    frontmatter: {
+      protocol: "fcop",
+      version: 1,
+      sender: "PM",
+      recipient: "DEV",
+      priority: "P1",
+      thread_key: "thread-1",
+      parent: "TASK-ROOT",
+      subject: "child",
+      references: [],
+      risk_level: "low",
+      extra: {},
+    },
+    sender: "PM",
+    recipient: "DEV",
+    priority: "P1",
+    subject: "child",
+    thread_key: "thread-1",
+    parent: "TASK-ROOT",
+    risk_level: "low",
+    references: [],
+  }, {
+    sender: "PM",
+    recipient: "DEV",
+    priority: "P1",
+    subject: "child",
+    body: "",
+    parent: "TASK-ROOT",
+  });
+  assert.deepEqual(errors, ["recipient_filename_mismatch"]);
+});
 
 // ───────────────────────────────────────────────────────────────────────────
 // Stub builder helpers
@@ -113,7 +155,9 @@ function buildFcopStub(
       },
       write_task$: async (kwargs: Record<string, unknown>) => {
         recorder.writeTaskCalls.push(kwargs);
-        return buildTaskProxy(recorder.writeTaskCalls.length);
+        return buildTaskProxy(recorder.writeTaskCalls.length, {
+          ...(kwargs["parent"] != null ? { parent: String(kwargs["parent"]) } : {}),
+        });
       },
       list_tasks$: async (kwargs: Record<string, unknown>) => {
         recorder.listTasksCalls.push(kwargs);
@@ -793,7 +837,7 @@ describe("FcopProjectClient (P4 sprint Day 1.3 — TASK-20260511-007)", () => {
             rec.writeTaskCalls.push(kw);
             return {
               task_id: Promise.resolve("TASK-X-1"),
-              filename: Promise.resolve("TASK-X-1.md"),
+              filename: Promise.resolve("TASK-X-1-PM-to-DEV.md"),
               body: Promise.resolve("..."),
               date: Promise.resolve("20260511"),
               sequence: Promise.resolve(1),

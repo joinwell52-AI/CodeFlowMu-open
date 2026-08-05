@@ -1,6 +1,10 @@
 import type { FactCheckReasonCode, FactCheckResult } from "./ReviewFactGate.ts";
 
 const REASON_LABELS: Record<FactCheckReasonCode, string> = {
+  acceptance_contract_failed: "正式验收合同中的一项或多项原始证据确定性校验失败",
+  acceptance_contract_needs_pm: "正式验收合同不完整或证据存在多种合理解释，需要 PM 裁决",
+  acceptance_contract_missing: "正式 TASK 缺少机器可读的验收合同，需要 PM 确认合同 revision 后再结算",
+  qa_business_fail: "QA 已完成验收但业务结论为 FAIL，需要 PM 决定后续工作，不能自动结案",
   qa_acceptance_evidence_missing:
     "QA 验收报告缺少测试数据、模拟用户操作、预期/实际结果或可追溯证据",
   browser_evidence_required:

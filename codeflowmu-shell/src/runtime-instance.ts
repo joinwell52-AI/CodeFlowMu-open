@@ -85,6 +85,43 @@ function normalizePathForIdentity(value: string): string {
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
+export interface RuntimeHostRootResolution {
+  root: string;
+  source: "open_edition" | "installed_code" | "matching_environment";
+  ignored_inherited_root?: string;
+}
+
+/**
+ * host_root identifies the Shell installation, never an inherited business
+ * project or another clone. A copied candidate often inherits the stable
+ * terminal's CODEFLOWMU_HOST_ROOT; accepting that value would make it read the
+ * stable instance.json, registry and writer locks before isolation exists.
+ */
+export function resolveRuntimeHostRoot(input: {
+  shellPackageRoot: string;
+  inheritedHostRoot?: string | null;
+  openEditionHostRoot?: string | null;
+}): RuntimeHostRootResolution {
+  if (input.openEditionHostRoot?.trim()) {
+    return {
+      root: pathResolve(input.openEditionHostRoot),
+      source: "open_edition",
+    };
+  }
+  const installedRoot = pathResolve(input.shellPackageRoot, "..");
+  const inherited = input.inheritedHostRoot?.trim()
+    ? pathResolve(input.inheritedHostRoot)
+    : null;
+  if (inherited && normalizePathForIdentity(inherited) === normalizePathForIdentity(installedRoot)) {
+    return { root: installedRoot, source: "matching_environment" };
+  }
+  return {
+    root: installedRoot,
+    source: "installed_code",
+    ...(inherited ? { ignored_inherited_root: inherited } : {}),
+  };
+}
+
 function writeRuntimeInstanceRecord(
   hostRoot: string,
   record: RuntimeInstanceRecord,

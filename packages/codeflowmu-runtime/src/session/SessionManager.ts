@@ -494,6 +494,15 @@ export class SessionManager {
         ? { runtime_thread_key: payload.context.thread_key }
         : {}),
       runtime_root_task_id: canonicalRootTaskId,
+      ...(typeof payload.context?.logical_execution_id === "string"
+        ? { runtime_logical_execution_id: payload.context.logical_execution_id }
+        : {}),
+      ...(typeof payload.context?.continuation_of_session_id === "string"
+        ? { runtime_continuation_of_session_id: payload.context.continuation_of_session_id }
+        : {}),
+      ...(typeof payload.context?.continuation_reason === "string"
+        ? { runtime_continuation_reason: payload.context.continuation_reason }
+        : {}),
       ...(configuredModelId
         ? { runtime_configured_model_id: configuredModelId }
         : {}),
@@ -559,6 +568,12 @@ export class SessionManager {
           : {}),
         ...(typeof payload.context?.thread_key === "string"
           ? { thread_key: payload.context.thread_key }
+          : {}),
+        ...(typeof payload.context?.logical_execution_id === "string"
+          ? { logical_execution_id: payload.context.logical_execution_id }
+          : {}),
+        ...(typeof payload.context?.continuation_of_session_id === "string"
+          ? { continuation_of_session_id: payload.context.continuation_of_session_id }
           : {}),
       },
     });
@@ -680,6 +695,23 @@ export class SessionManager {
   async listActive(): Promise<SessionRecord[]> {
     const all = await this._sessionStore.listAll();
     return all.filter((r) => r.protocol.status === "running");
+  }
+
+  /** Store-backed physical-session history for one logical task. */
+  async listForTask(taskId: string): Promise<SessionRecord[]> {
+    const normalized = normalizeWriteReportTaskIdPrefix(taskId) || taskId;
+    const all = await this._sessionStore.listAll();
+    return all
+      .filter((record) => {
+        const candidate =
+          normalizeWriteReportTaskIdPrefix(record.protocol.task_id) ||
+          record.protocol.task_id;
+        return candidate.toUpperCase() === normalized.toUpperCase();
+      })
+      .sort(
+        (left, right) =>
+          Date.parse(left.protocol.started_at) - Date.parse(right.protocol.started_at),
+      );
   }
 
   private async _isStartBlocked(

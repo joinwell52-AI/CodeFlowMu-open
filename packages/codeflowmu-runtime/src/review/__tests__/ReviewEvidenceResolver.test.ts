@@ -156,4 +156,34 @@ describe("ReviewEvidenceResolver", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("never absorbs another task from an explicitly bound session/run", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cfm-ev-res-"));
+    try {
+      appendActionEvidence(root, {
+        event_type: "command.run",
+        at: "2026-08-05T10:00:00.000Z",
+        task_id: "TASK-20260805-999",
+        session_id: "session-shared",
+        run_id: "run-other-task",
+        agent_id: "QA-01",
+        role: "QA",
+        status: "success",
+        command: "npm test",
+        exit_code: 0,
+      });
+      const summary = resolveReviewEvidence({
+        projectRoot: root,
+        task_id: "TASK-20260805-001",
+        report_id: "REPORT-20260805-001-QA-to-PM",
+        session_id: "session-shared",
+        run_id: "run-other-task",
+      });
+      assert.equal(summary.commands.length, 0);
+      assert.equal(summary.session.found, false);
+      assert.ok(summary.warnings.some((row) => row.includes("cross-session fallback is disabled")));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

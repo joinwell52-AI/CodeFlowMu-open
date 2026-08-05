@@ -175,6 +175,34 @@ async function buildPipeline(opts: {
 }
 
 describe("TaskDispatcher", () => {
+  it("keeps recipient_filename_mismatch protection for real TASK routing errors", async () => {
+    await withTempScheduler(async ({ rootDir, inboxDir, stateDir }) => {
+      const pipeline = await buildPipeline({ inboxDir, stateDir, projectRoot: rootDir });
+      try {
+        const taskId = "TASK-20260805-024-PM-to-DEV";
+        const filepath = join(inboxDir, `${taskId}.md`);
+        const content = TASK_BODY(taskId, "DEV");
+        await writeFile(filepath, content);
+
+        const outcome = await pipeline.dispatcher.dispatchTaskFromControlPlane(
+          filepath,
+          `${taskId}.md`,
+          "PM",
+          "test_mismatch",
+        );
+
+        assert.equal(outcome.kind, "dispatch_skipped");
+        if (outcome.kind === "dispatch_skipped") {
+          assert.equal(outcome.reason, "invalid_task_file");
+          assert.match(String(outcome.detail), /recipient_filename_mismatch/);
+        }
+        assert.equal(await readFile(filepath, "utf-8"), content);
+      } finally {
+        await pipeline.shutdown();
+      }
+    });
+  });
+
   it("does not dispatch a staged task", async () => {
     await withTempScheduler(async ({ rootDir, inboxDir, stateDir }) => {
       const pipeline = await buildPipeline({

@@ -149,6 +149,7 @@ export {
   DOWNSTREAM_AUTO_NUDGE_EVENT,
   type DownstreamAutoNudgeOpts,
   type DownstreamAutoNudgeLogger,
+  allocateTaskSequence,
 } from "./scheduler/index.ts";
 
 export {
@@ -189,9 +190,21 @@ export {
   resolveReviewLinkedTaskId,
   type ResolveReviewLinkedTaskIdOptions,
   type FactCheckVerdict,
+  type ReviewFactState,
   type FactCheckReasonCode,
   type ReportClaims,
   type FactCheckResult,
+  compileAcceptanceContract,
+  evaluateAcceptanceContract,
+  type AcceptanceContract,
+  type AcceptanceContractItem,
+  type AcceptanceContractEvaluation,
+  type AcceptanceEvidenceType,
+  type EvidenceEnvelope,
+  FactCheckDecisionService,
+  FactCheckDecisionError,
+  type FactCheckDecisionAction,
+  type FactCheckDecisionRecord,
   type WriteFactCheckReviewInput,
   humanApprovalApprovedAt,
   isReviewPendingHuman,
@@ -561,6 +574,12 @@ export {
   recordPlanningGateDelivery,
   readPlanningGateHistory,
   currentPlanningGateState,
+  planningGrantHistoryPath,
+  readPlanningGrantHistory,
+  issuePlanningGrant,
+  currentPlanningGrant,
+  planningGrantAllows,
+  type PlanningGrant,
   type PmPlanningLevel,
   type PlanningArtifactStatus,
   authorizePlanningRuntimeIdentity,
@@ -723,11 +742,14 @@ export {
   evaluateTaskSpecAdmission,
   persistTaskSpecAdmissionResult,
   taskSpecContentDigest,
+  taskSpecAuthoredSnapshot,
   taskSpecAdmissionRecordPath,
   verifyTaskSpecAdmissionForDispatch,
   TASK_SPEC_INVALID,
   TASK_SPEC_VALID,
   type TaskSpecAdmissionAccepted,
+  type TaskSpecAdmissionDiagnostics,
+  type TaskSpecAuthoredSnapshot,
   type TaskSpecCapabilityMatrixRow,
   type TaskSpecAdmissionFinding,
   type TaskSpecAdmissionFindingId,
@@ -747,6 +769,14 @@ export {
   type RecoveryPlan,
   type RecoveryExecutionResult,
 } from "./pm/index.ts";
+
+export {
+  PROJECT_EXECUTION_CONTEXT_VERSION,
+  createProjectExecutionContext,
+  assertProjectExecutionContext,
+  type ProjectExecutionContext,
+  type ProjectExecutionContextInput,
+} from "./project/ProjectExecutionContext.ts";
 
 export {
   AGENT_SKILLS_MANIFEST_SOURCE_REL,

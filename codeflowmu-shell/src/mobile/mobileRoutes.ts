@@ -858,10 +858,17 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
           ? findChildTasksForParent(mergedTask, tasks as Record<string, unknown>[])
           : [],
       });
-      const dispatchState = await proxyPanelGet(
-        ctx.panelPort,
-        `/api/v2/runtime/tasks/${encodeURIComponent(taskIdNorm)}/dispatch-state`,
-      );
+      let dispatchState: Awaited<ReturnType<typeof proxyPanelGet>> | null = null;
+      try {
+        dispatchState = await proxyPanelGet(
+          ctx.panelPort,
+          `/api/v2/runtime/tasks/${encodeURIComponent(taskIdNorm)}/dispatch-state`,
+        );
+      } catch {
+        // Task detail is authoritative from the local ledger. A temporarily
+        // unavailable Panel projection must not make the Mobile read path 500.
+        dispatchState = null;
+      }
       res.json({
         task: mergedTask,
         task_spec_admission: taskSpecAdmission,
@@ -871,7 +878,7 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
         child_tasks,
         flow_overview,
         available_actions,
-        dispatch_state: dispatchState.ok ? dispatchState.body : null,
+        dispatch_state: dispatchState?.ok ? dispatchState.body : null,
       });
     } catch (err) {
       res.status(500).json({ ok: false, error: String(err) });
@@ -1059,6 +1066,27 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
       },
     );
   }
+
+  router.post(
+    "/tasks/:taskId/fact-check-decisions",
+    async (req: Request, res: Response) => {
+      try {
+        const taskId = encodeURIComponent(String(req.params["taskId"] ?? ""));
+        const panelRes = await proxyPanelPost(
+          ctx.panelPort,
+          `/api/v2/tasks/${taskId}/fact-check-decisions`,
+          { ...(req.body ?? {}), caller_role: "ADMIN" },
+        );
+        res.status(panelRes.status).json(panelRes.body);
+      } catch (error) {
+        res.status(503).json({
+          ok: false,
+          error: String(error),
+          code: "FACT_CHECK_DECISION_PROXY_FAILED",
+        });
+      }
+    },
+  );
 
   router.post("/tasks", async (req: Request, res: Response) => {
     const adminDir = ctx.getAdminTasksDir();
