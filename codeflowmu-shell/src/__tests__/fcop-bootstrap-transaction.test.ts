@@ -11,6 +11,7 @@ import {
   createFcopBootstrapManifest,
   verifyFcopBootstrapManifest,
 } from "../fcop-bootstrap-transaction.ts";
+import { verifyFcopProjectInit } from "../fcop-v3-paths.ts";
 import {
   acquireProjectWriteLease,
   projectInitializationLockPath,
@@ -101,6 +102,61 @@ test("new initialization writes only the confirmed signed plan and passes digest
     assert.equal(existsSync(join(target, ".codeflowmu", "mobile-gateway.json")), false);
   } finally {
     rmSync(source, { recursive: true, force: true });
+    rmSync(dirname(target), { recursive: true, force: true });
+  }
+});
+
+test("external project initialization commits with inactive legacy Gateway identity", async () => {
+  const source = sourceFixture();
+  const hostRoot = mkdtempSync(join(tmpdir(), "cfm-bootstrap-host-"));
+  const target = join(mkdtempSync(join(tmpdir(), "cfm-bootstrap-parent-")), "legacy-project");
+  try {
+    const legacyGateway = `${JSON.stringify({
+      enabled: true,
+      mode: "official_demo_limited",
+      instance_id: "pc_legacy_project",
+      instance_secret: "secret_legacy_project",
+      auto_connect: true,
+    }, null, 2)}\n`;
+    write(target, ".codeflowmu/mobile-gateway.json", legacyGateway);
+    const plan = compatiblePlan(source, target);
+    let identityStatus: string | undefined;
+
+    const result = await new FcopInitTransaction(plan).execute(plan.plan_digest, () => {
+      const verification = verifyFcopProjectInit(target, {
+        installedFcopVersion: "3.2.5",
+        installedFcopMcpVersion: "3.2.5",
+        bundledRulesVersion: "3.2.5",
+        bundledProtocolVersion: "3.2.5",
+        identity: {
+          hostRoot,
+          instanceId: "cfm-open-runtime",
+          instanceRole: "stable",
+          registryPath: join(hostRoot, ".codeflowmu", "projects-registry.json"),
+          dataRoot: join(hostRoot, ".codeflowmu", "runtime"),
+          writerLockPaths: [],
+          gatewayOwnerRoot: hostRoot,
+          gatewayRuntimeInstanceId: "cfm-open-runtime",
+          gatewayEnabled: true,
+        },
+      });
+      identityStatus = verification.items.find((item) => item.id === "runtime_identity_isolation")?.status;
+      return {
+        ok: verification.ok,
+        failures: verification.items
+          .filter((item) => item.status === "fail")
+          .map((item) => `${item.name}: ${item.detail}`),
+        evidence: verification,
+      };
+    });
+
+    assert.equal(identityStatus, "warn");
+    assert.equal(result.rolled_back.length, 0);
+    assert.equal(readFileSync(join(target, ".codeflowmu", "mobile-gateway.json"), "utf8"), legacyGateway);
+    assert.equal(verifyFcopBootstrapManifest(target).ok, true);
+  } finally {
+    rmSync(source, { recursive: true, force: true });
+    rmSync(hostRoot, { recursive: true, force: true });
     rmSync(dirname(target), { recursive: true, force: true });
   }
 });

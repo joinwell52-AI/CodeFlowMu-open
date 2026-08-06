@@ -615,9 +615,18 @@ function shellLooksAllowedFcopTempPayload(command: string): boolean {
     /\bpython(?:3)?\b[\s\S]*fcop_invoke_once\.py[\s\S]*\$payloadPath\b/i.test(command);
   if (!invokesTempPayload) return false;
 
-  const protectedWrite = /\b(?:set-content|out-file|add-content|new-item|remove-item|move-item|copy-item|rename-item)\b[\s\S]*(?:D:\\CodeFlowMu-open|D:\/CodeFlowMu-open|D:\\codeflowmu|D:\/codeflowmu)/i.test(
-    command,
-  );
+  const mutatesFilesystem = /\b(?:set-content|out-file|add-content|new-item|remove-item|move-item|copy-item|rename-item)\b/i.test(command);
+  const normalizedCommand = command.replace(/[\\/]+/g, "\\").toLowerCase();
+  const protectedRoots = [
+    process.env["CODEFLOWMU_HOST_ROOT"],
+    process.env["CODEFLOW_OPEN_HOST_ROOT"],
+    "D:\\CodeFlowMu-open",
+  ];
+  const protectedWrite = mutatesFilesystem && protectedRoots.some((root) => {
+    if (!root?.trim()) return false;
+    const normalizedRoot = resolve(root).replace(/[\\/]+/g, "\\").replace(/\\+$/, "").toLowerCase();
+    return normalizedCommand.includes(normalizedRoot);
+  });
   if (protectedWrite) return false;
 
   const dangerousBeyondTempPayload = [

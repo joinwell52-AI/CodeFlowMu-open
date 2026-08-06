@@ -29,9 +29,9 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/joinwell52-AI/CodeFlowMu.git"
+    "url": "git+https://github.com/joinwell52-AI/codeflowmu1.2.21.git"
   },
-  "homepage": "https://github.com/joinwell52-AI/CodeFlowMu#readme",
+  "homepage": "https://github.com/joinwell52-AI/codeflowmu1.2.21#readme",
   "publishConfig": {
     "access": "public"
   },

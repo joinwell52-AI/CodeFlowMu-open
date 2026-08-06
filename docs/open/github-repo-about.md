@@ -51,4 +51,4 @@ open-source
 
 `CodeFlowMu-open` is the public open-source entry point for download, installation, introduction, local evaluation, and contribution.
 
-The private mother repository `joinwell52-AI/codeflowmu` owns the complete product line, private Gateway, internal observation/evaluation flow, multi-edition build tooling, and company release workflow.
+The private Open V1.2.21 mother repository `joinwell52-AI/codeflowmu1.2.21` owns this release line, its private Gateway, internal observation/evaluation flow, open-edition build tooling, and release workflow.

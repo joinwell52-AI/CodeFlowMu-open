@@ -188,6 +188,77 @@ test("verifyFcopProjectInit fails when fcop.json missing", () => {
   }
 });
 
+test("verifyFcopProjectInit warns for inactive legacy identity in an external project", () => {
+  const hostRoot = mkdtempSync(join(tmpdir(), "fcop-runtime-host-"));
+  const projectRoot = mkdtempSync(join(tmpdir(), "fcop-external-project-"));
+  try {
+    mkdirSync(join(projectRoot, ".codeflowmu"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, ".codeflowmu", "mobile-gateway.json"),
+      JSON.stringify({
+        enabled: true,
+        instance_id: "pc_legacy_project",
+        instance_secret: "secret_legacy_project",
+      }),
+    );
+
+    const verification = verifyFcopProjectInit(projectRoot, {
+      identity: {
+        hostRoot,
+        instanceId: "cfm-open-runtime",
+        instanceRole: "stable",
+        registryPath: join(hostRoot, ".codeflowmu", "projects-registry.json"),
+        dataRoot: join(hostRoot, ".codeflowmu", "runtime"),
+        writerLockPaths: [],
+        gatewayOwnerRoot: hostRoot,
+        gatewayRuntimeInstanceId: "cfm-open-runtime",
+        gatewayEnabled: true,
+      },
+    });
+
+    const identityItem = verification.items.find((item) => item.id === "runtime_identity_isolation");
+    assert.equal(identityItem?.status, "warn");
+    assert.match(identityItem?.detail ?? "", /inactive legacy project-local identity/);
+    assert.equal(
+      verification.failures.some((failure) => failure.includes("project bootstrap copied host identity material")),
+      false,
+    );
+    assert.ok(
+      verification.warnings.some((warning) => warning.includes("inactive legacy project-local identity")),
+    );
+  } finally {
+    rmSync(hostRoot, { recursive: true, force: true });
+    rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("verifyFcopProjectInit still fails when Gateway ownership escapes host_root", () => {
+  const hostRoot = mkdtempSync(join(tmpdir(), "fcop-runtime-host-"));
+  const projectRoot = mkdtempSync(join(tmpdir(), "fcop-external-project-"));
+  try {
+    const verification = verifyFcopProjectInit(projectRoot, {
+      identity: {
+        hostRoot,
+        instanceId: "cfm-open-runtime",
+        instanceRole: "stable",
+        registryPath: join(hostRoot, ".codeflowmu", "projects-registry.json"),
+        dataRoot: join(hostRoot, ".codeflowmu", "runtime"),
+        writerLockPaths: [],
+        gatewayOwnerRoot: projectRoot,
+        gatewayRuntimeInstanceId: "cfm-open-runtime",
+        gatewayEnabled: true,
+      },
+    });
+
+    const identityItem = verification.items.find((item) => item.id === "runtime_identity_isolation");
+    assert.equal(identityItem?.status, "fail");
+    assert.match(identityItem?.detail ?? "", /Gateway owner root does not match canonical host_root/);
+  } finally {
+    rmSync(hostRoot, { recursive: true, force: true });
+    rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
 test("checkSkillsManifestHealth skips when fcop.json missing", () => {
   const root = mkdtempSync(join(tmpdir(), "fcop-skills-"));
   try {

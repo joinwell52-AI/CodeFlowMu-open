@@ -568,7 +568,7 @@ export function normalizeTaskIdentifier(value: string): string {
  * 用法：
  *   ```ts
  *   const client = await FcopProjectClient.create({
- *     projectRoot: "D:/CodeFlowMu",
+ *     projectRoot: "D:/example-project",
  *     workspaceDir: "legacy/agents", // optional escape hatch for non-default layouts
  *   });
  *   const task = await client.writeTask({

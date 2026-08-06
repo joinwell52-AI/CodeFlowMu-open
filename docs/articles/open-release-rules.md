@@ -120,7 +120,7 @@ Agent session/checkpoint
 
 | 名称 | 示例 | 职责 | 能否包含用户运行态 |
 |---|---|---|---|
-| 母版源码仓库 | `D:\codeflowmu` | 开发、测试、生成开源版 | 可以，但不得进入发行包 |
+| 母版源码仓库 | `D:\codeflowmu1.2.21` | 开发、测试、生成开源版 | 可以，但不得进入发行包 |
 | 开源发行树 | `release/open-dev-team/CodeFlowMu` | 本次待发布的纯净产物 | **绝对不可以** |
 | 本地公开仓库 | `D:\CodeFlowMu-open` | GitHub 公开仓库的本地工作副本 | Git 工作树必须干净；本机测试态不得提交 |
 | 新用户安装目录 | 用户 clone/download 的目录 | 首次运行 Open | 首次启动前不存在运行态 |
@@ -366,7 +366,7 @@ codeflowmu-shell/src/web-panel.ts
 }
 ```
 
-3. 不读取母版注册表，不扫描 `D:\codeflowmu`，不迁移任何旧项目。
+3. 不读取母版注册表，不扫描 `D:\codeflowmu1.2.21`，不迁移任何旧项目。
 4. Panel 显示 `newproject` 为唯一当前项目。
 5. 聊天、任务、报告列表为空。
 6. 环境检查显示默认项目已经完成 FCoP 初始化，可以直接使用。
@@ -560,7 +560,7 @@ ADMIN → PM → DEV → QA → OPS → PM → ADMIN
 |---|---|---|
 | 工具安装根 | `D:\CodeFlowMu-open\packages`、`codeflowmu-shell`、`codeflowmu-desktop` | 全角色只读 |
 | 当前项目根 | `D:\CodeFlowMu-open\projects\codedaysign`、旧版登记绝对路径或外部项目 | 按角色完整工作 |
-| 非当前项目/母版 | `D:\codeflowmu`、项目 A（当前为 B） | 全角色禁止写 |
+| 非当前项目/母版 | 当前 `CODEFLOWMU_HOST_ROOT`、项目 A（当前为 B） | 全角色禁止写 |
 
 项目位于 Open 安装目录下的 `workspace/<project>` 时，它仍是独立的当前项目根，
 不得因为父目录是安装根而整体只读。边界判断必须使用真实路径，并防止通过

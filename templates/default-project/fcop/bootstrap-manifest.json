@@ -1,15 +1,15 @@
 {
   "schema_version": "1.0",
-  "source_release_sha": "665a61a95d9916a2c36a07b1124dad1b77c2062f",
-  "source_version": "V1.2.21-open",
-  "shell_compatibility": "V1.2.21-open",
-  "runtime_compatibility": "V1.2.21-open",
+  "source_release_sha": "10741d62d47dd5e93d174b1e5e312afd7f661742",
+  "source_version": "V1.2.22-open",
+  "shell_compatibility": "V1.2.22-open",
+  "runtime_compatibility": "V1.2.22-open",
   "fcop_package_compatibility": ">=unknown <4",
   "rules_version": "unknown",
   "protocol_version": "unknown",
   "commentary_version": "unknown",
-  "role_template_version": "V1.2.21-open",
-  "adopted_version": "V1.2.21-open",
+  "role_template_version": "V1.2.22-open",
+  "adopted_version": "V1.2.22-open",
   "files": [
     {
       "source_rel": ".cursor/rules/fcop-protocol.mdc",
@@ -162,5 +162,5 @@
       "category": "host_contract"
     }
   ],
-  "manifest_digest": "sha256:0f4bb910d61df911c93547987cfc1e9647dcdd4f33e2bbb5b8cc2d784f2ca8df"
+  "manifest_digest": "sha256:a1fcda9e7a54d0acd12fdf26d15ac87da3c32267c0adb6f43019572a8f770285"
 }

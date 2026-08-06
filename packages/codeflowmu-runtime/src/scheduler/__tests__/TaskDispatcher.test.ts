@@ -203,6 +203,60 @@ describe("TaskDispatcher", () => {
     });
   });
 
+  it("emits one invalid-task warning until the file content changes", async () => {
+    await withTempScheduler(async ({ rootDir, inboxDir, stateDir }) => {
+      const pipeline = await buildPipeline({ inboxDir, stateDir, projectRoot: rootDir });
+      try {
+        const taskId = "TASK-20260727-009-PM-to-OPS";
+        const filename = `${taskId}.md`;
+        const filepath = join(inboxDir, filename);
+        const legacyContent = `---
+
+## state_history (auto-appended by runtime)
+
+- rejected_busy
+`;
+        await writeFile(filepath, legacyContent);
+
+        const first = await pipeline.dispatcher.dispatchTaskFromControlPlane(
+          filepath,
+          filename,
+          "OPS",
+          "first_reconcile",
+        );
+        const duplicate = await pipeline.dispatcher.dispatchTaskFromControlPlane(
+          filepath,
+          filename,
+          "OPS",
+          "second_reconcile",
+        );
+
+        assert.equal(first.kind, "dispatch_skipped");
+        assert.equal(duplicate.kind, "dispatch_skipped");
+        assert.equal(
+          pipeline.logger.warns.filter((line) => line.includes(`invalid_task_file ${filename}`)).length,
+          1,
+        );
+
+        await writeFile(filepath, `${legacyContent}\nchanged legacy residue\n`);
+        const changed = await pipeline.dispatcher.dispatchTaskFromControlPlane(
+          filepath,
+          filename,
+          "OPS",
+          "changed_reconcile",
+        );
+
+        assert.equal(changed.kind, "dispatch_skipped");
+        assert.equal(
+          pipeline.logger.warns.filter((line) => line.includes(`invalid_task_file ${filename}`)).length,
+          2,
+        );
+      } finally {
+        await pipeline.shutdown();
+      }
+    });
+  });
+
   it("does not dispatch a staged task", async () => {
     await withTempScheduler(async ({ rootDir, inboxDir, stateDir }) => {
       const pipeline = await buildPipeline({

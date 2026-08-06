@@ -4279,7 +4279,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
         </div>
       </div>
       <div style="display:flex;flex-direction:row;align-items:center;gap:16px;width:100%;flex-wrap:wrap">
-        <a href="https://github.com/joinwell52-AI/CodeFlowMu" target="_blank"
+        <a href="https://github.com/joinwell52-AI/codeflowmu1.2.21" target="_blank"
           style="font-size:14px;color:var(--blue2);text-decoration:none;display:flex;align-items:center;gap:4px">
           GitHub 仓库 →
         </a>
@@ -4382,7 +4382,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
     <div class="dash-section git-backup-section" id="git-mother-config-section">
       <div class="dash-section-title" id="git-config-title">母版 Git 配置</div>
       <div id="git-config-help" style="font-size:13px;color:var(--text3);line-height:1.5;margin:2px 0 8px">
-        这里配置的是母版代码仓库 <code style="font-size:12px">D:\codeflowmu</code> 的 Git 远端和默认分支。即时提交请使用本页右上角「一键提交」；开源版本发布请使用「开源版本发版」。
+        这里配置的是母版代码仓库 <code id="git-config-root" style="font-size:12px">正在读取…</code> 的 Git 远端和默认分支。即时提交请使用本页右上角「一键提交」；开源版本发布请使用「开源版本发版」。
       </div>
       <div class="tcc-card" id="tc-git">
       <div class="tc-git-row">
@@ -4514,7 +4514,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
     </div>
     <div style="margin-bottom:14px">
       <label style="font-size:14px;color:var(--text3);display:block;margin-bottom:4px">新项目完整路径（固定位于 projects/）</label>
-      <input id="dlg-create-proj-root" type="text" placeholder="D:/codeflowmu/projects/codedaysign" readonly
+      <input id="dlg-create-proj-root" type="text" placeholder="正在读取项目默认目录…" readonly
         style="width:100%;background:var(--card3,#1e2940);border:1px solid var(--bd2);border-radius:4px;color:var(--text);padding:7px 9px;font-size:14px;box-sizing:border-box">
       <div style="font-size:12px;color:#fbbf24;margin-top:6px;line-height:1.45">已有代码目录不要用这里，请使用“添加已有项目”。任务内的 new_workspace 也不是此功能。</div>
     </div>
@@ -7530,7 +7530,7 @@ Object.entries({
   '登录方式':'Sign-in method','请选择登录方式':'Select a sign-in method','无需登录':'No sign-in required','账号 + 密码':'Account + password','扫码登录':'QR-code sign-in','验证码登录':'Verification-code sign-in','账号密码 + 验证码':'Account + password + verification code','其他方式':'Other method','登录操作提示':'Sign-in instructions','保存目标':'Save target','应用白名单':'Application allowlist','按进程授权：勾选一个 .exe 会允许当前项目的所有 Cursor Agent 控制它的全部窗口。':'Authorize by process: selecting an executable lets all Cursor agents in this project control all of its windows.','完整手册':'Full manual','刷新应用':'Refresh applications','受保护应用':'Protected applications','尚未选择':'Not selected','保存白名单':'Save allowlist','正在发现可见应用…':'Discovering visible applications…','白名单是什么？查看授权范围':'What is the allowlist? View authorization scope','仅接入 Cursor；保存后下一次 Agent 发送立即生效。':'Cursor only. Changes apply to the next agent request.','保存 Windows Use':'Save Windows Use',
   '让 Cursor Agent 通过 DOM 控制获准的 Chrome 与 Microsoft Edge 企业 Web 应用。浏览器各自使用 CodeFlowMu 受管配置，登录状态持续保存在本机。':'Let Cursor agents control approved Chrome and Microsoft Edge enterprise web apps through the DOM. Each browser uses a CodeFlowMu-managed profile with local persistent sign-in state.','打开操作手册':'Open manual','启用 ≠ 自动执行：这里只把 Browser Use 工具提供给 Agent。CodeFlowMu 启动、Agent 连接或查看目标列表时都不会打开网页；只有 Agent 明确执行“打开网页 / 登录”，或你点击“记录登录特征”时，才会启动受管浏览器。':'Enabled does not mean automatic execution. This only exposes Browser Use tools to agents. Pages open only when an agent explicitly opens/signs in to a site or when you record a sign-in profile.','网页 DOM、登录、表单、上传和下载由 Browser Use 负责；网页调用本地 EXE、证书工具或系统窗口时，再与 Windows Use 组合。密码只由 Host 安全填入，不返回 Agent。':'Browser Use handles the DOM, sign-in, forms, uploads, and downloads. Combine it with Windows Use only when a page invokes a local executable, certificate tool, or system window. Passwords are filled securely by the host and never returned to agents.',
   'Web 应用目标':'Web application targets','浏览器':'Browser','HTTPS 地址':'HTTPS URL','登录操作提示（补充说明）':'Sign-in instructions (additional notes)','结构化登录特征':'Structured sign-in profile','这些语义字段会直接告诉 Agent 如何识别登录页，不保存坐标，也不要求录入易失效的 CSS/XPath。留空表示由 Agent 根据可访问 DOM 判断。':'These semantic fields tell agents how to recognize the sign-in page. Coordinates and brittle CSS/XPath selectors are not stored. Leave fields blank to let the agent inspect the accessible DOM.','登录入口地址':'Sign-in URL','账号字段名称':'Account field label','密码字段名称':'Password field label','公司 / 租户字段名称':'Company / tenant field label','公司 / 租户选项':'Company / tenant option','验证码字段名称':'Verification-code field label','提交按钮名称':'Submit button label','登录成功地址前缀':'Successful sign-in URL prefix','登录成功页面文字':'Successful sign-in page text','Web 目标白名单':'Web target allowlist','只有勾选目标的 HTTPS Origin 才能被 Browser Use 访问。':'Browser Use can access only the selected targets’ HTTPS origins.','保存 Browser Use':'Save Browser Use','记录登录特征':'Record sign-in profile','编辑':'Edit','删除':'Delete',
-  'CodeFlowMu 开源版本发版台':'CodeFlowMu open-source release console','确认本次公开功能后，只需点击一次“发布开源版本”。系统会自动过滤内部内容并完成下面两个过程。':'Confirm the public features, then click Publish open-source edition once. The system filters internal content and completes the workflow below.','正在读取版本、功能边界与审批差异…':'Loading versions, feature boundaries, and approval differences…','本次开源内容确认':'Open-source content confirmation','正在判断你现在应该做哪一步…':'Determining the next required step…','母版新版本':'New main version','开源新版本':'New open-source version','保存新版本号':'Save new versions','输入母版新版本后，开源版本会自动对应为“母版版本-open”；确认后同时写入两个版本文件。':'Enter the new main version; the open-source version is derived as main-version-open. Confirmation updates both version files.','勾选本次允许进入开源版的功能':'Select features allowed in this open-source release','这些功能由版本文件控制器确定；这里用于发布前确认。':'The version-file controller determines these features; confirm them here before release.','保存公开功能':'Save public features','等待操作。':'Waiting for an action.','本次发版信息（系统已自动填写，可选修改）':'Release information (pre-filled; editing is optional)','版本名称':'Version name','发版说明':'Release notes','Git 提交信息':'Git commit message','这些内容系统已经自动填写；只有想补充说明时才需要修改。':'These values are pre-filled. Edit them only to add context.','发版动作':'Release action','安全同步 = 本机复制，不上传网络。':'Safe sync means local copying with no network upload.','母版 D:\\codeflowmu → 构建过滤后的开源包 → 安全复制到本地公开仓库 D:\\CodeFlowMu-open。只有最后“提交并推送 GitHub”才会上传网络。':'Main repository D:\\codeflowmu → build the filtered open-source package → safely copy it to D:\\CodeFlowMu-open. Only the final GitHub commit and push uploads data.','发布开源版本':'Publish open-source edition','点击一次，系统自动执行下方完整检查和发布过程；任何一步不通过都会停止，不会带病发布。':'One click runs the full checks and release workflow. Any failed step stops the release.','实时执行输出':'Live execution output','等待操作…':'Waiting for an action…','发版记录':'Release history','暂无发版记录。':'No release history.'
+  'CodeFlowMu 开源版本发版台':'CodeFlowMu open-source release console','确认本次公开功能后，只需点击一次“发布开源版本”。系统会自动过滤内部内容并完成下面两个过程。':'Confirm the public features, then click Publish open-source edition once. The system filters internal content and completes the workflow below.','正在读取版本、功能边界与审批差异…':'Loading versions, feature boundaries, and approval differences…','本次开源内容确认':'Open-source content confirmation','正在判断你现在应该做哪一步…':'Determining the next required step…','母版新版本':'New main version','开源新版本':'New open-source version','保存新版本号':'Save new versions','输入母版新版本后，开源版本会自动对应为“母版版本-open”；确认后同时写入两个版本文件。':'Enter the new main version; the open-source version is derived as main-version-open. Confirmation updates both version files.','勾选本次允许进入开源版的功能':'Select features allowed in this open-source release','这些功能由版本文件控制器确定；这里用于发布前确认。':'The version-file controller determines these features; confirm them here before release.','保存公开功能':'Save public features','等待操作。':'Waiting for an action.','本次发版信息（系统已自动填写，可选修改）':'Release information (pre-filled; editing is optional)','版本名称':'Version name','发版说明':'Release notes','Git 提交信息':'Git commit message','这些内容系统已经自动填写；只有想补充说明时才需要修改。':'These values are pre-filled. Edit them only to add context.','发版动作':'Release action','安全同步 = 本机复制，不上传网络。':'Safe sync means local copying with no network upload.','母版路径与本地公开仓库路径由当前运行配置自动读取。只有最后“提交并推送 GitHub”才会上传网络。':'The mother and local public repository paths are read from the current runtime configuration. Only the final GitHub commit and push uploads data.','发布开源版本':'Publish open-source edition','点击一次，系统自动执行下方完整检查和发布过程；任何一步不通过都会停止，不会带病发布。':'One click runs the full checks and release workflow. Any failed step stops the release.','实时执行输出':'Live execution output','等待操作…':'Waiting for an action…','发版记录':'Release history','暂无发版记录。':'No release history.'
 }).forEach(([zh,en])=>PANEL_UI_EN_OVERRIDES.set(zh,en));
 Object.entries({
   '选择本机 Windows EXE 并确认用途。企业 Web 应用请到 Browser Use 录入。账号、密码只保存到当前活动项目根目录的本地':'Choose a local Windows executable and confirm its purpose. Add enterprise web apps under Browser Use. Accounts and passwords are stored only in the active project’s local',
@@ -24262,59 +24262,44 @@ function setGitSettingsEditMode(editing){
   if(saveBtn)saveBtn.style.display=gitSettingsEditing?'':'none';
 }
 async function loadGitSettings(){
-  if(isOpenDevTeamEdition()){
-    await loadProjectGitConfigIntoForm();
+  const gitConfig=await loadProjectGitConfigIntoForm();
+  if(gitConfig&&gitConfig.ok){
     gitBackupDirty=false;
     setGitSettingsEditMode(false);
     return;
   }
-  let saved={};
-  try{saved=JSON.parse(localStorage.getItem('cf_git_backup')||'{}');}catch{}
-  const tc=_tcLoadConfig();
-  if(tc.git)saved={...saved,...tc.git};
   const url=document.getElementById('git-remote-url');
   const branch=document.getElementById('git-backup-branch');
-  if(url)url.value=saved.remoteUrl||localStorage.getItem('cf_git_remote_url')||'';
-  if(branch)branch.value=saved.branch||localStorage.getItem('cf_git_backup_branch')||'main';
+  if(url)url.value='';
+  if(branch)branch.value='main';
   gitBackupDirty=false;
   setGitSettingsEditMode(false);
 }
 async function saveGitSettings(){
   const url=(document.getElementById('git-remote-url')?.value||'');
   const branch=(document.getElementById('git-backup-branch')?.value||'main');
-  if(isOpenDevTeamEdition()){
-    try{
-      const r=await fetch('/api/v2/git/config',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({remoteUrl:url,branch})
-      });
-      const d=await r.json().catch(()=>({}));
-      if(!r.ok||!d.ok){
-        showToast(d.error||'项目 Git 配置保存失败','#fca5a5',5000);
-        return;
-      }
-      const urlEl=document.getElementById('git-remote-url');
-      const branchEl=document.getElementById('git-backup-branch');
-      if(urlEl)urlEl.value=d.remoteUrl||url;
-      if(branchEl)branchEl.value=d.branch||branch||'main';
-      gitBackupDirty=false;
-      setGitSettingsEditMode(false);
-      showToast('当前项目 GitHub 仓库配置已保存','#4ade80');
-      loadGitPageStatus();
-      return;
-    }catch(e){
-      showToast('项目 Git 配置保存失败：'+String(e&&e.message||e),'#fca5a5',5000);
+  try{
+    const r=await fetch('/api/v2/git/config',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({remoteUrl:url,branch})
+    });
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok||!d.ok){
+      showToast(d.error||'Git 配置保存失败','#fca5a5',5000);
       return;
     }
+    const urlEl=document.getElementById('git-remote-url');
+    const branchEl=document.getElementById('git-backup-branch');
+    if(urlEl)urlEl.value=d.remoteUrl||url;
+    if(branchEl)branchEl.value=d.branch||branch||'main';
+    gitBackupDirty=false;
+    setGitSettingsEditMode(false);
+    showToast(isOpenDevTeamEdition()?'当前项目 GitHub 仓库配置已保存':'母版 Git 配置已保存','#4ade80');
+    loadGitPageStatus();
+  }catch(e){
+    showToast('Git 配置保存失败：'+String(e&&e.message||e),'#fca5a5',5000);
   }
-  localStorage.setItem('cf_git_backup',JSON.stringify({remoteUrl:url,branch}));
-  // Legacy keys for backward compat
-  localStorage.setItem('cf_git_remote_url',url);
-  localStorage.setItem('cf_git_backup_branch',branch);
-  gitBackupDirty=false;
-  setGitSettingsEditMode(false);
-  showToast(t('toast.configSaved'),'#4ade80');
 }
 function loadGitBackupSettings(){ return loadGitSettings(); }
 function saveGitBackupSettings(){ return saveGitSettings(); }
@@ -25992,7 +25977,6 @@ function isOpenEditionToolProjectRoot(root){
 }
 
 async function loadProjectGitConfigIntoForm(){
-  if(!isOpenDevTeamEdition())return null;
   try{
     const d=await fetch('/api/v2/git/config',{cache:'no-store'}).then(r=>r.json());
     const url=document.getElementById('git-remote-url');
@@ -26016,15 +26000,17 @@ async function prepareGitPageScope(){
   const configHelp=document.getElementById('git-config-help');
   const projectPushBtn=document.getElementById('git-project-push-btn');
   if(!isOpenDevTeamEdition()){
+    const gitCfg=await loadProjectGitConfigIntoForm();
+    const motherRoot=gitCfg&&gitCfg.cwd?String(gitCfg.cwd):'';
     if(title){title.dataset.i18nDynamic='1';title.textContent='母版代码 Git 状态';}
     if(commitBtn){commitBtn.dataset.i18nDynamic='1';commitBtn.textContent='一键提交';commitBtn.disabled=false;}
     if(currentTitle){currentTitle.dataset.i18nDynamic='1';currentTitle.textContent='母版当前状态';}
     if(recentTitle){recentTitle.dataset.i18nDynamic='1';recentTitle.textContent='母版最近提交';}
     if(motherConfig)motherConfig.style.display='';
     if(configTitle)configTitle.textContent='母版 Git 配置';
-    if(configHelp)configHelp.innerHTML='这里配置的是母版代码仓库 <code style="font-size:12px">D:\\codeflowmu</code> 的 Git 远端和默认分支。即时提交请使用本页右上角「一键提交」；开源版本发布请使用「开源版本发版」。';
+    if(configHelp)configHelp.innerHTML='这里配置的是母版代码仓库 <code id="git-config-root" style="font-size:12px">'+esc(motherRoot||'当前运行根目录')+'</code> 的 Git 远端和默认分支。即时提交请使用本页右上角「一键提交」；开源版本发布请使用「开源版本发版」。';
     if(projectPushBtn)projectPushBtn.style.display='none';
-    return {ok:true, scope:'mother', name:'CodeFlowMu 母版', root:'D:\\codeflowmu'};
+    return {ok:true, scope:'mother', name:'CodeFlowMu 母版', root:motherRoot};
   }
 
   if(!_projList || !_projList.length) await loadProjects();
@@ -28979,7 +28965,7 @@ const TPL_BUILTIN = [
   { id:'builtin-qa', name:'QA 验收任务', role:'QA', priority:'P1',
     body:`# QA 验收任务\n\n**接收方：** QA-01\n**Sprint：** {{sprint_name}}\n**日期：** {{date}}\n\n## 验收范围\n\n{{scope}}\n\n## 验收标准\n\n- [ ] 功能测试通过\n- [ ] 回归测试通过\n- [ ] 无 P0/P1 阻塞问题\n\n## 回执\n\nREPORT-{{date}}-QA-to-PM.md` },
   { id:'builtin-eval-cfm-issue', name:'EVAL → CodeFlowMu Issue 草稿', role:'ADMIN', priority:'P1',
-    body:`# EVAL 晋升 · CodeFlowMu GitHub Issue 草稿\n\n**说明：** 在 EVAL 报告详情中点「提交给 CodeFlowMu」后，草稿落在 \`fcop/internal/eval/issue-drafts/CODEFLOWMU-ISSUE-DRAFT-*.md\`。\n\n**目标仓库：** joinwell52-AI/CodeFlowMu\n\n**v1：** 不自动 \`gh issue create\`，ADMIN 审阅脱敏后再提交。\n\n## 正文结构\n\n- 背景 / 发现 / 影响 / 建议\n- 为什么提交给 CodeFlowMu（宿主产品问题）\n- 安全检查清单` },
+    body:`# EVAL 晋升 · CodeFlowMu GitHub Issue 草稿\n\n**说明：** 在 EVAL 报告详情中点「提交给 CodeFlowMu」后，草稿落在 \`fcop/internal/eval/issue-drafts/CODEFLOWMU-ISSUE-DRAFT-*.md\`。\n\n**目标仓库：** joinwell52-AI/codeflowmu1.2.21\n\n**v1：** 不自动 \`gh issue create\`，ADMIN 审阅脱敏后再提交。\n\n## 正文结构\n\n- 背景 / 发现 / 影响 / 建议\n- 为什么提交给 CodeFlowMu（宿主产品问题）\n- 安全检查清单` },
   { id:'builtin-eval-fcop-issue', name:'EVAL → FCoP Issue 草稿', role:'ADMIN', priority:'P1',
     body:`# EVAL 晋升 · FCoP GitHub Issue 草稿\n\n**说明：** 在 EVAL 报告详情中点「提交给 FCoP」后，草稿落在 \`fcop/internal/eval/issue-drafts/FCOP-ISSUE-DRAFT-*.md\`。\n\n**目标仓库：** joinwell52-AI/FCoP\n\n**适用：** 协议规则、MCP 工具、lifecycle 语义、EVAL 规范等通用问题。\n\n**v1：** 不自动提交 GitHub。` },
 ];

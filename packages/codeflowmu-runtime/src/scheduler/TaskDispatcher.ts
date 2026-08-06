@@ -531,6 +531,8 @@ export class TaskDispatcher {
   private _inboxReconcileRunning = false;
   private readonly _inboxReconcileIntervalMs: number;
   private readonly _dispatchWaitLogAt = new Map<string, number>();
+  /** Suppress repeated diagnostics for unchanged permanently-invalid inbox files. */
+  private readonly _invalidTaskSignatures = new Map<string, string>();
   private _started = false;
 
   /**
@@ -1475,21 +1477,49 @@ export class TaskDispatcher {
     };
     if (durableErrors.length > 0) {
       const detail = durableErrors.join(", ");
-      this._logger.warn(
-        `[TaskDispatcher] invalid_task_file ${filename}: ${detail}`,
-      );
-      this._panelEvents?.emit("codeflowmu.dispatch_skipped", {
-        event: "dispatch_skipped",
-        reason: "invalid_task_file",
-        detail,
-        task_path: filepath,
-        filename,
-        role: recipient,
-        at: toLocalIsoString(this._now()),
-      });
-      await recordDecision("REJECT", `invalid_task_file:${detail}`);
+      const invalidPathKey = process.platform === "win32"
+        ? resolve(filepath).toLowerCase()
+        : resolve(filepath);
+      let contentDigest = decisionInputDigest;
+      try {
+        contentDigest = createHash("sha256")
+          .update(readFileSync(filepath))
+          .digest("hex");
+      } catch {
+        // The parsed-task digest remains a stable fallback if the file is
+        // concurrently moved after parsing.
+      }
+      const invalidSignature = `${contentDigest}:${detail}`;
+      if (this._invalidTaskSignatures.get(invalidPathKey) === invalidSignature) {
+        return { kind: "dispatch_skipped", reason: "invalid_task_file", detail };
+      }
+      this._invalidTaskSignatures.set(invalidPathKey, invalidSignature);
+      try {
+        this._logger.warn(
+          `[TaskDispatcher] invalid_task_file ${filename}: ${detail}`,
+        );
+        this._panelEvents?.emit("codeflowmu.dispatch_skipped", {
+          event: "dispatch_skipped",
+          reason: "invalid_task_file",
+          detail,
+          task_path: filepath,
+          filename,
+          role: recipient,
+          at: toLocalIsoString(this._now()),
+        });
+        await recordDecision("REJECT", `invalid_task_file:${detail}`);
+      } catch (error) {
+        if (this._invalidTaskSignatures.get(invalidPathKey) === invalidSignature) {
+          this._invalidTaskSignatures.delete(invalidPathKey);
+        }
+        throw error;
+      }
       return { kind: "dispatch_skipped", reason: "invalid_task_file", detail };
     }
+    const validPathKey = process.platform === "win32"
+      ? resolve(filepath).toLowerCase()
+      : resolve(filepath);
+    this._invalidTaskSignatures.delete(validPathKey);
 
     if (this._projectRoot) {
       const admission = await verifyTaskSpecAdmissionForDispatch({

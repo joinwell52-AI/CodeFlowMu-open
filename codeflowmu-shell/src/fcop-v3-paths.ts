@@ -872,7 +872,12 @@ export function verifyFcopProjectInit(
     const resolvedProject = pathResolve(projectRoot);
     const resolvedHost = pathResolve(identity.hostRoot);
     const externalProject = resolvedProject.toLowerCase() !== resolvedHost.toLowerCase();
-    const copiedIdentityFiles = externalProject
+    // Older releases stored Gateway credentials below the active project root.
+    // A host-bound Runtime ignores those files, so their mere presence proves
+    // neither that this bootstrap copied them nor that the active owner escaped
+    // host_root. Keep the residue visible as a warning while enforcing the
+    // actual owner, Runtime binding, role and writer-lock invariants below.
+    const legacyProjectIdentityFiles = externalProject
       ? [".codeflowmu/instance.json", ".codeflowmu/mobile-gateway.json"]
           .filter((rel) => existsSync(join(resolvedProject, rel)))
       : [];
@@ -890,7 +895,6 @@ export function verifyFcopProjectInit(
       }
     }
     const ownerFailures = [
-      ...copiedIdentityFiles.map((rel) => `${rel}: project bootstrap copied host identity material`),
       ...(identity.gatewayOwnerRoot && pathResolve(identity.gatewayOwnerRoot).toLowerCase() !== resolvedHost.toLowerCase()
         ? ["Gateway owner root does not match canonical host_root"]
         : []),
@@ -902,13 +906,19 @@ export function verifyFcopProjectInit(
         : []),
       ...lockFailures,
     ];
+    const legacyIdentityWarnings = legacyProjectIdentityFiles.map(
+      (rel) => `${rel}: inactive legacy project-local identity is ignored; Runtime identity remains owned by host_root`,
+    );
+    warnings.push(...legacyIdentityWarnings);
     const identityDetail = ownerFailures.length > 0
       ? ownerFailures.join("; ")
-      : `host_root=${resolvedHost}; instance_id=${identity.instanceId}; registry=${identity.registryPath}; data_root=${identity.dataRoot}`;
+      : legacyIdentityWarnings.length > 0
+        ? `${legacyIdentityWarnings.join("; ")}; host_root=${resolvedHost}`
+        : `host_root=${resolvedHost}; instance_id=${identity.instanceId}; registry=${identity.registryPath}; data_root=${identity.dataRoot}`;
     items.push({
       id: "runtime_identity_isolation",
       name: "Runtime/Gateway identity isolation",
-      status: ownerFailures.length > 0 ? "fail" : "ok",
+      status: ownerFailures.length > 0 ? "fail" : legacyIdentityWarnings.length > 0 ? "warn" : "ok",
       detail: identityDetail,
     });
     failures.push(...ownerFailures);

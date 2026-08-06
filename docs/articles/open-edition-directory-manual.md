@@ -16,13 +16,13 @@
 
 | 层级 | 路径 | 用途 | 是否手动维护 |
 |---|---|---|---|
-| 母版源目录 | `D:\codeflowmu\editions\open-dev-team\` | 开源版专属 README、安装说明、页面模板、GitHub 文章素材源 | 是 |
-| 母版图片源 | `D:\codeflowmu\docs\images\` | 公开 README 和文章使用的产品图片、截图 | 是 |
-| 发版构建产物 | `D:\codeflowmu\release\open-dev-team\CodeFlowMu\` | 每次发版生成的完整公开包，用于检查和同步 | 否 |
+| 母版源目录 | `D:\codeflowmu1.2.21\editions\open-dev-team\` | 开源版专属 README、安装说明、页面模板、GitHub 文章素材源 | 是 |
+| 母版图片源 | `D:\codeflowmu1.2.21\docs\images\` | 公开 README 和文章使用的产品图片、截图 | 是 |
+| 发版构建产物 | `D:\codeflowmu1.2.21\release\open-dev-team\CodeFlowMu\` | 每次发版生成的完整公开包，用于检查和同步 | 否 |
 | 公开本地仓库 | `D:\CodeFlowMu-open\` | `joinwell52-AI/CodeFlowMu-open` 的本地工作区，用户下载/运行的公开版 | 由发版流程更新 |
 | GitHub 公开仓库 | `joinwell52-AI/CodeFlowMu-open` | 对外展示、下载、安装、引导和贡献入口 | 由公开本地仓库推送 |
 
-不要直接维护 `D:\codeflowmu\release\open-dev-team`。它是临时构建结果，下次构建会重建。所有公开内容都应回到母版源目录修改。
+不要直接维护 `D:\codeflowmu1.2.21\release\open-dev-team`。它是临时构建结果，下次构建会重建。所有公开内容都应回到母版源目录修改。
 
 ## 开源版根目录
 
@@ -58,8 +58,8 @@
 |---|---|---|
 | `docs/open/` | 快速开始、边界说明、Gateway 说明、贡献说明、GitHub about | `editions/open-dev-team/pages/` |
 | `docs/articles/` | GitHub 文章、产品说明、目录手册、发版边界说明 | `editions/open-dev-team/github/articles/` |
-| `docs/images/` | README 和文章使用的公开图片、截图 | `D:\codeflowmu\docs\images\` |
-| `docs/skills/` | 公开版 Agent 技能清单和技能说明 | `D:\codeflowmu\docs\skills\` |
+| `docs/images/` | README 和文章使用的公开图片、截图 | `D:\codeflowmu1.2.21\docs\images\` |
+| `docs/skills/` | 公开版 Agent 技能清单和技能说明 | `D:\codeflowmu1.2.21\docs\skills\` |
 
 公开文章和图片属于开源仓库展示层。发版时必须与应用代码一起检查，否则公开仓库会出现“代码已更新、介绍还停留在旧版本”的断层。
 
@@ -147,18 +147,18 @@ workspace/
 4. 公开文章改 `editions/open-dev-team/github/articles/`。
 5. 开源版页面模板改 `editions/open-dev-team/pages/`。
 6. 开源版 UI 配置改 `editions/open-dev-team/panel/`。
-7. 公开图片改 `D:\codeflowmu\docs\images\`，确保 README 引用的是公开可发布图片。
-8. 发版后检查 `D:\codeflowmu\release\open-dev-team\CodeFlowMu`，再同步到 `D:\CodeFlowMu-open`。
+7. 公开图片改 `D:\codeflowmu1.2.21\docs\images\`，确保 README 引用的是公开可发布图片。
+8. 发版后检查 `D:\codeflowmu1.2.21\release\open-dev-team\CodeFlowMu`，再同步到 `D:\CodeFlowMu-open`。
 
 ## 快速判断
 
 | 你要做的事 | 应该改哪里 |
 |---|---|
-| 改 GitHub 首页介绍 | `D:\codeflowmu\editions\open-dev-team\README.md` / `README.zh.md` |
-| 新增公开文章 | `D:\codeflowmu\editions\open-dev-team\github\articles\` |
-| 更新安装手册 | `D:\codeflowmu\editions\open-dev-team\INSTALL.md` |
-| 更新公开图片 | `D:\codeflowmu\docs\images\` |
-| 检查发版结果 | `D:\codeflowmu\release\open-dev-team\CodeFlowMu\` |
+| 改 GitHub 首页介绍 | `D:\codeflowmu1.2.21\editions\open-dev-team\README.md` / `README.zh.md` |
+| 新增公开文章 | `D:\codeflowmu1.2.21\editions\open-dev-team\github\articles\` |
+| 更新安装手册 | `D:\codeflowmu1.2.21\editions\open-dev-team\INSTALL.md` |
+| 更新公开图片 | `D:\codeflowmu1.2.21\docs\images\` |
+| 检查发版结果 | `D:\codeflowmu1.2.21\release\open-dev-team\CodeFlowMu\` |
 | 运行开源版 | `D:\CodeFlowMu-open\START-CODEFLOWMU-OPEN.bat` |
 | 开发用户项目 | `D:\CodeFlowMu-open\projects\newproject`、旧版已登记项目或用户添加的外部项目根 |
 | 提交公开仓库 | `D:\CodeFlowMu-open` |

@@ -224,7 +224,7 @@ export interface TaskParserOptions {
    */
   fcopClient?: FcopProjectClient;
   /**
-   * Absolute path to the fcop tasks directory (e.g. `D:\CodeFlowMu\fcop\tasks`).
+   * Absolute path to the fcop tasks directory (e.g. `D:\example-project\fcop\tasks`).
    * When provided alongside `fcopClient`, `parse()` will ONLY call
    * `fcopClient.readTask()` if the file lives inside this directory.
    * Files outside (e.g. inbox drop-ins) skip fcop and go straight to
