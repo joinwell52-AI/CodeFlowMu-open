@@ -18,6 +18,7 @@ import {
   exportIssuePromotionBundle,
   generateIssuePromotionBundle,
   listIssuePromotions,
+  loadIssuePromotionConfig,
   publishIssuePromotionWithExecutor,
   readIssuePromotion,
   validateGithubIssueTargetMetadata,
@@ -68,6 +69,8 @@ async function fixture(options: { blocked?: boolean; issue?: Record<string, unkn
   writeFileSync(issuePath, issueMarkdown(options.issue), "utf8");
   writeFileSync(taskPath, taskMarkdown(options.blocked ?? true), "utf8");
   writeFileSync(join(root, "package.json"), `${JSON.stringify({ repository: { url: "https://github.com/joinwell52-AI/codeflowmu.git" } }, null, 2)}\n`, "utf8");
+  mkdirSync(join(root, ".codeflowmu"), { recursive: true });
+  writeFileSync(join(root, ".codeflowmu", "issue-promotion-target.json"), `${JSON.stringify({ target_repo: "joinwell52-AI/codeflowmu1.2.21", labels: ["runtime", "evidence"] }, null, 2)}\n`, "utf8");
   return {
     root,
     issuePath,
@@ -127,6 +130,32 @@ test("preview validates the decision and writes no files", async () => {
     assert.equal(readFileSync(f.issuePath, "utf8"), beforeIssue);
     assert.equal(readFileSync(f.taskPath, "utf8"), beforeTask);
     assert.equal(existsSync(join(f.root, "fcop", "internal", "issue-closures")), false);
+  } finally { await f.cleanup(); }
+});
+
+test("simple close accepts only type and any non-empty reason without touching TASK or Session state", async () => {
+  const f = await fixture();
+  try {
+    const taskBefore = readFileSync(f.taskPath, "utf8");
+    const service = new IssueClosureService({ projectRoot: f.root });
+    const result = await service.close(ISSUE_FILENAME, {
+      closure_mode: "simple",
+      actor: "ADMIN",
+      idempotency_key: "simple-close-001",
+      expected_issue_digest: digestIssueClosureText(readFileSync(f.issuePath, "utf8")),
+      resolution_type: "development_fix",
+      reason: "修",
+      unblock_task: true,
+      recovery_action: "must be ignored in simple mode",
+      promote_to_mother: false,
+    });
+    assert.equal(result.status, "closed");
+    assert.equal(result.task_side_effect.status, "not_requested");
+    assert.equal(readFileSync(f.taskPath, "utf8"), taskBefore);
+    const closure = parseMarkdownFrontmatter(readFileSync(join(f.root, ...result.closure_record.split("/")), "utf8"));
+    assert.equal(closure.closure_mode, "simple");
+    assert.equal(closure.root_cause_status, "unknown");
+    assert.equal(closure.unblock_task, false);
   } finally { await f.cleanup(); }
 });
 
@@ -351,7 +380,7 @@ test("local promotion produces a deduplicated redacted evidence bundle and no ex
       expected_closure_digest: closed.closure_digest,
     });
     assert.equal(bundle.status, "draft_created");
-    assert.equal(bundle.target_repo.toLowerCase(), "joinwell52-ai/codeflowmu");
+    assert.equal(bundle.target_repo.toLowerCase(), "joinwell52-ai/codeflowmu1.2.21");
     assert.equal(existsSync(join(f.root, ...bundle.bundle_path.split("/"), "manifest.json")), true);
     assert.doesNotMatch(bundle.draft_body, /[A-Za-z]:\\/);
     const replay = await generateIssuePromotionBundle({ projectRoot: f.root, filename: ISSUE_FILENAME, actor: "ADMIN", expected_closure_digest: closed.closure_digest });
@@ -360,7 +389,23 @@ test("local promotion produces a deduplicated redacted evidence bundle and no ex
     const approval = buildIssueGithubApprovalInput({ projectRoot: f.root, promotion_id: bundle.promotion_id, actor: "ADMIN" });
     assert.equal(approval.request.action.executor, "github.issue.create");
     assert.equal(approval.request.effect.external_write, true);
+    assert.match(approval.reason, /joinwell52-AI\/codeflowmu1\.2\.21/);
+    assert.match(approval.effects[0] ?? "", /将在 GitHub 仓库 .* 新建 1 个 Issue，标题为/);
+    assert.ok(approval.non_effects.some((item) => item.includes("不会完成、归档、解除或停止关联 TASK\/Session")));
     assert.equal(existsSync(join(f.root, ".codeflowmu", "operation-approvals")), false);
+  } finally { await f.cleanup(); }
+});
+
+test("promotion target never falls back to package.json repository", async () => {
+  const f = await fixture();
+  try {
+    await rm(join(f.root, ".codeflowmu", "issue-promotion-target.json"));
+    assert.throws(
+      () => loadIssuePromotionConfig(f.root),
+      (error: unknown) => error instanceof IssueClosureError
+        && error.code === "GITHUB_TARGET_NOT_CONFIGURED"
+        && String(error.message).includes(".codeflowmu/issue-promotion-target.json"),
+    );
   } finally { await f.cleanup(); }
 });
 
@@ -389,7 +434,7 @@ test("approved GitHub publication uses the controlled executor and persists a de
       },
       createIssue() {
         creates += 1;
-        return "https://github.com/joinwell52-AI/codeflowmu/issues/321";
+        return "https://github.com/joinwell52-AI/codeflowmu1.2.21/issues/321";
       },
     };
     const published = await publishIssuePromotionWithExecutor(approval, dependencies);
@@ -398,7 +443,7 @@ test("approved GitHub publication uses the controlled executor and persists a de
     assert.equal(creates, 1);
     const receipt = readIssuePromotion(f.root, bundle.promotion_id);
     assert.equal(receipt.status, "published");
-    assert.equal(receipt.target_issue_url, "https://github.com/joinwell52-AI/codeflowmu/issues/321");
+    assert.equal(receipt.target_issue_url, "https://github.com/joinwell52-AI/codeflowmu1.2.21/issues/321");
     const issueFm = parseMarkdownFrontmatter(readFileSync(f.issuePath, "utf8"));
     assert.equal(issueFm.promotion_status, "published");
     const detail = service.detail(ISSUE_FILENAME);

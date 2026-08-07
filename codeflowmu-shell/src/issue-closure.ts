@@ -21,6 +21,8 @@ import { findTaskFileByIdPrefix } from "./fcop-v3-paths.ts";
 
 export const ISSUE_RESOLUTION_TYPES = [
   "fixed",
+  "development_fix",
+  "no_action",
   "mitigated",
   "workaround",
   "duplicate",
@@ -28,6 +30,13 @@ export const ISSUE_RESOLUTION_TYPES = [
   "invalid",
   "accepted_risk",
   "superseded",
+] as const;
+
+export const SIMPLE_ISSUE_RESOLUTION_TYPES = [
+  "fixed",
+  "development_fix",
+  "duplicate",
+  "no_action",
 ] as const;
 
 export const ISSUE_ROOT_CAUSE_STATUSES = [
@@ -68,6 +77,7 @@ export type IssueClosureEvidence = {
 };
 
 export type IssueClosureDraft = {
+  closure_mode: "simple" | "advanced";
   actor: string;
   idempotency_key: string;
   expected_issue_digest: string;
@@ -259,36 +269,38 @@ function normalizeFollowUp(raw: Record<string, unknown>): {
 
 export function normalizeIssueClosureDraft(raw: unknown): IssueClosureDraft {
   const row = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  const closureMode = text(row.closure_mode).toLowerCase() === "simple" ? "simple" : "advanced";
   const followUp = normalizeFollowUp(row);
   return {
+    closure_mode: closureMode,
     actor: text(row.actor ?? row.closed_by ?? row.operator),
     idempotency_key: text(row.idempotency_key),
     expected_issue_digest: text(row.expected_issue_digest),
     expected_closure_digest: text(row.expected_closure_digest) || undefined,
     resolution_type: text(row.resolution_type).toLowerCase() as IssueResolutionType,
-    root_cause_status: text(row.root_cause_status || "unknown").toLowerCase() as IssueRootCauseStatus,
-    root_cause_category: text(row.root_cause_category) || undefined,
-    root_cause_summary: text(row.root_cause_summary) || undefined,
+    root_cause_status: (closureMode === "simple" ? "unknown" : text(row.root_cause_status || "unknown").toLowerCase()) as IssueRootCauseStatus,
+    root_cause_category: closureMode === "simple" ? undefined : text(row.root_cause_category) || undefined,
+    root_cause_summary: closureMode === "simple" ? undefined : text(row.root_cause_summary) || undefined,
     reason: text(row.reason ?? row.resolution),
-    recovery_action: text(row.recovery_action) || undefined,
-    verification_summary: text(row.verification_summary) || undefined,
-    evidence: evidenceList(row.evidence),
-    residual_risk: text(row.residual_risk) || undefined,
-    follow_up_required: followUp.required,
-    follow_up_target: followUp.target || undefined,
-    follow_up_reference: followUp.reference || undefined,
-    replacement_target: text(row.replacement_target ?? row.duplicate_target ?? row.superseded_by) || undefined,
-    reopen_conditions: stringList(row.reopen_conditions),
-    unblock_task: bool(row.unblock_task),
-    unblock_reason: text(row.unblock_reason) || undefined,
-    fix_commit: text(row.fix_commit) || undefined,
-    fix_version: text(row.fix_version) || undefined,
-    environment: text(row.environment) || undefined,
-    reproduction_attempts: Number(row.reproduction_attempts ?? 0) || undefined,
-    observation_window: text(row.observation_window) || undefined,
-    risk_decider: text(row.risk_decider) || undefined,
-    risk_expires_at: text(row.risk_expires_at) || undefined,
-    risk_review_condition: text(row.risk_review_condition) || undefined,
+    recovery_action: closureMode === "simple" ? undefined : text(row.recovery_action) || undefined,
+    verification_summary: closureMode === "simple" ? undefined : text(row.verification_summary) || undefined,
+    evidence: closureMode === "simple" ? [] : evidenceList(row.evidence),
+    residual_risk: closureMode === "simple" ? undefined : text(row.residual_risk) || undefined,
+    follow_up_required: closureMode === "simple" ? false : followUp.required,
+    follow_up_target: closureMode === "simple" ? undefined : followUp.target || undefined,
+    follow_up_reference: closureMode === "simple" ? undefined : followUp.reference || undefined,
+    replacement_target: closureMode === "simple" ? undefined : text(row.replacement_target ?? row.duplicate_target ?? row.superseded_by) || undefined,
+    reopen_conditions: closureMode === "simple" ? [] : stringList(row.reopen_conditions),
+    unblock_task: closureMode === "simple" ? false : bool(row.unblock_task),
+    unblock_reason: closureMode === "simple" ? undefined : text(row.unblock_reason) || undefined,
+    fix_commit: closureMode === "simple" ? undefined : text(row.fix_commit) || undefined,
+    fix_version: closureMode === "simple" ? undefined : text(row.fix_version) || undefined,
+    environment: closureMode === "simple" ? undefined : text(row.environment) || undefined,
+    reproduction_attempts: closureMode === "simple" ? undefined : Number(row.reproduction_attempts ?? 0) || undefined,
+    observation_window: closureMode === "simple" ? undefined : text(row.observation_window) || undefined,
+    risk_decider: closureMode === "simple" ? undefined : text(row.risk_decider) || undefined,
+    risk_expires_at: closureMode === "simple" ? undefined : text(row.risk_expires_at) || undefined,
+    risk_review_condition: closureMode === "simple" ? undefined : text(row.risk_review_condition) || undefined,
     authority_scope: text(row.authority_scope) || undefined,
     promote_to_mother: bool(row.promote_to_mother),
   };
@@ -368,6 +380,23 @@ function lifecycleFromTaskPath(path: string): string {
 }
 
 function buildClosureBody(draft: IssueClosureDraft): string {
+  if (draft.closure_mode === "simple") {
+    return [
+      "# Issue closure decision",
+      "",
+      "## Decision type",
+      "",
+      draft.resolution_type,
+      "",
+      "## Decision reason",
+      "",
+      draft.reason,
+      "",
+      "## Scope",
+      "",
+      "This decision closes the ISSUE only. It does not complete, archive, unblock, or stop any related TASK or Session.",
+    ].join("\n");
+  }
   const evidence = draft.evidence.length
     ? draft.evidence.map((item) => `- ${item.type}: ${item.ref}${item.note ? ` (${item.note})` : ""}`)
     : ["- None recorded"];
@@ -427,13 +456,34 @@ function validateDraftFields(draft: IssueClosureDraft): void {
   if (!draft.expected_issue_digest) missing.push("expected_issue_digest");
   if (!ISSUE_RESOLUTION_TYPES.includes(draft.resolution_type)) missing.push("resolution_type");
   if (!ISSUE_ROOT_CAUSE_STATUSES.includes(draft.root_cause_status)) missing.push("root_cause_status");
-  if (!draft.reason || draft.reason.length < 8) missing.push("reason");
+  if (!draft.reason) missing.push("reason");
   if (missing.length) {
     throw new IssueClosureError(
       "ISSUE_CLOSURE_DETAILS_REQUIRED",
       `Issue closure details are incomplete: ${missing.join(", ")}`,
       422,
       { missing },
+    );
+  }
+
+  if (draft.closure_mode === "simple") {
+    if (!(SIMPLE_ISSUE_RESOLUTION_TYPES as readonly string[]).includes(draft.resolution_type)) {
+      throw new IssueClosureError(
+        "ISSUE_SIMPLE_RESOLUTION_TYPE_INVALID",
+        "Simple issue closure must use fixed, development_fix, duplicate, or no_action",
+        422,
+        { field: "resolution_type" },
+      );
+    }
+    return;
+  }
+
+  if (draft.reason.length < 8) {
+    throw new IssueClosureError(
+      "ISSUE_CLOSURE_DETAILS_REQUIRED",
+      "Advanced issue closure reason must contain at least 8 characters",
+      422,
+      { missing: ["reason"] },
     );
   }
 
@@ -771,6 +821,7 @@ export class IssueClosureService {
         const record: IssueClosureRecord = {
           kind: "issue_closure",
           schema_version: 1,
+          closure_mode: preview.normalized.closure_mode,
           closure_id: preview.closure_id,
           source_issue_id: preview.issue_id,
           source_issue_path: relativePortable(this.root, issue.path),
@@ -1035,9 +1086,22 @@ export class IssueClosureService {
 
 export function issueClosureErrorResponse(error: unknown): { status: number; code: string; message: string; details?: unknown } {
   if (error instanceof IssueClosureError) {
-    return { status: error.httpStatus, code: error.code, message: error.message, ...(error.details === undefined ? {} : { details: error.details }) };
+    const zhMessages: Record<string, string> = {
+      ISSUE_CLOSURE_DETAILS_REQUIRED: "请填写结案类型和结案原因后再提交。",
+      ISSUE_SIMPLE_RESOLUTION_TYPE_INVALID: "请选择有效的结案类型。",
+      ISSUE_CHANGED_REVIEW_AGAIN: "ISSUE 内容已变化，请刷新后重新结案。",
+      ISSUE_CLOSURE_CHANGED_REVIEW_AGAIN: "结案内容已变化，请重新提交。",
+      ISSUE_ALREADY_CLOSED: "该 ISSUE 已经结案。",
+      ISSUE_ALREADY_CLOSED_REVIEW_HISTORY: "该 ISSUE 已由其他操作结案，请刷新查看。",
+      ISSUE_CLOSURE_IN_PROGRESS: "该 ISSUE 正在结案，请稍后再试。",
+      ISSUE_CLOSE_AUTHORITY_REQUIRED: "当前操作者没有结案权限。",
+      ISSUE_PROMOTION_SECRET_DETECTED: "证据中检测到敏感信息，已停止生成母版证据。",
+      ISSUE_PROMOTION_REDACTION_FAILED: "证据脱敏检查未通过，已停止生成母版证据。",
+      GITHUB_TARGET_NOT_CONFIGURED: "未配置母版目标仓库，请检查 .codeflowmu/issue-promotion-target.json。",
+    };
+    return { status: error.httpStatus, code: error.code, message: zhMessages[error.code] ?? error.message, ...(error.details === undefined ? {} : { details: error.details }) };
   }
-  return { status: 500, code: "ISSUE_CLOSURE_FAILED", message: error instanceof Error ? error.message : String(error) };
+  return { status: 500, code: "ISSUE_CLOSURE_FAILED", message: "ISSUE 结案失败，请查看运行日志后重试。" };
 }
 
 export { digestObject as digestIssueClosureObject, sha256Text as digestIssueClosureText };

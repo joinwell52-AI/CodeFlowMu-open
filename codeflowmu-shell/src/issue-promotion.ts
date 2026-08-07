@@ -85,27 +85,20 @@ function readJson(path: string): Record<string, unknown> | null {
 }
 
 export function loadIssuePromotionConfig(projectRoot: string): IssuePromotionConfig {
-  const candidates = [
-    { path: join(projectRoot, ".codeflowmu", "issue-promotion-target.json"), key: "target_repo", source: ".codeflowmu/issue-promotion-target.json" },
-    { path: join(projectRoot, "editions", "open-dev-team", "manifest.json"), key: "sourceRepository", source: "editions/open-dev-team/manifest.json" },
-    { path: join(projectRoot, "package.json"), key: "repository", source: "package.json" },
-  ];
-  for (const candidate of candidates) {
-    const row = readJson(candidate.path);
-    if (!row) continue;
-    const repoValue = candidate.key === "repository" && row.repository && typeof row.repository === "object"
-      ? (row.repository as Record<string, unknown>).url
-      : row[candidate.key];
-    const repo = normalizeRepo(repoValue);
+  const source = ".codeflowmu/issue-promotion-target.json";
+  const row = readJson(join(projectRoot, ".codeflowmu", "issue-promotion-target.json"));
+  if (row) {
+    const repo = normalizeRepo(row.target_repo);
     if (repo) {
       const labels = Array.isArray(row.labels) ? row.labels.map(String).map((value) => value.trim()).filter(Boolean) : ["runtime", "evidence"];
-      return { target_repo: repo, labels, source: candidate.source };
+      return { target_repo: repo, labels, source };
     }
   }
   throw new IssueClosureError(
     "GITHUB_TARGET_NOT_CONFIGURED",
-    "No explicit CodeFlowMu mother repository is configured for issue promotion",
+    `未配置有效的母版目标仓库，请在 ${source} 中明确设置 target_repo。系统不会从 package.json 或当前项目仓库猜测目标。`,
     422,
+    { config_path: source },
   );
 }
 
@@ -300,6 +293,7 @@ export async function generateIssuePromotionBundle(input: {
     closure_digest: closureDigest,
     promotion_digest: promotionDigest,
     target_repo: config.target_repo,
+    target_config_source: config.source,
     labels: config.labels,
     draft_file: `${bundleRel}/${draftFilename}`,
     draft_title: title,
@@ -393,10 +387,10 @@ export function buildIssueGithubApprovalInput(input: {
         promotion_digest: row.promotion_digest,
       },
     },
-    reason: "Publish the reviewed, redacted evidence draft to the configured CodeFlowMu mother GitHub Issues",
-    effects: [`create one issue in ${targetRepo}`],
-    non_effects: ["does not modify local mother worktree", "does not push git", "does not close or reopen source issue", "does not stop task or session"],
-    recovery: "Publication failure is retryable; retain the local closure and evidence bundle",
+    reason: `申请向母版仓库 ${targetRepo} 提交已审阅、已脱敏的 ISSUE 草稿《${String(row.draft_title ?? "")}》。`,
+    effects: [`将在 GitHub 仓库 ${targetRepo} 新建 1 个 Issue，标题为《${String(row.draft_title ?? "")}》`],
+    non_effects: ["不会修改本地母版工作树", "不会推送 Git 提交", "不会关闭或重新打开来源 ISSUE", "不会完成、归档、解除或停止关联 TASK/Session"],
+    recovery: "发布失败时保留本地结案记录和证据包，可在审批后重试。",
     rule_ids: ["NEG.EXTERNAL.WRITE"],
     executor_status: "ready",
     suggested_executor: "github.issue.create",
@@ -484,7 +478,16 @@ export async function publishIssuePromotionWithExecutor(
       body,
       labels: Array.isArray(row.labels) ? row.labels.map(String) : [],
     })).trim();
-    if (!/^https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+\/?$/i.test(url)) {
+    let receipt: URL | null = null;
+    try { receipt = new URL(url); } catch { receipt = null; }
+    const expectedPathPrefix = `/${targetRepo.toLowerCase()}/issues/`;
+    if (
+      !receipt
+      || receipt.protocol !== "https:"
+      || receipt.hostname.toLowerCase() !== "github.com"
+      || !receipt.pathname.toLowerCase().startsWith(expectedPathPrefix)
+      || !/^\d+\/?$/.test(receipt.pathname.slice(expectedPathPrefix.length))
+    ) {
       throw new IssueClosureError("GITHUB_ISSUE_RECEIPT_INVALID", "GitHub issue creation returned an invalid receipt URL", 502);
     }
   } catch (error) {

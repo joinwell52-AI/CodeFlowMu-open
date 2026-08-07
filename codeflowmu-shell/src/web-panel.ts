@@ -49,6 +49,7 @@ import {
   exportIssuePromotionBundle,
   generateIssuePromotionBundle,
   listIssuePromotions,
+  loadIssuePromotionConfig,
   readIssuePromotion,
 } from "./issue-promotion.ts";
 import {
@@ -9747,7 +9748,15 @@ export function buildWebPanelApp(
   app.get("/api/v2/issues/promotions", (_req: Request, res: Response) => {
     try {
       const promotions = listIssuePromotions(projectRoot());
-      res.json({ promotions, _meta: { count: promotions.length } });
+      let promotionTarget: Record<string, unknown>;
+      try {
+        const config = loadIssuePromotionConfig(projectRoot());
+        promotionTarget = { ok: true, target_repo: config.target_repo, source: config.source };
+      } catch (error) {
+        const out = issueClosureErrorResponse(error);
+        promotionTarget = { ok: false, code: out.code, message: out.message, ...(out.details && typeof out.details === "object" ? out.details as Record<string, unknown> : {}) };
+      }
+      res.json({ promotions, _meta: { count: promotions.length, promotion_target: promotionTarget } });
     } catch (err) {
       const out = issueClosureErrorResponse(err);
       sendError(res, out.status, out.code, out.message, out.details);
@@ -9777,7 +9786,23 @@ export function buildWebPanelApp(
   app.post("/api/v2/issues/:filename/close", async (req: Request, res: Response) => {
     try {
       const filename = String(req.params["filename"] ?? "").trim();
-      res.json(await new IssueClosureService({ projectRoot: projectRoot() }).close(filename, req.body));
+      const root = projectRoot();
+      const closed = await new IssueClosureService({ projectRoot: root }).close(filename, req.body);
+      let promotion: Record<string, unknown> | null = null;
+      let promotionError: ReturnType<typeof issueClosureErrorResponse> | null = null;
+      if (req.body?.promote_to_mother === true) {
+        try {
+          promotion = await generateIssuePromotionBundle({
+            projectRoot: root,
+            filename,
+            actor: String(req.body?.actor ?? ""),
+            expected_closure_digest: closed.closure_digest,
+          });
+        } catch (error) {
+          promotionError = issueClosureErrorResponse(error);
+        }
+      }
+      res.json({ ...closed, promotion, ...(promotionError ? { promotion_error: promotionError } : {}) });
     } catch (err) {
       const out = issueClosureErrorResponse(err);
       sendError(res, out.status, out.code, out.message, out.details);

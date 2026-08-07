@@ -42,6 +42,7 @@ function sourceFixture(): string {
   write(root, ".cursor/rules/fcop-protocol.mdc", "> Rules version: `3.2.5` · Protocol commentary version: `3.2.5`\n");
   write(root, "AGENTS.md", "rules 3.2.5\n");
   write(root, "CLAUDE.md", "rules 3.2.5\n");
+  write(root, ".codeflowmu/issue-promotion-target.json", `${JSON.stringify({ target_repo: "joinwell52-AI/codeflowmu1.2.21", labels: ["runtime", "evidence"] }, null, 2)}\n`);
   write(root, "fcop/LETTER-TO-ADMIN.md", "admin guide\n");
   write(root, "fcop/shared/TEAM-README.md", "team\n");
   write(root, "fcop/shared/TEAM-ROLES.md", "roles\n");
@@ -98,8 +99,56 @@ test("new initialization writes only the confirmed signed plan and passes digest
     const agentSkills = JSON.parse(readFileSync(join(target, ".codeflowmu", "agent-skills.manifest.json"), "utf8"));
     assert.ok(Array.isArray(pmSkills.skills) && pmSkills.skills.length >= 5);
     assert.equal(agentSkills.common_skills.length, 58);
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(target, ".codeflowmu", "issue-promotion-target.json"), "utf8")),
+      { target_repo: "joinwell52-AI/codeflowmu1.2.21", labels: ["runtime", "evidence"] },
+    );
     assert.equal(existsSync(join(target, ".codeflowmu", "instance.json")), false);
     assert.equal(existsSync(join(target, ".codeflowmu", "mobile-gateway.json")), false);
+  } finally {
+    rmSync(source, { recursive: true, force: true });
+    rmSync(dirname(target), { recursive: true, force: true });
+  }
+});
+
+test("upgrade restores a missing promotion target but preserves an existing custom target", async () => {
+  const source = sourceFixture();
+  const target = join(mkdtempSync(join(tmpdir(), "cfm-bootstrap-promotion-upgrade-")), "project");
+  try {
+    const initial = compatiblePlan(source, target);
+    await new FcopInitTransaction(initial).execute(initial.plan_digest);
+    const configPath = join(target, ".codeflowmu", "issue-promotion-target.json");
+
+    rmSync(configPath);
+    const missingUpgrade = buildFcopInitPlan({
+      sourceRoot: source,
+      targetRoot: target,
+      sourceReleaseSha: "release-sha-2",
+      installedFcopVersion: "3.2.5",
+      installedFcopMcpVersion: "3.2.5",
+      bundledRulesVersion: "3.2.5",
+      bundledProtocolVersion: "3.2.5",
+      initializationProfile: { mode: "project", team: "dev-team", workspaceMode: "root" },
+    });
+    assert.ok(missingUpgrade.create.some((row) => row.target_rel === ".codeflowmu/issue-promotion-target.json"));
+    await new FcopInitTransaction(missingUpgrade).execute(missingUpgrade.plan_digest);
+    assert.equal(JSON.parse(readFileSync(configPath, "utf8")).target_repo, "joinwell52-AI/codeflowmu1.2.21");
+
+    const custom = `${JSON.stringify({ target_repo: "example/private-mother", labels: ["custom"] }, null, 2)}\n`;
+    writeFileSync(configPath, custom, "utf8");
+    const customUpgrade = buildFcopInitPlan({
+      sourceRoot: source,
+      targetRoot: target,
+      sourceReleaseSha: "release-sha-3",
+      installedFcopVersion: "3.2.5",
+      installedFcopMcpVersion: "3.2.5",
+      bundledRulesVersion: "3.2.5",
+      bundledProtocolVersion: "3.2.5",
+      initializationProfile: { mode: "project", team: "dev-team", workspaceMode: "root" },
+    });
+    assert.ok(customUpgrade.preserve.some((row) => row.target_rel === ".codeflowmu/issue-promotion-target.json"));
+    await new FcopInitTransaction(customUpgrade).execute(customUpgrade.plan_digest);
+    assert.equal(readFileSync(configPath, "utf8"), custom);
   } finally {
     rmSync(source, { recursive: true, force: true });
     rmSync(dirname(target), { recursive: true, force: true });

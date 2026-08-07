@@ -354,6 +354,7 @@ function manifestFileCandidates(sourceRoot: string): Array<Omit<FcopBootstrapFil
     { source_rel: "fcop/shared/TEAM-OPERATING-RULES.md", target_rel: "fcop/shared/TEAM-OPERATING-RULES.md", category: "role_template" },
     { source_rel: "fcop/shared/TEAM-OPERATING-RULES.en.md", target_rel: "fcop/shared/TEAM-OPERATING-RULES.en.md", category: "role_template" },
     { source_rel: "workspace/README.md", target_rel: "workspace/README.md", category: "host_contract" },
+    { source_rel: ".codeflowmu/issue-promotion-target.json", target_rel: ".codeflowmu/issue-promotion-target.json", category: "host_contract" },
   ];
   for (const rel of DEV_TEAM_ROLE_TEMPLATE_FILES) {
     candidates.push({ source_rel: rel, target_rel: rel, category: "role_template" });
