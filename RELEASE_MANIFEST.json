@@ -3,7 +3,7 @@
   "edition": "open-dev-team",
   "productName": "CodeFlowMu Open Dev Team Edition",
   "positioning": "A multi-agent development team application governed by the FCoP protocol and driven through Cursor SDK interfaces.",
-  "motherVersion": "V1.2.25",
+  "motherVersion": "V1.2.26",
   "features": [
     {
       "id": "fcop-development-team",
@@ -754,8 +754,8 @@
   },
   "sourceRepository": "joinwell52-AI/codeflowmu1.2.21",
   "targetRepository": "joinwell52-AI/CodeFlowMu-open",
-  "version": "V1.2.25-open",
-  "npmVersion": "1.2.25-open",
+  "version": "V1.2.26-open",
+  "npmVersion": "1.2.26-open",
   "status": "public-open",
   "releaseChannel": "open",
   "updatePolicy": {
@@ -796,10 +796,10 @@
     "mustNotShareRuntimeState": true,
     "mustNotShareWorkspaceState": true
   },
-  "builtAt": "2026-08-07T09:46:47.894Z",
+  "builtAt": "2026-08-07T10:12:41.214Z",
   "sourceRoot": ".",
   "outputRoot": "release/open-dev-team/CodeFlowMu",
-  "sourceGitCommit": "51f224280ca8e94796a8a8212a5e492bc679f16f",
+  "sourceGitCommit": "a27357c963a49554b4a5862a737b39e4b936c150",
   "sourceGitBranch": "main",
   "sourceDirty": false,
   "sourceDirtyPaths": [],
@@ -2674,12 +2674,12 @@
   ],
   "warnings": [],
   "releaseNotes": {
-    "version": "V1.2.25-open",
+    "version": "V1.2.26-open",
     "date": "2026-08-07",
     "tasks": [
       "TASK-20260803-001"
     ],
-    "title": "CodeFlowMu 开源版本 V1.2.24-open",
+    "title": "CodeFlowMu 开源版本 V1.2.25-open",
     "changes": [
       "发布开源版本"
     ],
@@ -2694,7 +2694,7 @@
   "approvalFiltering": {
     "policy": "deny_unregistered_mother_changes",
     "baselineRepository": "joinwell52-AI/CodeFlowMu-open",
-    "baselineCommit": "835eb6f154a56dccacc463dcf3f6f7920f0d1771",
+    "baselineCommit": "2b3739129ed620c3c2520fe5bc227c1bc846a5f4",
     "firstRelease": false,
     "filteredCount": 68,
     "evaluatedPaths": [
@@ -2725,7 +2725,6 @@
       "codeflowmu-shell/src/__tests__/bounded-server-close.test.ts",
       "codeflowmu-shell/src/__tests__/eval-promotion.test.ts",
       "codeflowmu-shell/src/__tests__/gateway-pwa-apps.test.ts",
-      "codeflowmu-shell/src/__tests__/issue-closure.test.ts",
       "codeflowmu-shell/src/__tests__/issue-enrichment.test.ts",
       "codeflowmu-shell/src/__tests__/mobile-task-timeline.test.ts",
       "codeflowmu-shell/src/__tests__/panel-git-remote-status.test.ts",
@@ -2737,9 +2736,7 @@
       "codeflowmu-shell/src/__tests__/ui-i18n-completeness.test.ts",
       "codeflowmu-shell/src/config.ts",
       "codeflowmu-shell/src/eval-promotion.ts",
-      "codeflowmu-shell/src/issue-closure.ts",
       "codeflowmu-shell/src/issue-enrichment.ts",
-      "codeflowmu-shell/src/issue-promotion.ts",
       "codeflowmu-shell/src/mobile/gatewayPwaApps.ts",
       "codeflowmu-shell/src/mobile/mobileEvents.ts",
       "codeflowmu-shell/src/mobile/mobileListMappers.ts",

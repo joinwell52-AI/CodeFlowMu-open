@@ -100,6 +100,7 @@ test("separates report trigger from a project algorithm regression root cause", 
   assert.equal(result.analysis.cause_type, "product_algorithm_regression");
   assert.equal(result.analysis.ownership_scope, "project_product");
   assert.equal(result.analysis.public_eligibility, "local_only");
+  assert.match(result.analysis.public_reason, /产品、算法或数据问题/);
 });
 
 test("classifies REVIEW-GATE file evidence false positive as a public product candidate", () => {
@@ -141,6 +142,8 @@ test("issue detail UI renders structured analysis", () => {
   assert.match(html, /a\.cause_type/);
   assert.match(html, /a\.public_eligibility/);
   assert.match(html, /a\.quality_score/);
+  assert.match(html, /这不是质量验收失败/);
+  assert.doesNotMatch(html, /预分类未通过/);
   assert.match(html, /severity_level/);
 });
 

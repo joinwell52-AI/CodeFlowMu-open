@@ -320,8 +320,10 @@ export function enrichIssueMetadata(projectRoot: string, frontmatter: Record<str
     ? "属于 CodeFlowMu Open 产品行为，且现有事实达到公共草稿预审最低质量。"
     : publicEligibility === "blocked_sensitive"
       ? "包含真实姓名、完整地址形态或证件信息，禁止进入公共草稿。"
-      : publicEligibility === "local_only"
-        ? "属于当前业务项目、部署或环境问题，应留在项目 ISSUE 中处理。"
+      : ownership === "project_product"
+        ? "属于当前业务项目的产品、算法或数据问题，应留在项目 ISSUE 中处理。"
+        : ownership === "environment_or_deployment"
+          ? "属于当前项目的部署或环境配置问题，应留在项目 ISSUE 中处理。"
         : "尚不能证明是 CodeFlowMu Open 产品缺陷，需补充事实。";
   const suggestedTitle = cause === "evidence_gate_false_positive"
     ? "REVIEW-GATE 误将文件型 QA 证据判为缺少 data.query"

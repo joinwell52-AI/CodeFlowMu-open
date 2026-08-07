@@ -14604,6 +14604,14 @@ function issueOwnershipLabel(value){
 function issueEligibilityLabel(value){
   return ({candidate:'可进入公共预审',local_only:'仅项目内处理',blocked_sensitive:'含敏感数据，禁止公开',needs_information:'补充事实后再判断'})[String(value||'')]||String(value||'未判断');
 }
+function issuePublicScopeMessage(analysis){
+  const a=analysis||{},score=(a.quality_score??0)+'/100';
+  if(a.public_eligibility==='candidate')return {text:'公开范围：CodeFlowMu Open 公共候选 · 内容质量 '+score+'。已默认勾选公共草稿；这里只生成本地预览，不会自动发布。',color:'#86efac'};
+  if(a.public_eligibility==='blocked_sensitive')return {text:'公开安全：禁止公开 · 内容质量 '+score+'。'+(a.public_reason||'检测到敏感项目数据。')+' 本次只结案本地 ISSUE。',color:'#fca5a5'};
+  if(a.public_eligibility==='needs_information')return {text:'公开判断：待补充信息 · 内容质量 '+score+'。'+(a.public_reason||'暂不能判断产品归属。')+' 本次只结案本地 ISSUE。',color:'#fcd34d'};
+  const kind=a.ownership_scope==='environment_or_deployment'?'项目部署/环境配置问题':'项目产品/算法/数据问题';
+  return {text:'公开范围：仅项目内处理（'+kind+'） · 内容质量 '+score+'。这不是质量验收失败；本次正常结案项目 ISSUE，不生成 CodeFlowMu 公共草稿。',color:'#93c5fd'};
+}
 function renderIssuePromotionPage(){
   const tb=document.getElementById('is-promotion-tbody');if(!tb)return;
   if(!issuePromotions.length){
@@ -14740,9 +14748,7 @@ async function closeSelectedIssue(){
   const eligible=eligibility==='candidate';
   if(promote){promote.checked=eligible;promote.disabled=!eligible;}
   const promoteHint=document.getElementById('ic-promote-hint');
-  if(promoteHint)promoteHint.textContent=eligible
-    ?'预分类通过：'+(_isSelectedDetail.analysis.public_reason||'属于 CodeFlowMu Open 产品候选。')+' 这里只生成本地脱敏草稿，不会自动写入 GitHub。'
-    :'预分类未通过：'+(_isSelectedDetail?.analysis?.public_reason||'需补充事实后再判断。')+' 本次结案不会生成公共草稿。';
+  if(promoteHint){const message=issuePublicScopeMessage(_isSelectedDetail?.analysis);promoteHint.textContent=message.text;promoteHint.style.color=message.color;promoteHint.style.fontWeight='700';}
   document.getElementById('ic-resolution-error').textContent='';
   document.getElementById('ic-reason-error').textContent='';
   document.getElementById('ic-submit-status').textContent='';
