@@ -249,6 +249,7 @@ import {
   terminateSingleChildAsParentResidue,
   TaskFrontmatterStore,
   trimTaskTransitions,
+  compactDuplicateRuntimeHistory,
   evaluateTaskSpecAdmission,
   persistTaskSpecAdmissionResult,
   taskSpecAdmissionRecordPath,
@@ -407,17 +408,25 @@ import {
   validateLongHorizonPlan,
   persistPlanningValidation,
   readPlanningValidation,
+  persistPlanningReviewSnapshot,
+  readPlanningReviewSnapshot,
   sha256Digest,
   submitPlanningGate,
   decidePlanningGate,
+  decidePlanningStage,
   recordPlanningGateDelivery,
+  recordPlanningStageDelivery,
   currentPlanningGateState,
   issuePlanningGrant,
   currentPlanningGrant,
+  currentPlanningGrants,
+  revokePlanningGrants,
+  evaluatePlanningStageReview,
   FactCheckDecisionService,
   FactCheckDecisionError,
   readPlanningGateHistory,
   PLANNING_GATE_DECISIONS,
+  PLANNING_STAGE_DECISIONS,
   evaluatePmSummaryGate,
   OperationApprovalError,
   OperationApprovalService,
@@ -6944,10 +6953,12 @@ export function buildWebPanelApp(
         sourceReadError,
       });
       const persistedValidationPath = await persistPlanningValidation(root, result);
+      const reviewSnapshotPath = await persistPlanningReviewSnapshot(root, result, planningIr as Record<string, unknown>);
       res.status(result.ready_for_review ? 200 : 422).json({
         ok: result.ready_for_review,
         validation: result,
         path: persistedValidationPath,
+        review_snapshot_path: reviewSnapshotPath,
       });
     } catch (err) {
       sendError(res, 400, "LONG_HORIZON_VALIDATION_FAILED", String(err));
@@ -7149,6 +7160,22 @@ export function buildWebPanelApp(
         briefDigest: bodyDigest || undefined,
         validationDigest: validationDigest || undefined,
       });
+      const planningGrants = await currentPlanningGrants(root, taskId, {
+        briefRevision: revision ?? undefined,
+        briefDigest: bodyDigest || undefined,
+        validationDigest: validationDigest || undefined,
+      });
+      const ctx = await resolveThreadContext(root, { task_id: taskId, thread_key: state.submission?.thread_key });
+      const reviewSnapshot = await readPlanningReviewSnapshot(root, taskId);
+      const snapshotMatchesCurrent = Boolean(
+        reviewSnapshot && reviewSnapshot.body_digest === bodyDigest && reviewSnapshot.validation_digest === validationDigest
+      );
+      const stageReview = evaluatePlanningStageReview({
+        snapshot: snapshotMatchesCurrent ? reviewSnapshot : null,
+        tasks: ctx?.tasks ?? [],
+        reports: ctx?.reports ?? [],
+        grants: planningGrants,
+      });
       res.json({
         ok: true,
         task_id: taskId,
@@ -7160,6 +7187,12 @@ export function buildWebPanelApp(
         submission: state.submission,
         decision: state.decision,
         planning_grant: planningGrant,
+        planning_grants: planningGrants,
+        stage_review: stageReview,
+        review_mode: stageReview.review_mode,
+        pending_label: stageReview.review_mode === "planning"
+          ? (state.status === "pending" ? "待规划审批" : null)
+          : stageReview.pending_label,
         history_count: state.history.length,
         canonical_preview: raw ? raw.slice(0, 120_000) : null,
       });
@@ -7217,9 +7250,6 @@ export function buildWebPanelApp(
         decision: decisionValue,
         reason,
       });
-      const requestedScope = Array.isArray(body["approved_wp_scope"])
-        ? (body["approved_wp_scope"] as unknown[]).map(String).map((value) => value.trim()).filter(Boolean)
-        : [];
       const planningGrant = decisionValue === "approve_wp00"
         ? await issuePlanningGrant({
             projectRoot: root,
@@ -7227,10 +7257,12 @@ export function buildWebPanelApp(
             briefRevision: revision,
             briefDigest: bodyDigest,
             validationDigest,
-            approvedWpScope: requestedScope.length > 0 ? requestedScope : ["WP-00"],
+            approvedWpScope: ["WP-00"],
             childContractDigest: String(body["child_contract_digest"] ?? validationDigest),
             decisionId: pending.decision_id,
             approvedAt: pending.decided_at,
+            grantKind: "initial_wp00",
+            approvalReason: reason,
           })
         : null;
       const agentId = String(artifactFm["pm"] ?? "PM").trim() || "PM";
@@ -7285,6 +7317,174 @@ export function buildWebPanelApp(
       });
     } catch (err) {
       sendError(res, 400, "PLANNING_GATE_DECIDE_FAILED", String(err));
+    }
+  });
+
+  app.post("/api/v2/pm/governance/planning-stage/decide", async (req: Request, res: Response) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const taskId = String(body["task_id"] ?? "").trim();
+      const threadKey = String(body["thread_key"] ?? "").trim();
+      const revision = Number(body["revision"]);
+      const bodyDigest = String(body["body_digest"] ?? "").trim();
+      const validationDigest = String(body["validation_digest"] ?? "").trim();
+      const decisionValue = String(body["decision"] ?? "") as typeof PLANNING_STAGE_DECISIONS[number];
+      const reason = String(body["reason"] ?? "").trim();
+      const requestedScope = Array.isArray(body["approved_wp_scope"])
+        ? [...new Set((body["approved_wp_scope"] as unknown[]).map(String).map((value) => value.trim().toUpperCase()).filter(Boolean))]
+        : [];
+      if (!taskId || !threadKey || !Number.isInteger(revision) || !bodyDigest || !validationDigest || !PLANNING_STAGE_DECISIONS.includes(decisionValue) || !reason) {
+        sendError(res, 400, "INVALID_PLANNING_STAGE_DECISION", "task/thread/revision/digests, a stage decision, and ADMIN reason are required");
+        return;
+      }
+      if (requestedScope.includes("*") || requestedScope.some((value) => !/^WP-\d+$/i.test(value))) {
+        sendError(res, 400, "PLANNING_STAGE_SCOPE_INVALID", "approved_wp_scope must contain explicit WP ids and must not contain wildcard scope");
+        return;
+      }
+      const root = projectRoot();
+      const ctx = await resolveThreadContext(root, { task_id: taskId, thread_key: threadKey });
+      if (!ctx?.root_task_id || ctx.root_task_id !== taskId) {
+        sendError(res, 409, "PLANNING_ROOT_TASK_MISMATCH", "stage decision must target the current root task/thread");
+        return;
+      }
+      const artifactRaw = readFileSync(productBriefPath(root, taskId), "utf8");
+      const artifactFm = parseMarkdownFrontmatter(artifactRaw) as Record<string, unknown>;
+      if (Number(artifactFm["revision"] ?? 0) !== revision || String(artifactFm["body_digest"] ?? "") !== bodyDigest || String(artifactFm["validation_digest"] ?? "") !== validationDigest) {
+        sendError(res, 409, "PLANNING_GATE_STALE", "stage decision revision/digest does not match the current canonical Brief");
+        return;
+      }
+      const snapshot = await readPlanningReviewSnapshot(root, taskId);
+      if (!snapshot || snapshot.body_digest !== bodyDigest || snapshot.validation_digest !== validationDigest) {
+        sendError(res, 409, "PLANNING_STAGE_SNAPSHOT_STALE", "stage review snapshot is missing or stale; PM must validate the current plan again");
+        return;
+      }
+      const grants = await currentPlanningGrants(root, taskId, {
+        briefRevision: revision,
+        briefDigest: bodyDigest,
+        validationDigest,
+      });
+      const stage = evaluatePlanningStageReview({ snapshot, tasks: ctx.tasks, reports: ctx.reports, grants });
+      if (stage.review_mode !== "stage") {
+        sendError(res, 409, "INITIAL_PLANNING_APPROVAL_REQUIRED", "the initial Planning Gate must approve only WP-00 before stage approval is available");
+        return;
+      }
+      const approvalDecision = decisionValue === "approve_next_stage" || decisionValue === "approve_selected_wps";
+      const approvedScope = decisionValue === "approve_next_stage" ? stage.recommended_wp_scope : requestedScope;
+      if (approvalDecision) {
+        if (!stage.stage_pending) {
+          sendError(res, 409, "PLANNING_STAGE_NOT_READY", "the currently authorized stage has not completed with accepted evidence");
+          return;
+        }
+        if (!approvedScope.length) {
+          sendError(res, 400, "PLANNING_STAGE_SCOPE_REQUIRED", decisionValue === "approve_next_stage" ? "PM has not recommended an eligible next-stage WP" : "select at least one eligible WP");
+          return;
+        }
+        const eligible = new Set(stage.selectable_wp_scope);
+        const disallowed = approvedScope.filter((wpId) => !eligible.has(wpId));
+        if (disallowed.length) {
+          sendError(res, 409, "PLANNING_STAGE_SCOPE_NOT_ELIGIBLE", `WP scope is outside the dependency/evidence gate: ${disallowed.join(", ")}`);
+          return;
+        }
+      }
+      let revocableGrantIds: string[] = [];
+      if (decisionValue === "revoke_unexecuted_grants") {
+        const incomplete = new Set(stage.work_packages.filter((wp) => !wp.completed && wp.status !== "executing").map((wp) => wp.wp_id));
+        revocableGrantIds = grants
+          .filter((grant) => grant.status === "active" && grant.approved_wp_scope.some((wpId) => incomplete.has(wpId)))
+          .map((grant) => grant.grant_id);
+        if (!revocableGrantIds.length) {
+          sendError(res, 409, "NO_UNEXECUTED_GRANT", "there is no unexecuted Planning Grant to revoke");
+          return;
+        }
+      }
+      const pending = await decidePlanningStage({
+        projectRoot: root,
+        taskId,
+        threadKey,
+        revision,
+        bodyDigest,
+        validationDigest,
+        decision: decisionValue,
+        approvedWpScope: approvalDecision ? approvedScope : [],
+        prerequisiteEvidence: stage.prerequisite_evidence,
+        reason,
+      });
+      const planningGrant = approvalDecision
+        ? await issuePlanningGrant({
+            projectRoot: root,
+            rootTaskId: taskId,
+            briefRevision: revision,
+            briefDigest: bodyDigest,
+            validationDigest,
+            approvedWpScope: approvedScope,
+            childContractDigest: String(body["child_contract_digest"] ?? validationDigest),
+            decisionId: pending.decision_id,
+            approvedAt: pending.decided_at,
+            grantKind: "stage",
+            approvalReason: reason,
+            prerequisiteEvidence: stage.prerequisite_evidence,
+          })
+        : null;
+      let revocation = null;
+      if (decisionValue === "revoke_unexecuted_grants") {
+        revocation = await revokePlanningGrants({ projectRoot: root, rootTaskId: taskId, grantIds: revocableGrantIds, reason });
+      }
+      const agentId = String(artifactFm["pm"] ?? "PM").trim() || "PM";
+      const wakeId = newPmHeartbeatWakeId();
+      const scopeText = approvedScope.length ? approvedScope.join(", ") : "无新增授权";
+      const message = [
+        `ADMIN 阶段审批决定：${decisionValue}。`,
+        `任务：${taskId}；规划 revision：${revision}。`,
+        `本次批准范围：${scopeText}。未列出的 WP 继续关闭。`,
+        `前置证据：${stage.prerequisite_evidence.join(", ") || "无"}。`,
+        `理由：${reason}`,
+      ].join("\n");
+      let delivered = false;
+      let wakeSessionId = "";
+      let deliveryError = "";
+      try {
+        const collector = {
+          statusCode: 200,
+          body: {} as Record<string, unknown>,
+          status(code: number) { this.statusCode = code; return this; },
+          json(payload: Record<string, unknown>) { this.body = payload; return this; },
+        };
+        await handleDirectSession(collector as unknown as Response, {
+          agentId,
+          message,
+          intent: "wake",
+          operatorRole: "ADMIN",
+          taskId,
+          threadKey,
+          uiLang: readPanelUiLang(root),
+          wakeId,
+        });
+        wakeSessionId = String(collector.body["session_id"] ?? "").trim();
+        delivered = collector.statusCode < 400 && collector.body["ok"] === true && Boolean(wakeSessionId);
+        if (!delivered) deliveryError = `wake_direct_${collector.statusCode}`;
+      } catch (error) {
+        deliveryError = error instanceof Error ? error.message : String(error);
+      }
+      const decision = await recordPlanningStageDelivery(root, pending, {
+        notice_status: delivered ? "delivered" : "failed",
+        wake_status: delivered ? "started" : "failed",
+        notice_detail: delivered ? `wake_id=${wakeId}` : deliveryError,
+        wake_detail: delivered ? `session_id=${wakeSessionId}` : deliveryError,
+      });
+      res.status(delivered ? 200 : 202).json({
+        ok: true,
+        review_mode: "stage",
+        decision,
+        approved_wp_scope: approvedScope,
+        planning_grant: planningGrant,
+        revocation,
+        delivered,
+        wake_id: wakeId,
+        wake_session_id: wakeSessionId || null,
+        delivery_error: deliveryError || null,
+      });
+    } catch (err) {
+      sendError(res, 400, "PLANNING_STAGE_DECIDE_FAILED", String(err));
     }
   });
 
@@ -8854,6 +9054,7 @@ export function buildWebPanelApp(
                 : "quarantine",
             retentionDays: Number(preview["retention_days"] ?? 14),
             reason,
+            threadKey: String(req.body?.thread_key ?? "").trim() || undefined,
           });
           preparedInput.recovery = rollbackPlan;
           preparedInput.effects.unshift(
@@ -10147,6 +10348,10 @@ export function buildWebPanelApp(
 
   function operationApprovalPanelRow(row: ReturnType<OperationApprovalService["get"]>): Record<string, unknown> {
     const snapshot = row.request.snapshot;
+    const adminExplanation =
+      snapshot["admin_explanation"] && typeof snapshot["admin_explanation"] === "object"
+        ? snapshot["admin_explanation"] as Record<string, unknown>
+        : {};
     const approvalScope = row.request.resource.scope ?? {};
     const cleanupDiff =
       row.request.action.executor === "filesystem.cleanup"
@@ -10194,6 +10399,11 @@ export function buildWebPanelApp(
       summary: row.effects.join("；"),
       trigger_reason: row.reason,
       admin_question: `是否${row.reason}？`,
+      action_explanation: adminExplanation["action"] ?? row.request.action.operation,
+      tool_explanation: adminExplanation["tool"] ?? row.request.action.capability,
+      external_targets: adminExplanation["targets"] ?? row.request.resource.targets,
+      data_explanation: adminExplanation["data"] ?? "当前工具调用携带的数据",
+      rejection_effect: adminExplanation["if_rejected"] ?? "本次操作不执行，原任务保持可恢复",
       can_approve: isPendingApprovalStatus(row.status),
       gate_status: isPendingApprovalStatus(row.status) ? "valid" : row.status,
       executor: row.request.action.executor,
@@ -15307,8 +15517,12 @@ export function buildWebPanelApp(
           taskId,
           keep,
         });
+        const runtimeHistory = await compactDuplicateRuntimeHistory({
+          taskPath: result.task_path,
+          repairDir: join(lifecycleRoot, "_repair"),
+        });
         await invalidateLedgerFreshCache(root);
-        res.json(result);
+        res.json({ ...result, runtime_history: runtimeHistory });
       } catch (err) {
         sendError(res, 500, "TRIM_TRANSITIONS_FAILED", String(err));
       }

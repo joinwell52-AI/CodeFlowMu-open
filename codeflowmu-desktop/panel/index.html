@@ -1375,7 +1375,7 @@ select.ci option{background:#1e3250}
 .tdp-alerts-fold.collapsed .tdp-alerts-body{display:none}
 .tdp-alerts-fold:not(.collapsed) .tdp-alerts-summary{display:none}
 .tdp-alerts-summary{font-size:12px;color:#fbbf24;line-height:1.45;padding:0 8px 2px;word-break:break-word;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tdp-alerts-body{display:flex;flex-direction:column;gap:8px}
+.tdp-alerts-body{display:flex;flex-direction:column;gap:8px;max-height:min(30vh,280px);overflow-y:auto;overscroll-behavior:contain;padding-right:2px}
 .tdp-sticky-top{flex-shrink:0;padding:12px 14px 10px;border-bottom:1px solid var(--bd);background:var(--bg2);display:flex;flex-direction:column;gap:8px}
 .tdp-id-row{display:flex;align-items:center;gap:8px;min-height:28px}
 .tdp-task-id{font-family:"Fira Code",ui-monospace,monospace;font-size:13px;font-weight:600;color:var(--blue);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:-.02em}
@@ -1401,6 +1401,31 @@ select.ci option{background:#1e3250}
 .tdp-planning-gate{display:none;flex-direction:column;gap:6px;padding:10px 12px;border-radius:6px;background:rgba(168,85,247,.1);border:1px solid rgba(168,85,247,.38);color:#d8b4fe;font-size:14px;flex-shrink:0;line-height:1.55}
 .tdp-planning-gate.tdp-planning-gate--blocked{background:rgba(251,191,36,.12);border-color:rgba(251,191,36,.45);color:#fcd34d}
 .tdp-planning-gate-label{font-weight:600}
+.tdp-planning-review-btn{position:relative;color:#d8b4fe!important;border-color:rgba(168,85,247,.55)!important}
+.tdp-planning-review-badge{display:none;min-width:18px;height:18px;padding:0 5px;border-radius:999px;align-items:center;justify-content:center;background:#f59e0b;color:#111827;font-size:11px;font-weight:800}
+.tdp-planning-review-btn.is-pending .tdp-planning-review-badge{display:inline-flex}
+.planning-review-overlay{position:fixed;top:0;right:0;bottom:calc(var(--think-console-h,28px) + var(--queue-bar-h,0px));left:0;z-index:760;display:none;align-items:center;justify-content:center;padding:24px;background:rgba(2,6,23,.72);backdrop-filter:blur(2px)}
+.planning-review-dialog{width:min(1040px,calc(100vw - 32px));height:min(760px,calc(100% - 16px));min-height:320px;display:flex;flex-direction:column;overflow:hidden;background:var(--bg2);border:1px solid rgba(168,85,247,.45);border-radius:12px;box-shadow:0 24px 80px rgba(0,0,0,.55)}
+.planning-review-head{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-bottom:1px solid var(--bd);flex-shrink:0}
+.planning-review-head-main{min-width:0;flex:1}
+.planning-review-title{font-size:17px;font-weight:800;color:#e9d5ff}
+.planning-review-subtitle{margin-top:4px;color:var(--text2);font-size:12px;word-break:break-word}
+.planning-review-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+.planning-review-section{border:1px solid var(--bd);border-radius:8px;padding:10px 12px;background:rgba(15,23,42,.36)}
+.planning-review-section-title{font-weight:700;color:#c4b5fd;margin-bottom:7px}
+.planning-review-pre{margin:0;max-height:none;white-space:pre-wrap;word-break:break-word;color:var(--text);font:12px/1.55 "Fira Code",ui-monospace,monospace}
+.planning-review-footer{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;padding:12px 16px;border-top:1px solid var(--bd);background:var(--bg2);flex-shrink:0;box-shadow:0 -8px 20px rgba(2,6,23,.28)}
+.planning-review-footer-status{margin-right:auto;color:#fbbf24;font-size:13px}
+.planning-review-mode{display:inline-flex;margin-bottom:8px;padding:3px 9px;border-radius:999px;background:rgba(168,85,247,.18);border:1px solid rgba(196,181,253,.35);color:#e9d5ff;font-size:12px;font-weight:800}
+.planning-wp-list{display:flex;flex-direction:column;gap:8px}
+.planning-wp-row{display:grid;grid-template-columns:28px minmax(90px,120px) 1fr;gap:8px;align-items:start;padding:9px;border:1px solid var(--bd);border-radius:7px;background:rgba(2,6,23,.24)}
+.planning-wp-row.is-disabled{opacity:.72}
+.planning-wp-check{margin-top:4px;width:17px;height:17px;accent-color:#8b5cf6}
+.planning-wp-id{font-family:"Fira Code",monospace;font-weight:800;color:#c4b5fd}
+.planning-wp-title{font-weight:700;color:var(--text)}
+.planning-wp-meta{margin-top:4px;color:var(--text2);font-size:12px;line-height:1.55;word-break:break-word}
+.planning-stage-preview{margin-right:auto;flex-basis:100%;padding:8px 10px;border-radius:6px;background:rgba(59,130,246,.08);border:1px solid rgba(96,165,250,.22);color:#bfdbfe;font-size:12px;line-height:1.55}
+@media(max-height:620px){.planning-review-overlay{padding:8px}.planning-review-dialog{height:calc(100% - 8px)}.planning-review-head{padding:9px 12px}.planning-review-body{padding:10px 12px}.planning-review-footer{padding:9px 12px}}
 .tp-summary-stack{display:flex;min-width:0;align-items:center;gap:8px}
 .tp-summary-stack .tp-cell-sum{min-width:0;flex:1}
 .pm-planning-card{display:none;align-items:center;gap:5px;padding:4px 9px;border-radius:8px;border:1px solid rgba(192,132,252,.5);background:linear-gradient(135deg,rgba(126,34,206,.24),rgba(76,29,149,.18));color:#d8b4fe;font-size:13px;font-weight:700;white-space:nowrap;cursor:pointer}
@@ -3325,6 +3350,20 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
       <div id="task-list-inner" style="display:none"></div>
     </div>
 
+    <div id="planning-review-overlay" class="planning-review-overlay" role="presentation" onclick="if(event.target===this)closePlanningReview()">
+      <section id="planning-review-dialog" class="planning-review-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-review-title" tabindex="-1" onkeydown="planningReviewKeydown(event)">
+        <div class="planning-review-head">
+          <div class="planning-review-head-main">
+            <div id="planning-review-title" class="planning-review-title">规划审核</div>
+            <div id="planning-review-subtitle" class="planning-review-subtitle"></div>
+          </div>
+          <button type="button" class="hbtn" onclick="closePlanningReview()" aria-label="关闭规划审核">× 关闭</button>
+        </div>
+        <div id="planning-review-body" class="planning-review-body"></div>
+        <div id="planning-review-footer" class="planning-review-footer" aria-live="polite"></div>
+      </section>
+    </div>
+
     <!-- Right: Task detail panel (slide-in) -->
       <div id="task-detail-panel" class="task-detail-panel" data-fcop-chain-test="101" style="display:none">
       <div id="tdp-resize-handle" class="tdp-resize-handle" data-i18n-title="tdp.resizeTitle" title="拖动左边框调整宽度"></div>
@@ -3338,6 +3377,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
           <span id="tdp-title" style="font-size:15px;font-weight:700;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
         </div>
         <div class="tdp-actions">
+          <button type="button" class="hbtn tdp-planning-review-btn" id="tdp-planning-review-btn" style="display:none;font-size:14px" onclick="openPlanningReview()"><span id="tdp-planning-review-label">规划审核</span><span id="tdp-planning-review-badge" class="tdp-planning-review-badge" aria-label="待 ADMIN 决策">1</span></button>
           <button class="hbtn blue" style="font-size:14px" onclick="tdpReply()">💬 回复</button>
           <button class="hbtn tdp-eval-watch-btn" id="tdp-eval-watch-btn" style="display:none;font-size:14px" onclick="tdpOpenEvalObservation()">eval旁观报告</button>
           <button class="hbtn" id="tdp-submit-btn" style="display:none;font-size:14px;color:#60a5fa;border-color:rgba(96,165,250,.4)" onclick="tdpSubmitReview()">📤 提交验收</button>
@@ -3614,6 +3654,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
       <span class="ap-queue-desc" id="ap-pending-desc">0 项等待您确认</span>
       <div style="margin-left:auto;color:var(--text3);font-size:13px">高风险操作必须逐项核对摘要，不提供批量批准</div>
     </div>
+    <div style="padding:8px 14px;color:#c4b5fd;background:rgba(168,85,247,.08);border-bottom:1px solid rgba(168,85,247,.2);font-size:13px">Planning Gate 不属于操作审批。规划审批与阶段审批请从对应任务详情顶部的“规划审核”进入；聊天说明不会产生 Planning Grant。</div>
     <div id="ap-list" class="ap-list"></div>
     <div class="ap-footer-note" data-i18n="ap.footerHint">ℹ 治理记录审批只形成授权依据；运行操作审批通过后才执行，并记录验证结果</div>
   </div>
@@ -16570,6 +16611,147 @@ function planningStatusLabel(value){
 }
 const _pmPlanningGateCache=new Map();
 const _pmFormalPlanningGateCache=new Map();
+let _tdpPlanningGateData=null;
+let _planningReviewPreviousFocus=null;
+const PLANNING_DECISION_LABELS={
+  approve_wp00:'仅批准 WP-00',request_plan_change:'要求修改规划',pause:'暂停',replan:'重新规划',terminate:'终止'
+};
+const PLANNING_PENDING_LABELS={planning:'待规划审批',stage:'待阶段审批'};
+function planningDecisionLabel(value){return PLANNING_DECISION_LABELS[value]||String(value||'');}
+function updatePlanningReviewEntry(data){
+  const btn=document.getElementById('tdp-planning-review-btn');
+  const label=document.getElementById('tdp-planning-review-label');
+  const badge=document.getElementById('tdp-planning-review-badge');
+  if(!btn)return;
+  const formal=data&&data.formal_planning_gate;
+  const available=!!(data&&(data.planning_artifact_path||formal));
+  const pendingLabel=formal&&(formal.pending_label||(formal.review_mode==='stage'&&formal.stage_review&&formal.stage_review.stage_pending?PLANNING_PENDING_LABELS.stage:null));
+  const pending=!!pendingLabel;
+  btn.style.display=available?'inline-flex':'none';
+  btn.classList.toggle('is-pending',pending);
+  if(label)label.textContent=pendingLabel||'规划审核';
+  if(badge){badge.textContent=pending?'1':'';badge.setAttribute('aria-label',pendingLabel||'无待办');}
+  btn.setAttribute('aria-label',pending?`规划审核，${pendingLabel}`:'规划审核');
+}
+function planningDecisionButtonsHtml(taskId,formal){
+  if(!formal||formal.status!=='pending')return '';
+  const safeTaskId=esc(String(taskId||'')).replace(/'/g,"\\'");
+  const revision=Number(formal.revision||0);
+  const bodyDigest=esc(String(formal.body_digest||'')).replace(/'/g,"\\'");
+  const validationDigest=esc(String(formal.validation_digest||'')).replace(/'/g,"\\'");
+  return ['approve_wp00','request_plan_change','pause','replan','terminate'].map(value=>
+    `<button type="button" class="hbtn${value==='approve_wp00'?' blue':''}" onclick="decideFormalPlanningGate('${safeTaskId}','${value}',${revision},'${bodyDigest}','${validationDigest}')">${esc(planningDecisionLabel(value))}</button>`
+  ).join('');
+}
+const PLANNING_STAGE_DECISION_LABELS={
+  approve_next_stage:'批准下一阶段',approve_selected_wps:'批准所选 WP',request_more_evidence:'要求补充证据',
+  pause_future_stages:'暂停后续阶段',revoke_unexecuted_grants:'撤销未执行授权',terminate_task:'终止任务'
+};
+function planningStageDecisionLabel(value){return PLANNING_STAGE_DECISION_LABELS[value]||String(value||'');}
+function planningWpStatusLabel(value){return ({completed:'已完成',executing:'正在执行',authorized:'已授权',available:'可授权',condition_unmet:'条件未满足',dependency_unmet:'依赖未满足',unauthorized:'未授权'})[value]||String(value||'—');}
+function planningStageRowsHtml(stage){
+  const rows=(stage&&stage.work_packages)||[];
+  if(!rows.length)return '<div class="planning-review-pre">当前规划快照没有可展示的 WP；请 PM 重新校验当前 revision。</div>';
+  return `<div class="planning-wp-list">${rows.map(wp=>{
+    const checked=wp.selectable&&wp.recommended?' checked':'';
+    const disabled=wp.selectable?'':' disabled';
+    const missing=(wp.missing_conditions||[]).join('；')||'无';
+    return `<label class="planning-wp-row${disabled?' is-disabled':''}"><input class="planning-wp-check planning-wp-select" type="checkbox" value="${esc(wp.wp_id)}"${checked}${disabled} onchange="updatePlanningStagePreview()"><span class="planning-wp-id">${esc(wp.wp_id)}</span><span><span class="planning-wp-title">${esc(wp.title)}</span><span class="planning-wp-meta">状态：${esc(planningWpStatusLabel(wp.status))} · 依赖：${esc((wp.dependencies||[]).join('、')||'无')} · 报告：${esc((wp.report_ids||[]).join('、')||'无')}<br>测试：${esc(wp.test_conclusion||'—')} · 风险：${esc(wp.risk||'—')}<br>建议：${esc(wp.suggested_action||'—')} · 缺少：${esc(missing)}</span></span></label>`;
+  }).join('')}</div>`;
+}
+function selectedPlanningStageWps(){return Array.from(document.querySelectorAll('#planning-review-dialog .planning-wp-select:checked:not(:disabled)')).map(input=>String(input.value||'')).filter(Boolean);}
+function updatePlanningStagePreview(){
+  const preview=document.getElementById('planning-stage-preview');
+  const stage=_tdpPlanningGateData&&_tdpPlanningGateData.formal_planning_gate&&_tdpPlanningGateData.formal_planning_gate.stage_review;
+  if(!preview||!stage)return;
+  const selected=selectedPlanningStageWps();
+  const remaining=(stage.work_packages||[]).filter(wp=>!wp.completed&&!selected.includes(wp.wp_id)).map(wp=>wp.wp_id);
+  preview.textContent=`本次批准：${selected.join('、')||'尚未选择'}；尚未批准：${remaining.join('、')||'无'}；批准后 PM 只能派发本次 Grant 范围内的 WP。`;
+}
+function planningStageDecisionButtonsHtml(taskId,formal){
+  const stage=formal&&formal.stage_review;
+  if(!formal||formal.review_mode!=='stage'||!stage)return '';
+  const safeTaskId=esc(String(taskId||'')).replace(/'/g,"\\'");
+  const revision=Number(formal.revision||0);
+  const bodyDigest=esc(String(formal.body_digest||'')).replace(/'/g,"\\'");
+  const validationDigest=esc(String(formal.validation_digest||'')).replace(/'/g,"\\'");
+  const approveDisabled=stage.stage_pending?'':' disabled title="当前授权阶段尚未完成或没有可授权 WP"';
+  return `<div id="planning-stage-preview" class="planning-stage-preview"></div>`+
+    `<button type="button" class="hbtn blue"${approveDisabled} onclick="decidePlanningStage('${safeTaskId}','approve_next_stage',${revision},'${bodyDigest}','${validationDigest}')">批准下一阶段</button>`+
+    `<button type="button" class="hbtn"${approveDisabled} onclick="decidePlanningStage('${safeTaskId}','approve_selected_wps',${revision},'${bodyDigest}','${validationDigest}')">批准所选 WP</button>`+
+    ['request_more_evidence','pause_future_stages','revoke_unexecuted_grants','terminate_task'].map(value=>`<button type="button" class="hbtn" onclick="decidePlanningStage('${safeTaskId}','${value}',${revision},'${bodyDigest}','${validationDigest}')">${esc(planningStageDecisionLabel(value))}</button>`).join('');
+}
+async function openPlanningReview(){
+  const data=_tdpPlanningGateData;
+  const overlay=document.getElementById('planning-review-overlay');
+  const dialog=document.getElementById('planning-review-dialog');
+  const body=document.getElementById('planning-review-body');
+  const footer=document.getElementById('planning-review-footer');
+  const subtitle=document.getElementById('planning-review-subtitle');
+  if(!data||!overlay||!dialog||!body||!footer)return;
+  const formal=data.formal_planning_gate||null;
+  const taskId=String(data.task_id||'');
+  const validation=(formal&&formal.validation)||{};
+  const gateBody=document.getElementById('tdp-planning-gate-body');
+  const summary=document.createElement('div');
+  summary.innerHTML=gateBody?gateBody.innerHTML:'';
+  summary.querySelectorAll('button').forEach(button=>button.remove());
+  const stage=formal&&formal.stage_review;
+  const isStage=!!(formal&&formal.review_mode==='stage');
+  body.innerHTML=
+    `<section class="planning-review-section"><span class="planning-review-mode">${isStage?'阶段审批':'规划审批'}</span><div class="planning-review-section-title">PM 分析、规划与产品设计</div>${summary.innerHTML}</section>`+
+    (isStage?`<section class="planning-review-section"><div class="planning-review-section-title">WP 状态、前置报告与本次可授权范围</div>${planningStageRowsHtml(stage)}</section>`:'')+
+    `<section class="planning-review-section"><div class="planning-review-section-title">语义校验、覆盖率与风险</div><pre class="planning-review-pre">${esc(JSON.stringify({validation_digest:formal&&formal.validation_digest,hard_requirement_coverage:validation.hard_requirement_coverage,requirement_count:validation.requirement_count,blocking_findings:validation.blocking_findings||[],warnings:validation.warnings||[],budget_low:validation.budget_low,budget_high:validation.budget_high,critical_path_days:validation.critical_path_days,test_data:validation.test_data||validation.test_strategy||null,dependencies:validation.dependencies||null},null,2))}</pre></section>`+
+    `<section class="planning-review-section"><div class="planning-review-section-title">Product Brief / WP 依赖、关键路径与测试数据</div><pre class="planning-review-pre">${esc(String((formal&&formal.canonical_preview)||'尚无可显示的 Product Brief 正文'))}</pre></section>`+
+    `<section class="planning-review-section"><div class="planning-review-section-title">Planning Gate 历史决定</div><pre id="planning-review-history" class="planning-review-pre">正在读取历史…</pre></section>`;
+  const pending=!!(formal&&formal.pending_label);
+  footer.innerHTML=`<span class="planning-review-footer-status">${pending?esc(formal.pending_label)+'；决定绑定当前 revision/body/validation digest':isStage?'当前阶段尚未达到授权条件；可查看证据或撤销未执行授权':'当前 Planning Gate 已决定或无需决定'}</span>${isStage?planningStageDecisionButtonsHtml(taskId,formal):planningDecisionButtonsHtml(taskId,formal)}`;
+  if(subtitle)subtitle.textContent=`${isStage?'阶段审批':'规划审批'} · 业务 Planning Gate（不属于操作审批） · ${taskId} · revision ${formal&&formal.revision||'—'} · body ${formal&&formal.body_digest||'—'} · validation ${formal&&formal.validation_digest||'—'}`;
+  _planningReviewPreviousFocus=document.activeElement;
+  overlay.style.display='flex';
+  if(isStage)updatePlanningStagePreview();
+  requestAnimationFrame(()=>dialog.focus());
+  try{
+    const res=await fetch('/api/v2/pm/governance/planning-gate/history?task_id='+encodeURIComponent(taskId));
+    const payload=await res.json();
+    const history=document.getElementById('planning-review-history');
+    if(history&&overlay.style.display==='flex'&&String((_tdpPlanningGateData&&_tdpPlanningGateData.task_id)||'')===taskId){
+      history.textContent=JSON.stringify(payload.history||[],null,2);
+    }
+  }catch(_){const history=document.getElementById('planning-review-history');if(history)history.textContent='历史读取失败，请刷新后重试';}
+}
+function closePlanningReview(){
+  const overlay=document.getElementById('planning-review-overlay');
+  if(overlay)overlay.style.display='none';
+  if(_planningReviewPreviousFocus&&typeof _planningReviewPreviousFocus.focus==='function')_planningReviewPreviousFocus.focus();
+  _planningReviewPreviousFocus=null;
+}
+function planningReviewKeydown(event){
+  if(event.key==='Escape'){event.preventDefault();closePlanningReview();return;}
+  if(event.key!=='Tab')return;
+  const dialog=document.getElementById('planning-review-dialog');
+  if(!dialog)return;
+  const focusable=Array.from(dialog.querySelectorAll('button:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])')).filter(el=>el.offsetParent!==null);
+  if(!focusable.length){event.preventDefault();dialog.focus();return;}
+  const first=focusable[0],last=focusable[focusable.length-1];
+  if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}
+  else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
+}
+function ensurePlanningDecisionReachable(gate,formal){
+  requestAnimationFrame(()=>{
+    const scrollBody=document.querySelector('#task-detail-panel .tdp-scroll-body');
+    const entry=document.getElementById('tdp-planning-review-btn');
+    if(!gate||!scrollBody||!entry)return;
+    const gateBox=gate.getBoundingClientRect();
+    const bodyBox=scrollBody.getBoundingClientRect();
+    const clipped=gateBox.bottom>bodyBox.bottom||gateBox.top<bodyBox.top;
+    gate.dataset.decisionClipped=clipped?'true':'false';
+    if(clipped&&formal&&formal.pending_label){
+      entry.classList.add('is-pending');
+      entry.title=`决定区当前不在可视范围，请点击“规划审核”处理${formal.pending_label}`;
+    }else entry.removeAttribute('title');
+  });
+}
 async function getPmPlanningGate(taskId,refresh){
   const id=String(taskId||'').trim();
   if(!id)return null;
@@ -16612,7 +16794,11 @@ function renderTaskPlanningGate(data){
   const el=document.getElementById('tdp-planning-gate');
   const body=document.getElementById('tdp-planning-gate-body');
   if(!el||!body)return;
-  if(!data||data.error){el.style.display='none';body.innerHTML='';tdpRefreshAlertsFold();return;}
+  const scrollBody=document.querySelector('#task-detail-panel .tdp-scroll-body');
+  if(scrollBody&&el.parentElement!==scrollBody)scrollBody.insertBefore(el,scrollBody.firstChild);
+  _tdpPlanningGateData=data&&!data.error?data:null;
+  updatePlanningReviewEntry(_tdpPlanningGateData);
+  if(!data||data.error){el.style.display='none';body.innerHTML='';closePlanningReview();tdpRefreshAlertsFold();return;}
   const level=Number(data.planning_level||0);
   const rows=[['规划等级','Level '+level],['分类依据',data.classification_reason||'—'],['规划状态',planningStatusLabel(data.planning_status)]];
   if(data.long_horizon_required){
@@ -16644,22 +16830,38 @@ function renderTaskPlanningGate(data){
     rows.push(['事实快照',validation.fact_snapshot_at||'—']);
     rows.push(['决定投递',formal.decision?String(formal.decision.notice_status||'pending')+' / wake '+String(formal.decision.wake_status||'pending'):'尚无决定']);
     rows.push(['历史',String(formal.history_count||0)+' 条 append-only 记录']);
+    rows.push(['审核类型',formal.review_mode==='stage'?'阶段审批':'规划审批']);
+    if(formal.pending_label)rows.push(['ADMIN 待办',formal.pending_label]);
+    if(formal.stage_review){
+      rows.push(['已授权 WP',(formal.stage_review.authorized_wp_scope||[]).join('、')||'无']);
+      rows.push(['已完成 WP',(formal.stage_review.completed_wp_scope||[]).join('、')||'无']);
+      rows.push(['可授权 WP',(formal.stage_review.selectable_wp_scope||[]).join('、')||'无']);
+    }
   }
   const safeTaskId=esc(String(data.task_id||'')).replace(/'/g,"\\'");
   const briefButton=data.planning_artifact_path
     ?`<button type="button" class="hbtn" onclick="openPmPlanningBrief('${safeTaskId}')">${esc(t('task.pmPlanningBriefView'))}</button>`
     :'';
-  const decisions=data.long_horizon_required&&formal&&formal.status==='pending'
-    ?['approve_wp00','request_plan_change','pause','replan','terminate'].map(value=>`<button type="button" class="hbtn${value==='approve_wp00'?' blue':''}" onclick="decideFormalPlanningGate('${safeTaskId}','${value}')">${esc(value)}</button>`).join('')
-    :'';
+  const decisions=data.long_horizon_required?planningDecisionButtonsHtml(data.task_id,formal):'';
   body.innerHTML=rows.map(([k,v])=>`<div class="tdp-execution-gate-row"><span class="tdp-execution-gate-k">${esc(k)}</span><span class="tdp-execution-gate-v">${esc(String(v))}</span></div>`).join('')+
     `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${briefButton}<button type="button" class="hbtn" onclick="adjustPmPlanningLevel('${safeTaskId}',${level})">ADMIN 调整规划等级</button>${decisions}</div>`;
   el.classList.toggle('tdp-planning-gate--blocked',data.dispatch_open===false);
   el.style.display='flex';
+  ensurePlanningDecisionReachable(el,formal);
   tdpRefreshAlertsFold();
 }
-async function decideFormalPlanningGate(taskId,decision){
+async function decideFormalPlanningGate(taskId,decision,expectedRevision,expectedBodyDigest,expectedValidationDigest){
   const state=_pmFormalPlanningGateCache.get(String(taskId||''));
+  if(state&&expectedRevision&&(
+    Number(state.revision)!==Number(expectedRevision)||
+    String(state.body_digest)!==String(expectedBodyDigest||'')||
+    String(state.validation_digest)!==String(expectedValidationDigest||'')
+  )){
+    showToast('规划内容已更新，旧审核窗口不能提交决定；正在刷新当前 revision','err');
+    if(_tdpFile)await refreshTaskPlanningGate(_tdpFile);
+    closePlanningReview();
+    return;
+  }
   if(!state||!state.revision||!state.body_digest||!state.validation_digest){showToast('Planning Gate 当前 revision/digest 不完整','err');return;}
   const reason=window.prompt('请输入 ADMIN Planning Gate 决定理由（必填）','');
   if(!reason||!reason.trim())return;
@@ -16671,8 +16873,38 @@ async function decideFormalPlanningGate(taskId,decision){
     const data=await res.json();
     if(!res.ok||data.error)throw new Error(data.message||data.error||'决定失败');
     showToast('Planning Gate 已记录：'+decision,data.delivered?'ok':'#fbbf24');
+    closePlanningReview();
     if(_tdpFile)void refreshTaskPlanningGate(_tdpFile);
   }catch(err){showToast('Planning Gate 决定失败：'+String(err&&err.message||err),'err');}
+}
+async function decidePlanningStage(taskId,decision,expectedRevision,expectedBodyDigest,expectedValidationDigest){
+  const state=_pmFormalPlanningGateCache.get(String(taskId||''));
+  if(!state||state.review_mode!=='stage'||
+    Number(state.revision)!==Number(expectedRevision)||
+    String(state.body_digest)!==String(expectedBodyDigest||'')||
+    String(state.validation_digest)!==String(expectedValidationDigest||'')){
+    showToast('规划内容已更新，旧阶段审核窗口不能提交决定；正在刷新当前 revision','err');
+    if(_tdpFile)await refreshTaskPlanningGate(_tdpFile);
+    closePlanningReview();
+    return;
+  }
+  const selected=selectedPlanningStageWps();
+  if(decision==='approve_selected_wps'&&!selected.length){showToast('请先勾选至少一个依赖和证据均满足的 WP','err');return;}
+  const reason=window.prompt(`请输入 ADMIN“${planningStageDecisionLabel(decision)}”理由（必填）`,'');
+  if(!reason||!reason.trim())return;
+  try{
+    const res=await fetch('/api/v2/pm/governance/planning-stage/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      task_id:taskId,thread_key:state.submission&&state.submission.thread_key,revision:state.revision,
+      body_digest:state.body_digest,validation_digest:state.validation_digest,decision,
+      approved_wp_scope:selected,reason:reason.trim()
+    })});
+    const data=await res.json();
+    if(!res.ok||data.error)throw new Error(data.message||data.error||'阶段决定失败');
+    const scope=(data.approved_wp_scope||[]).join('、')||'无新增 WP';
+    showToast(`阶段审批已记录：${planningStageDecisionLabel(decision)}；范围 ${scope}`,data.delivered?'ok':'#fbbf24');
+    closePlanningReview();
+    if(_tdpFile)void refreshTaskPlanningGate(_tdpFile);
+  }catch(err){showToast('阶段审批失败：'+String(err&&err.message||err),'err');}
 }
 async function adjustPmPlanningLevel(taskId,currentLevel){
   const raw=window.prompt('输入规划等级 0、1、2 或 3',String(currentLevel));
@@ -16700,7 +16932,11 @@ async function refreshTaskPlanningGate(f){
     ]);
     const data=await res.json();
     const formal=await formalRes.json().catch(()=>null);
-    if(formalRes.ok&&formal&&!formal.error){data.formal_planning_gate=formal;_pmFormalPlanningGateCache.set(taskId,formal);}else{_pmFormalPlanningGateCache.delete(taskId);}
+    if(formalRes.ok&&formal&&!formal.error){
+      data.formal_planning_gate=formal;
+      if(formal.stage_review&&formal.stage_review.authorized_wp_scope) data.dispatch_scope=(formal.stage_review.authorized_wp_scope||[]).join(', ')||'closed';
+      _pmFormalPlanningGateCache.set(taskId,formal);
+    }else{_pmFormalPlanningGateCache.delete(taskId);}
     if(!_tdpFile||String(_tdpFile.filename||'')!==requestedFile)return;
     renderTaskPlanningGate(data);
   }catch(_){if(_tdpFile&&String(_tdpFile.filename||'')===requestedFile)renderTaskPlanningGate(null);}
@@ -17190,7 +17426,7 @@ function tdpCollectAlertsSummaryText(){
 function tdpRefreshAlertsFold(){
   const fold=tdpAlertsFoldEl();
   if(!fold)return;
-  const ids=['tdp-lifecycle-hint','tdp-dispatch-retry','tdp-receipt-summary','tdp-reject-reason','tdp-review-attention','tdp-planning-gate','tdp-execution-gate'];
+  const ids=['tdp-lifecycle-hint','tdp-dispatch-retry','tdp-receipt-summary','tdp-reject-reason','tdp-review-attention','tdp-execution-gate'];
   const any=ids.some(id=>tdpAlertsBlockVisible(document.getElementById(id)));
   fold.style.display=any?'flex':'none';
   const summaryEl=document.getElementById('tdp-alerts-summary');

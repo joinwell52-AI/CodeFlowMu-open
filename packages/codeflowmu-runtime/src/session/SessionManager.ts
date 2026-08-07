@@ -176,6 +176,14 @@ export interface SessionHandle {
   snapshot(): Promise<SessionRecord>;
 }
 
+export type SessionLiveness = {
+  live: boolean;
+  source: "active_run" | "lease" | "terminal" | "missing_or_expired_lease";
+  heartbeat_at?: string;
+  expires_at?: string;
+  age_ms: number;
+};
+
 let _sessionSeq = 0;
 function defaultMintSessionId(): string {
   // Pattern `^session-[a-z0-9-]+$` (per Session.session_id schema regex).
@@ -695,6 +703,46 @@ export class SessionManager {
   async listActive(): Promise<SessionRecord[]> {
     const all = await this._sessionStore.listAll();
     return all.filter((r) => r.protocol.status === "running");
+  }
+
+  /**
+   * Reconcile the persisted Session row with executable reality.
+   * A `running` JSON row alone is not a live consumer: after a crash it can
+   * survive forever while its run handle and heartbeat lease are gone.
+   */
+  async assessSessionLiveness(record: SessionRecord): Promise<SessionLiveness> {
+    const startedAt = Date.parse(record.protocol.started_at ?? "");
+    const lastEventAt = Date.parse(record.runtime_last_event_at ?? "");
+    const referenceAt = Number.isFinite(lastEventAt)
+      ? lastEventAt
+      : Number.isFinite(startedAt)
+        ? startedAt
+        : this._now().getTime();
+    const ageMs = Math.max(0, this._now().getTime() - referenceAt);
+    if (record.protocol.status !== "running") {
+      return { live: false, source: "terminal", age_ms: ageMs };
+    }
+    const handle = this._activeRuns.get(record.protocol.session_id);
+    if (handle?.isActive()) {
+      return { live: true, source: "active_run", age_ms: ageMs };
+    }
+    const lease = await this._leaseStore.inspectOwner(record.protocol.session_id);
+    if (lease && Date.parse(lease.expires_at) > this._now().getTime()) {
+      return {
+        live: true,
+        source: "lease",
+        heartbeat_at: lease.heartbeat_at,
+        expires_at: lease.expires_at,
+        age_ms: Math.max(0, this._now().getTime() - Date.parse(lease.heartbeat_at)),
+      };
+    }
+    return {
+      live: false,
+      source: "missing_or_expired_lease",
+      ...(lease?.heartbeat_at ? { heartbeat_at: lease.heartbeat_at } : {}),
+      ...(lease?.expires_at ? { expires_at: lease.expires_at } : {}),
+      age_ms: ageMs,
+    };
   }
 
   /** Store-backed physical-session history for one logical task. */

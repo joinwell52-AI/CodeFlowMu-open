@@ -7,6 +7,7 @@ import { test } from "node:test";
 import {
   NEGATIVE_PREDICATES,
   NEGATIVE_RULE_IDS,
+  buildOperationFacts,
   evaluateNegativePredicates,
   type NegativeRuleId,
   type OperationFacts,
@@ -133,4 +134,81 @@ test("unknown or incomplete facts are not a synthetic negative rule", () => {
     f.confidence.unresolved_fields = ["operation.effects"];
   });
   assert.deepEqual(evaluateNegativePredicates(facts), []);
+});
+
+function shellFacts(root: string, command: string): OperationFacts {
+  return buildOperationFacts({
+    toolName: "shell",
+    args: { command },
+    projectRoot: root,
+    projectId: "project-shell-lex",
+    agentId: "PM-01",
+    sessionId: "session-shell-1",
+    taskId: "TASK-SHELL-1",
+    threadKey: "thread-shell-1",
+  });
+}
+
+test("shell lexical adapter ignores comparisons and external-write words inside payloads", () => {
+  const root = mkdtempSync(join(tmpdir(), "cfm-shell-facts-"));
+  try {
+    const commands = [
+      `python -c "x = 1; print(x > 0); print('version > 1.0; upload forbidden')"`,
+      `node -e "console.log(JSON.stringify({action:'send_message', note:'submit_form upload'}))"`,
+      `echo "Markdown says send_message, upload, submit_form and threshold > 0"`,
+    ];
+    for (const command of commands) {
+      const facts = shellFacts(root, command);
+      assert.notEqual(facts.operation.kind, "network_write", command);
+      assert.equal(facts.impact.external, false, command);
+      assert.deepEqual(
+        facts.operation.exact_targets.filter((target) => ["0", "1.0", "=50"].includes(target)),
+        [],
+        command,
+      );
+      assert.ok(!evaluateNegativePredicates(facts).some((item) => item.rule_id === "NEG.EXTERNAL.WRITE"));
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("shell lexical adapter distinguishes local redirects from real external writes", () => {
+  const root = mkdtempSync(join(tmpdir(), "cfm-shell-targets-"));
+  try {
+    const local = shellFacts(root, `echo hi > ${join(root, "out.txt")}`);
+    assert.equal(local.operation.kind, "write");
+    assert.equal(local.impact.external, false);
+    assert.equal(local.operation.canonical_targets[0], join(root, "out.txt"));
+
+    const curl = shellFacts(root, "curl -X POST https://example.test/api --data payload");
+    assert.equal(curl.operation.kind, "network_write");
+    assert.deepEqual(curl.operation.canonical_targets, ["https://example.test/api"]);
+    assert.ok(evaluateNegativePredicates(curl).some((item) => item.rule_id === "NEG.EXTERNAL.WRITE"));
+
+    const invoke = shellFacts(root, "Invoke-RestMethod -Method Post -Uri https://example.test/items -Body payload");
+    assert.equal(invoke.operation.kind, "network_write");
+    assert.deepEqual(invoke.operation.canonical_targets, ["https://example.test/items"]);
+
+    const push = shellFacts(root, "git push origin feature/fifo-fix");
+    assert.equal(push.operation.kind, "remote_git");
+    assert.deepEqual(push.operation.canonical_targets, ["git:origin/feature/fifo-fix"]);
+    assert.ok(evaluateNegativePredicates(push).some((item) => item.rule_id === "NEG.REMOTE.GIT.WRITE"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("external action without a validated target stays incomplete and cannot create external-write approval", () => {
+  const root = mkdtempSync(join(tmpdir(), "cfm-shell-incomplete-"));
+  try {
+    const facts = shellFacts(root, "curl -X POST --data payload");
+    assert.notEqual(facts.operation.kind, "network_write");
+    assert.equal(facts.impact.external, false);
+    assert.equal(facts.confidence.complete, false);
+    assert.ok(facts.confidence.detector_ids.includes("shell.external_write_target_missing"));
+    assert.ok(!evaluateNegativePredicates(facts).some((item) => item.rule_id === "NEG.EXTERNAL.WRITE"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

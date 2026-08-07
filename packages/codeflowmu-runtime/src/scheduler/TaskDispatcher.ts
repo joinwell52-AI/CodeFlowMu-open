@@ -149,6 +149,7 @@ import {
   normalizeQueueTaskId,
   RESUME_EXECUTION_PROMPT_ZH,
   setAgentRunning,
+  updateAgentTaskQueueIfChanged,
   withAgentTaskQueue,
 } from "../pm/agentTaskQueue.ts";
 import {
@@ -434,11 +435,22 @@ export interface DispatchControlPlaneOptions {
  * Dispatch result tag — used internally and surfaced via `state_history`
  * notes for downstream observability.
  */
+export type AgentQueueObservationState =
+  | "queued_waiting_for_busy_agent"
+  | "claimed_by_live_session"
+  | "stalled_queue_entry"
+  | "duplicate_scan";
+
 export type DispatchOutcome =
   | { kind: "dispatched"; session_id: string; attempt_id?: string; lease_id?: string; inboxHistoryRecorded?: boolean }
   | { kind: "parse_failed"; reason: string }
   | { kind: "agent_not_found"; recipient: string; reason?: string }
-  | { kind: "rejected_busy"; recipient: string; status: string }
+  | {
+      kind: "rejected_busy";
+      recipient: string;
+      status: string;
+      queue_state?: "queued_waiting_for_busy_agent";
+    }
   | ({
       kind: "task_spec_rejected";
       result_path: string;
@@ -466,6 +478,8 @@ export type DispatchOutcome =
       attempt_id?: string;
       lease_id?: string;
       session_id?: string;
+      queue_state?: AgentQueueObservationState;
+      observed_state?: Exclude<AgentQueueObservationState, "duplicate_scan">;
     }
   | { kind: "lease_conflict"; attempt_id: string; lease_id?: string; session_id?: string; reason: string }
   | {
@@ -1033,7 +1047,10 @@ export class TaskDispatcher {
     // Admission rejection is not a lifecycle transition. A rejected legacy
     // TASK must not accumulate duplicate state_history blocks when watcher,
     // manual dispatch, and recovery all encounter it.
-    if (outcome.kind === "task_spec_rejected") return;
+    if (
+      outcome.kind === "task_spec_rejected" ||
+      outcome.kind === "already_dispatched"
+    ) return;
 
     // Dispatched tasks already got inbox→dispatched + running inside _dispatch
     // before the settlement listener was registered.
@@ -2156,9 +2173,44 @@ export class TaskDispatcher {
           };
         }
         const activeSessions = await this._sessionManager.listActive();
-        const liveSession = activeSessions.find(
-          (s) => s.protocol.agent_id === agentId,
-        );
+        let liveSession: SessionRecord | undefined;
+        for (const session of activeSessions.filter(
+          (candidate) => candidate.protocol.agent_id === agentId,
+        )) {
+          const liveness = await this._sessionManager.assessSessionLiveness(session);
+          if (liveness.live) {
+            liveSession ??= session;
+            continue;
+          }
+          const staleTaskId = normalizeQueueTaskId(
+            String(session.protocol.task_id ?? ""),
+          );
+          const stalledFor = Math.max(0, liveness.age_ms);
+          if (
+            this._shouldEmitDispatchWait(
+              `stalled_queue_entry:${agentId}:${staleTaskId || session.protocol.session_id}`,
+              300_000,
+            )
+          ) {
+            this._logger.warn(
+              `[TaskDispatcher] stalled_queue_entry task=${staleTaskId || "unknown"}` +
+                ` agent=${agentId} session=${session.protocol.session_id}` +
+                ` stalled_ms=${stalledFor} source=${liveness.source};` +
+                ` releasing stale Session and retrying the same task`,
+            );
+          }
+          await this._sessionManager.cancelSession(
+            session.protocol.session_id,
+            `automatic stalled_queue_entry recovery after ${stalledFor}ms (${liveness.source})`,
+          ).catch((error) => {
+            this._logger.warn(
+              `[TaskDispatcher] stalled_queue_entry recovery failed task=${staleTaskId || "unknown"}` +
+                ` agent=${agentId} session=${session.protocol.session_id}: ${
+                  error instanceof Error ? error.message : String(error)
+                }; ADMIN may use Swap AI if the next scan cannot recover`,
+            );
+          });
+        }
         queueFile = await this._reconcilePersistentAgentQueue(
           agentId,
           liveSession,
@@ -2170,13 +2222,28 @@ export class TaskDispatcher {
           normalizeQueueTaskId(String(liveSession.protocol.task_id ?? "")) ===
             normalizeQueueTaskId(taskId)
         ) {
-          return { kind: "already_dispatched" };
+          return {
+            kind: "already_dispatched",
+            session_id: liveSession.protocol.session_id,
+            queue_state: "claimed_by_live_session",
+          };
         }
         if (isTaskQueuedInState(queueFile, taskId)) {
+          if (
+            this._shouldEmitDispatchWait(
+              `duplicate_scan:${agentId}:${normalizeQueueTaskId(taskId)}`,
+              300_000,
+            )
+          ) {
           this._logger.info(
             `[TaskDispatcher] skip ${filename} — already in agent FIFO queue`,
           );
-          return { kind: "already_dispatched" };
+          }
+          return {
+            kind: "already_dispatched",
+            queue_state: "duplicate_scan",
+            observed_state: "queued_waiting_for_busy_agent",
+          };
         }
         if (liveSession) {
           await withAgentTaskQueue(this._projectRoot, (file) => {
@@ -2196,6 +2263,7 @@ export class TaskDispatcher {
             kind: "rejected_busy",
             recipient,
             status: "running",
+            queue_state: "queued_waiting_for_busy_agent",
           };
         }
       }
@@ -3099,7 +3167,7 @@ export class TaskDispatcher {
 
     const currentPathKey = _queuePathKey(currentFilepath);
     const currentId = normalizeQueueTaskId(currentTaskId);
-    return withAgentTaskQueue(projectRoot, (file) => {
+    const reconciled = await updateAgentTaskQueueIfChanged(projectRoot, (file) => {
       const slot = file.agents[agentId] ?? { running: null, queue: [] };
       file.agents[agentId] = slot;
       slot.running = liveSession
@@ -3124,6 +3192,7 @@ export class TaskDispatcher {
         return true;
       });
     });
+    return reconciled.state;
   }
 
   private async _isLiveQueuedTaskFile(filepath: string): Promise<boolean> {

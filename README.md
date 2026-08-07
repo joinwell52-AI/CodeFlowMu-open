@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <code>V1.2.26-open</code> · <code>Windows 10/11</code> · <code>Node.js 22+</code> · <code>Python 3.10+</code> · <code>Cursor SDK</code>
+  <code>V1.2.27-open</code> · <code>Windows 10/11</code> · <code>Node.js 22+</code> · <code>Python 3.10+</code> · <code>Cursor SDK</code>
 </p>
 
 <p align="center">
@@ -23,11 +23,13 @@
 ---
 
 <!-- OPEN_RELEASE_NOTES_START -->
-## V1.2.26-open Release Notes
+## V1.2.27-open Release Notes
 
-**CodeFlowMu 开源版本 V1.2.25-open**
+**CodeFlowMu Open V1.2.27 规划授权与发布闭包修复**
 
-- 发布开源版本
+- 发布 CodeFlowMu Open V1.2.27-open。
+- 修复 PM FIFO 失活消费者恢复、外部写事实识别以及规划审批与阶段审批两级授权。
+- 修复 Open 审批过滤遗漏 PlanningStageReview 与 agentTaskQueue 更新的问题，并加强多行 import/export 依赖闭包和关键导出校验。
 
 Affected：CodeFlowMu / Shell / Runtime / Mobile API / Open Edition
 
@@ -57,7 +59,7 @@ Requirement → PM Plan → TASK → DEV / OPS / QA → REPORT → REVIEW / APPR
 
 ## Real Product Screens
 
-Every image below is captured from the real product, not a concept mockup. The current application version is `V1.2.26-open`; the English PC screenshots were captured from the running `V1.2.6-open` application. The phone screenshots are real PWA captures from V1.0.58, with the release-notes view from V1.0.59.
+Every image below is captured from the real product, not a concept mockup. The current application version is `V1.2.27-open`; the English PC screenshots were captured from the running `V1.2.6-open` application. The phone screenshots are real PWA captures from V1.0.58, with the release-notes view from V1.0.59.
 
 ### PC Panel: the complete team at a glance
 

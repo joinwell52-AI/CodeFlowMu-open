@@ -94,6 +94,32 @@ async function withManager<T>(
     },
   );
 }
+
+test("persisted running Session without a live run or heartbeat lease is stale", async () => {
+  await withManager(async ({ manager, sessionStore }) => {
+    const record: SessionRecord = {
+      protocol: {
+        session_id: "session-stale-fifo",
+        agent_id: "PM-01",
+        task_id: "TASK-20260807-054",
+        started_at: "2026-08-07T10:00:00.000Z",
+        status: "running",
+        runs: [{
+          run_id: "run-stale-fifo",
+          started_at: "2026-08-07T10:00:00.000Z",
+          status: "running",
+          tool_calls_count: 0,
+        }],
+      },
+      runtime_last_event_at: "2026-08-07T10:01:00.000Z",
+    };
+    await sessionStore.save(record);
+    const liveness = await manager.assessSessionLiveness(record);
+    assert.equal(liveness.live, false);
+    assert.equal(liveness.source, "missing_or_expired_lease");
+    assert.ok(liveness.age_ms >= 0);
+  });
+});
 void {} as unknown as ManagerCtx; // suppress unused warning for the type doc
 
 // ── TS-4.1 ──────────────────────────────────────────────────────────

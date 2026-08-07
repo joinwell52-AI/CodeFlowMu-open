@@ -10,6 +10,16 @@ export const PLANNING_GATE_DECISIONS = [
 ] as const;
 export type PlanningGateDecisionValue = typeof PLANNING_GATE_DECISIONS[number];
 
+export const PLANNING_STAGE_DECISIONS = [
+  "approve_next_stage",
+  "approve_selected_wps",
+  "request_more_evidence",
+  "pause_future_stages",
+  "revoke_unexecuted_grants",
+  "terminate_task",
+] as const;
+export type PlanningStageDecisionValue = typeof PLANNING_STAGE_DECISIONS[number];
+
 export interface PlanningGateSubmission {
   record_type: "submission";
   submission_id: string;
@@ -41,7 +51,27 @@ export interface PlanningGateDecision {
   wake_detail?: string;
 }
 
-export type PlanningGateRecord = PlanningGateSubmission | PlanningGateDecision;
+export interface PlanningStageDecision {
+  record_type: "stage_decision";
+  decision_id: string;
+  task_id: string;
+  thread_key: string;
+  revision: number;
+  body_digest: string;
+  validation_digest: string;
+  decision: PlanningStageDecisionValue;
+  approved_wp_scope: string[];
+  prerequisite_evidence: string[];
+  reason: string;
+  decided_by: "ADMIN";
+  decided_at: string;
+  notice_status: "pending" | "delivered" | "failed";
+  wake_status: "pending" | "started" | "failed" | "unavailable";
+  notice_detail?: string;
+  wake_detail?: string;
+}
+
+export type PlanningGateRecord = PlanningGateSubmission | PlanningGateDecision | PlanningStageDecision;
 
 function safeTaskId(taskId: string): string {
   return taskId.trim().replace(/[^A-Za-z0-9._-]/g, "-");
@@ -146,6 +176,58 @@ export async function decidePlanningGate(input: {
     ...(input.wakeDetail ? { wake_detail: input.wakeDetail } : {}),
   };
   await appendRecord(input.projectRoot, row);
+  return row;
+}
+
+export async function decidePlanningStage(input: {
+  projectRoot: string;
+  taskId: string;
+  threadKey: string;
+  revision: number;
+  bodyDigest: string;
+  validationDigest: string;
+  decision: PlanningStageDecisionValue;
+  approvedWpScope?: string[];
+  prerequisiteEvidence?: string[];
+  reason: string;
+  now?: Date;
+}): Promise<PlanningStageDecision> {
+  if (!PLANNING_STAGE_DECISIONS.includes(input.decision)) throw new Error("invalid Planning Stage decision");
+  if (!input.reason.trim()) throw new Error("stage decision reason is required");
+  const history = await readPlanningGateHistory(input.projectRoot, input.taskId);
+  const submission = [...history].reverse().find((row): row is PlanningGateSubmission => row.record_type === "submission");
+  if (!submission || submission.thread_key !== input.threadKey || submission.revision !== input.revision || submission.body_digest !== input.bodyDigest || submission.validation_digest !== input.validationDigest) {
+    throw new Error("Planning Stage submission is missing or stale for this revision/digest");
+  }
+  const now = input.now ?? new Date();
+  const row: PlanningStageDecision = {
+    record_type: "stage_decision",
+    decision_id: `PLANNING-STAGE-DECISION-${now.getTime()}`,
+    task_id: input.taskId,
+    thread_key: input.threadKey,
+    revision: input.revision,
+    body_digest: input.bodyDigest,
+    validation_digest: input.validationDigest,
+    decision: input.decision,
+    approved_wp_scope: [...new Set((input.approvedWpScope ?? []).map((value) => value.trim().toUpperCase()).filter(Boolean))],
+    prerequisite_evidence: [...new Set((input.prerequisiteEvidence ?? []).map(String).filter(Boolean))],
+    reason: input.reason.trim(),
+    decided_by: "ADMIN",
+    decided_at: now.toISOString(),
+    notice_status: "pending",
+    wake_status: "pending",
+  };
+  await appendRecord(input.projectRoot, row);
+  return row;
+}
+
+export async function recordPlanningStageDelivery(
+  projectRoot: string,
+  decision: PlanningStageDecision,
+  delivery: Pick<PlanningStageDecision, "notice_status" | "wake_status"> & { notice_detail?: string; wake_detail?: string },
+): Promise<PlanningStageDecision> {
+  const row: PlanningStageDecision = { ...decision, ...delivery };
+  await appendRecord(projectRoot, row);
   return row;
 }
 

@@ -387,6 +387,7 @@ export function buildFilesystemCleanupApprovalInput(input: {
   mode?: FilesystemCleanupMode;
   retentionDays?: number;
   reason?: string;
+  threadKey?: string;
 }): PrepareOperationInput {
   const preflight = inspectFilesystemCleanup(input);
   const request: CapabilityRequest = {
@@ -431,6 +432,7 @@ export function buildFilesystemCleanupApprovalInput(input: {
   };
   return {
     request,
+    ...(input.threadKey ? { thread_key: input.threadKey } : {}),
     reason:
       input.reason ??
       `cleanup ${preflight.file_count} files and ${preflight.directory_count} directories`,

@@ -436,6 +436,28 @@ export class OperationApprovalService {
       };
     }
     const operationDigest = computeOperationDigest(input.request);
+    if (
+      classification.decision === "REQUIRE_APPROVAL" &&
+      input.request.context.initiated_by === "agent"
+    ) {
+      const missingRouting = [
+        normalizeString(input.request.subject.agent_id) ? "" : "agent_id",
+        normalizeString(input.request.subject.task_id) ? "" : "task_id",
+        normalizeString(input.thread_key) ? "" : "thread_key",
+      ].filter(Boolean);
+      if (missingRouting.length > 0) {
+        this.audit("operation.approval_routing_incomplete", {
+          operation_digest: operationDigest,
+          requested_by: input.request.subject.actor,
+          missing_routing: missingRouting,
+        });
+        throw new OperationApprovalError(
+          "APPROVAL_ROUTING_INCOMPLETE",
+          `operation approval was not queued because decision delivery is missing: ${missingRouting.join(", ")}`,
+          422,
+        );
+      }
+    }
     this.audit("operation.requested", {
       operation_digest: operationDigest,
       requested_by: input.request.subject.actor,

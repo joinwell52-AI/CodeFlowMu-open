@@ -553,7 +553,7 @@ export class Runtime {
     sessionManager.onEvent((event) => {
       if (!projectRoot) return;
       const agentId = String(event.agent_id ?? "").trim();
-      if (!agentId || /^PM/i.test(agentId)) return;
+      if (!agentId) return;
       const payload = event.payload as { task_id?: string } | undefined;
       const taskId = String(payload?.task_id ?? "")
         .replace(/\.md$/i, "")
@@ -573,17 +573,25 @@ export class Runtime {
           );
         });
       } else if (
-        (event.event_type === "runtime.session_ended" ||
-          event.event_type === "runtime.session_cancelled") &&
-        taskId
+        event.event_type === "runtime.session_ended" ||
+        event.event_type === "runtime.session_cancelled"
       ) {
-        void completeAgentTaskAndAdvance({
-          projectRoot,
-          agentId,
-          taskId,
-          sessionId: sessionId || undefined,
-          dispatcher,
-        }).catch((err) => {
+        void (async () => {
+          const persisted = !taskId && sessionId
+            ? await sessionManager.getSession(sessionId)
+            : null;
+          const settledTaskId = taskId || String(
+            persisted?.protocol.task_id ?? "",
+          ).replace(/\.md$/i, "").trim();
+          if (!settledTaskId) return;
+          await completeAgentTaskAndAdvance({
+            projectRoot,
+            agentId,
+            taskId: settledTaskId,
+            sessionId: sessionId || undefined,
+            dispatcher,
+          });
+        })().catch((err) => {
           opts.logger?.warn?.(
             `[Runtime] completeAgentTaskAndAdvance failed: ${
               err instanceof Error ? err.message : String(err)

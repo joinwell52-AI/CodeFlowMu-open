@@ -4,7 +4,7 @@ import type { ParsedTask } from "../scheduler/TaskParser.ts";
 import { resolveRoleFromAgentId } from "../registry/ToolAuthorityGuard.ts";
 import { classifyProductTask, evaluateProductDeliveryGate, type ProductDeliveryGateStatus } from "./ProductDeliveryGovernance.ts";
 import { resolveThreadContext } from "./PmGovernanceActions.ts";
-import { currentPlanningGrant, planningGrantAllows } from "./PlanningGrantStore.ts";
+import { currentPlanningGrants, planningGrantsAllow } from "./PlanningGrantStore.ts";
 
 export type ProductDispatchGateResult =
   | { allowed: true; status?: ProductDeliveryGateStatus }
@@ -120,7 +120,18 @@ async function evaluateRootGate(
       };
     }
   }
-  const planningGrant = await currentPlanningGrant(projectRoot, ctx.root_task_id);
+  const productStatus = await evaluateProductDeliveryGate({
+    projectRoot,
+    taskId: ctx.root_task_id,
+    taskBody: ctx.root_body ?? "",
+    taskFrontmatter: root?.yaml,
+  });
+  const planningGrants = await currentPlanningGrants(projectRoot, ctx.root_task_id, {
+    briefRevision: productStatus.planning_artifact_revision ?? undefined,
+    briefDigest: productStatus.body_digest ?? undefined,
+    validationDigest: productStatus.validation_digest ?? undefined,
+  });
+  const planningGrant = [...planningGrants].reverse().find((grant) => grant.status === "active") ?? null;
   if (planningGrant) {
     let wpId = declaredWpId(childFrontmatter, fallbackBody);
     if (!wpId) {
@@ -130,7 +141,7 @@ async function evaluateRootGate(
         : undefined;
       if (parent) wpId = declaredWpId(parent.yaml ?? {}, "");
     }
-    if (!wpId || !planningGrantAllows(planningGrant, wpId)) {
+    if (!wpId || !planningGrantsAllow(planningGrants, wpId)) {
       return {
         allowed: false,
         code: "PLANNING_GRANT_REQUIRED",
@@ -146,21 +157,25 @@ async function evaluateRootGate(
     }
     return { allowed: true };
   }
-  const status = await evaluateProductDeliveryGate({
-    projectRoot,
-    taskId: ctx.root_task_id,
-    taskBody: ctx.root_body ?? "",
-    taskFrontmatter: root?.yaml,
-  });
-  return status.allowed
-    ? { allowed: true, status }
+  if (productStatus.classification.long_horizon_required) {
+    return {
+      allowed: false,
+      code: "PLANNING_GRANT_REQUIRED",
+      reason: "planning_grant_required",
+      required_action: "obtain_current_admin_planning_grant",
+      findings: ["no_active_current_revision_planning_grant"],
+      status: productStatus,
+    };
+  }
+  return productStatus.allowed
+    ? { allowed: true, status: productStatus }
     : {
         allowed: false,
         code: "PRODUCT_BRIEF_REQUIRED",
         reason: "product_brief_required",
-        required_action: status.next_action ?? "complete_pm_planning_before_dispatch",
-        findings: status.findings,
-        status,
+        required_action: productStatus.next_action ?? "complete_pm_planning_before_dispatch",
+        findings: productStatus.findings,
+        status: productStatus,
       };
 }
 

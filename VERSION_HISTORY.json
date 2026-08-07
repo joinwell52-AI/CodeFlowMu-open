@@ -1,13 +1,15 @@
 [
   {
-    "version": "V1.2.26-open",
+    "version": "V1.2.27-open",
     "date": "2026-08-07",
     "tasks": [
       "TASK-20260803-001"
     ],
-    "title": "CodeFlowMu 开源版本 V1.2.25-open",
+    "title": "CodeFlowMu Open V1.2.27 规划授权与发布闭包修复",
     "changes": [
-      "发布开源版本"
+      "发布 CodeFlowMu Open V1.2.27-open。",
+      "修复 PM FIFO 失活消费者恢复、外部写事实识别以及规划审批与阶段审批两级授权。",
+      "修复 Open 审批过滤遗漏 PlanningStageReview 与 agentTaskQueue 更新的问题，并加强多行 import/export 依赖闭包和关键导出校验。"
     ],
     "affected": [
       "CodeFlowMu",

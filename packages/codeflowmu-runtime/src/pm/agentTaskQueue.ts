@@ -125,6 +125,24 @@ export async function withAgentTaskQueue(
   return state;
 }
 
+/**
+ * Reconciliation scans are observations, not writes. Persist only when the
+ * queue content actually changes; `updated_at` must not tick on every GET or
+ * watcher pass.
+ */
+export async function updateAgentTaskQueueIfChanged(
+  projectRoot: string,
+  mutate: (state: AgentTaskQueueFile) => void,
+): Promise<{ state: AgentTaskQueueFile; changed: boolean }> {
+  const state = await loadAgentTaskQueue(projectRoot);
+  const before = JSON.stringify({ agents: state.agents, paused: state.paused });
+  mutate(state);
+  const after = JSON.stringify({ agents: state.agents, paused: state.paused });
+  const changed = before !== after;
+  if (changed) await saveAgentTaskQueue(projectRoot, state);
+  return { state, changed };
+}
+
 function ensureAgentSlot(
   state: AgentTaskQueueFile,
   agentId: string,

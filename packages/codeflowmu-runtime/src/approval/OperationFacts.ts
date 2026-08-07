@@ -180,7 +180,8 @@ function directTargets(args: Record<string, unknown>): string[] {
   const values: string[] = [];
   for (const key of [
     "path", "file", "file_path", "filePath", "target", "target_path",
-    "targetFile", "destination", "destinationPath",
+    "targetFile", "destination", "destinationPath", "url", "uri",
+    "endpoint", "recipient", "repository", "remote", "branch",
   ]) {
     const value = args[key];
     if (typeof value === "string" && value.trim()) values.push(value.trim());
@@ -209,6 +210,7 @@ type AdapterResult = {
   unresolved: string[];
   detectors: string[];
   adapterId: string;
+  targetsAreExternal?: boolean;
 };
 
 function pushMatches(command: string, pattern: RegExp, bucket: string[]): void {
@@ -217,6 +219,116 @@ function pushMatches(command: string, pattern: RegExp, bucket: string[]): void {
     const value = String(match[1] ?? "").trim();
     if (value && !bucket.includes(value)) bucket.push(value);
   }
+}
+
+type ShellLexSegment = { words: string[]; redirects: string[] };
+
+function maskShellPayloadBlocks(command: string): string {
+  const blank = (value: string) => value.replace(/[^\r\n]/g, " ");
+  return command
+    .replace(/@(['"])\r?\n[\s\S]*?\r?\n\1@/g, blank)
+    .replace(/<<-?\s*['"]?([A-Za-z_][\w-]*)['"]?[^\r\n]*\r?\n([\s\S]*?)\r?\n\1(?=\r?$)/gm, blank);
+}
+
+/** Minimal shell lexer: only unquoted shell-layer operators are structural. */
+function lexShell(command: string): ShellLexSegment[] {
+  const source = maskShellPayloadBlocks(command);
+  const segments: ShellLexSegment[] = [];
+  let words: string[] = [];
+  let redirects: string[] = [];
+  let word = "";
+  let quote: "'" | '"' | null = null;
+  const pushWord = () => {
+    const value = word.trim();
+    if (value) words.push(value);
+    word = "";
+  };
+  const pushSegment = () => {
+    pushWord();
+    if (words.length || redirects.length) segments.push({ words, redirects });
+    words = [];
+    redirects = [];
+  };
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i]!;
+    if (quote) {
+      if (ch === quote && source[i - 1] !== "\\") quote = null;
+      else word += ch;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (ch === "\n" || ch === "\r") pushSegment();
+      else pushWord();
+      continue;
+    }
+    if (ch === ";" || ch === "|") {
+      pushSegment();
+      if (source[i + 1] === ch) i += 1;
+      continue;
+    }
+    if (ch === "&" && source[i + 1] === "&") {
+      pushSegment();
+      i += 1;
+      continue;
+    }
+    if (ch === ">") {
+      pushWord();
+      if (source[i - 1] === ">" || source[i + 1] === "=") {
+        word += ch;
+        continue;
+      }
+      if (source[i + 1] === ">") i += 1;
+      while (i + 1 < source.length && /[ \t]/.test(source[i + 1]!)) i += 1;
+      let target = "";
+      let targetQuote: "'" | '"' | null = null;
+      for (let j = i + 1; j < source.length; j += 1) {
+        const next = source[j]!;
+        if (targetQuote) {
+          if (next === targetQuote && source[j - 1] !== "\\") targetQuote = null;
+          else target += next;
+          i = j;
+          continue;
+        }
+        if (next === "'" || next === '"') {
+          targetQuote = next;
+          i = j;
+          continue;
+        }
+        if (/\s/.test(next) || next === ";" || next === "|" || next === "&") break;
+        target += next;
+        i = j;
+      }
+      const normalized = target.trim();
+      // Numeric/comparison values are never meaningful filesystem targets.
+      if (normalized && !/^(?:=?[+-]?(?:\d+(?:\.\d+)?|\.\d+))$/.test(normalized)) {
+        redirects.push(normalized);
+      }
+      continue;
+    }
+    word += ch;
+  }
+  pushSegment();
+  return segments;
+}
+
+function executableWords(segment: ShellLexSegment): string[] {
+  const words = [...segment.words];
+  while (words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]!)) words.shift();
+  if (/^(?:sudo|env)$/i.test(words[0] ?? "")) words.shift();
+  return words;
+}
+
+function validExternalTarget(value: string): boolean {
+  const target = value.trim();
+  if (!target || /^(?:=?[+-]?(?:\d+(?:\.\d+)?|\.\d+))$/.test(target)) return false;
+  if (/^https?:\/\/[^\s/$.?#].*$/i.test(target)) return true;
+  if (/^git:[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._/-]+)?$/.test(target)) return true;
+  if (/^(?:recipient|resource|repository):[^\s]+$/i.test(target)) return true;
+  return false;
 }
 
 /**
@@ -241,7 +353,6 @@ function adaptShell(command: string): AdapterResult {
     [/\b(?:remove-item|rm|del|erase|unlinkSync|rmSync)\b[^\r\n;|]*?(?:-LiteralPath|-Path\s+)?["']([^"']+)["']/gi, "delete", "shell.delete"],
     [/(?:^|[;&|]\s*)(?:del|erase|rm)\s+(?:\/[a-z]\s+|-[^\s]+\s+)*["']?([^"';&|\s]+)["']?/gim, "delete", "shell.delete.unquoted"],
     [/\bgit(?:\.exe)?\s+checkout\s+--\s+["']?([^"';&|\s]+)["']?/gi, "write", "shell.git.restore"],
-    [/(?:^|\s)(?:>>?|1>>?)\s*["']?([^"'\s;&|]+)["']?/gim, "write", "shell.redirect"],
   ];
   for (const [pattern, detectedKind, detector] of writePatterns) {
     const before = targets.length;
@@ -254,13 +365,75 @@ function adaptShell(command: string): AdapterResult {
     }
   }
 
+  const shellSegments = lexShell(command);
+  for (const redirect of shellSegments.flatMap((segment) => segment.redirects)) {
+    if (!targets.includes(redirect)) targets.push(redirect);
+    if (!detectors.includes("shell.redirect")) detectors.push("shell.redirect");
+    persistent = true;
+    kind = "write";
+  }
+
   const obviousReadOnlyTextCommand = /^\s*(?:echo\b(?![^\r\n]*(?:>>?|1>>?))|rg\b|grep\b|findstr\b)/i.test(command);
   const effectCommand = obviousReadOnlyTextCommand ? command.split(/\s+/, 1)[0]! : command;
   const dynamic = /[*?]|\$\(|`[^`]+`|\b(?:for|foreach)\b|\bget-childitem\b[^\r\n]*\|/i.test(command);
   const recursive = /(?:^|\s)(?:-r|-recurse|\/s)(?:\s|$)/i.test(command);
-  const remoteGit = /\bgit(?:\.exe)?\s+(?:push\b|branch\s+-[dD]\s+[^\s]+\s+(?:--remote|-r)|remote\s+(?:add|remove|rename|set-url)\b)|\bgh\s+pr\s+merge\b/i.test(effectCommand);
-  const release = /\bgit(?:\.exe)?\s+tag\s+(?!--list\b|-l\b)\S+|\b(?:npm|pnpm|yarn)\s+publish\b|\bdocker\s+push\b|\bgh\s+release\s+(?:create|delete|edit)\b|\b(?:kubectl|helm|terraform)\s+(?:apply|destroy|upgrade|install)\b/i.test(effectCommand);
-  const externalWrite = /\b(?:curl|wget|invoke-restmethod|invoke-webrequest)\b[^\r\n]*(?:-x\s*(?:post|put|patch|delete)|-method\s+(?:post|put|patch|delete)|--data|-d\s)|\b(?:send_message|send-email|upload|submit_form)\b/i.test(effectCommand);
+  let remoteGit = false;
+  let release = false;
+  let externalWrite = false;
+  const externalTargets: string[] = [];
+  for (const segment of shellSegments) {
+    const words = executableWords(segment);
+    const executable = String(words[0] ?? "").replace(/\.exe$/i, "").toLowerCase();
+    const action = String(words[1] ?? "").toLowerCase();
+    if (executable === "git" && action === "push") {
+      remoteGit = true;
+      const remote = words.find((value, index) => index >= 2 && !value.startsWith("-")) ?? "remote";
+      const remoteIndex = words.indexOf(remote);
+      const branch = words.find((value, index) => index > remoteIndex && !value.startsWith("-"));
+      externalTargets.push(`git:${remote}${branch ? `/${branch}` : ""}`);
+    }
+    if (executable === "git" && action === "remote" && words[2]?.toLowerCase() === "set-url") {
+      remoteGit = true;
+      const target = words.find((value, index) => index >= 3 && /^https?:\/\//i.test(value));
+      if (target && validExternalTarget(target)) externalTargets.push(target);
+      else detectors.push("shell.remote_git_target_missing");
+    }
+    if (executable === "gh" && action === "pr" && words[2]?.toLowerCase() === "merge") remoteGit = true;
+    if (
+      (executable === "git" && action === "tag" && !/^(?:--list|-l)$/i.test(words[2] ?? "")) ||
+      (["npm", "pnpm", "yarn"].includes(executable) && action === "publish") ||
+      (executable === "docker" && action === "push") ||
+      (executable === "gh" && action === "release" && /^(?:create|delete|edit)$/i.test(words[2] ?? "")) ||
+      (["kubectl", "helm", "terraform"].includes(executable) && /^(?:apply|destroy|upgrade|install)$/i.test(action))
+    ) release = true;
+    const isHttpTool = ["curl", "wget", "invoke-restmethod", "invoke-webrequest"].includes(executable);
+    if (isHttpTool) {
+      const lower = words.map((value) => value.toLowerCase());
+      const methodIndex = lower.findIndex((value) => ["-x", "--request", "-method"].includes(value));
+      const method = methodIndex >= 0 ? lower[methodIndex + 1] ?? "" : "";
+      const hasWritePayload = lower.some((value) => /^(?:--data(?:-.+)?|-d|--form|-f|--upload-file)$/.test(value));
+      const writes = /^(?:post|put|patch|delete)$/i.test(method) || hasWritePayload;
+      const target = words.find((value) => /^https?:\/\//i.test(value));
+      if (writes && target && validExternalTarget(target)) {
+        externalWrite = true;
+        externalTargets.push(target);
+      } else if (writes) {
+        detectors.push("shell.external_write_target_missing");
+      }
+    }
+    if (["send_message", "send-email", "upload", "submit_form"].includes(executable)) {
+      const rawTarget = words.find((value, index) => index > 0 && !value.startsWith("-"));
+      if (rawTarget) {
+        const target = `recipient:${rawTarget}`;
+        if (validExternalTarget(target)) {
+          externalWrite = true;
+          externalTargets.push(target);
+        }
+      } else {
+        detectors.push("shell.external_write_target_missing");
+      }
+    }
+  }
   const runtime = /\b(?:stop-process|restart-service|stop-service|start-service|taskkill|sc\s+(?:start|stop)|shutdown)\b/i.test(effectCommand);
   const privilege = /\b(?:chmod|chown|icacls|takeown|set-acl|new-selfsignedcertificate)\b/i.test(effectCommand);
   const systemChange = /\b(?:winget|choco|scoop)\s+(?:install|uninstall|upgrade)\b|\b(?:npm|pnpm|yarn)\s+(?:install|add|remove|uninstall)\b[^\r\n]*(?:--global|-g)\b|\b(?:dism|msiexec)\b/i.test(effectCommand);
@@ -269,6 +442,9 @@ function adaptShell(command: string): AdapterResult {
   if (remoteGit) { kind = "remote_git"; detectors.push("shell.remote_git"); }
   if (release) { kind = "publish"; detectors.push("shell.release_production"); }
   if (externalWrite) { kind = "network_write"; detectors.push("shell.external_write"); }
+  if ((externalWrite || remoteGit) && externalTargets.length > 0) {
+    targets.splice(0, targets.length, ...new Set(externalTargets.filter(validExternalTarget)));
+  }
   if (runtime) { kind = "process_control"; detectors.push("shell.runtime_control"); }
   if (privilege) detectors.push("shell.security_authority");
   if (systemChange) detectors.push("shell.software_system_change");
@@ -301,6 +477,7 @@ function adaptShell(command: string): AdapterResult {
     unresolved,
     detectors,
     adapterId: "shell.candidate-facts.v1",
+    targetsAreExternal: externalWrite || remoteGit,
   };
 }
 
@@ -316,7 +493,8 @@ function adaptStructured(tool: string, args: Record<string, unknown>): AdapterRe
     /write|edit|patch|create_file|scratch\.write/.test(tool) ? "write" :
     /^(?:write_task|create_task|write_report|write_issue|write_review|submit_review|review_task|approve_review|reject_review|mark_human_approved|archive_task|approve_task|reject_task|claim_task|submit_task|finish_task)$/.test(tool) ? "governance_change" :
     "unknown";
-  const external = /^(?:send_message|send_email|upload|submit_form|http_post|http_put|http_patch|http_delete|api_write)$/.test(tool);
+  const externalAction = /^(?:send_message|send_email|upload|submit_form|http_post|http_put|http_patch|http_delete|api_write)$/.test(tool);
+  const external = externalAction && targets.length > 0;
   const runtime = /^(?:stop_process|restart_process|start_service|stop_service|restart_service|restart_gateway|stop_gateway)$/.test(tool);
   const privilege = /^(?:set_permission|set_acl|change_credentials|share_resource|change_security_boundary)$/.test(tool);
   const remoteGit = /^(?:git_push|remote_branch_delete|git_force_push)$/.test(tool);
@@ -340,12 +518,19 @@ function adaptStructured(tool: string, args: Record<string, unknown>): AdapterRe
     reversible: kind === "delete" ? "unknown" : true,
     persistent,
     complete: kind !== "unknown" && (kind === "read" || governance || targets.length > 0),
-    unresolved: kind === "unknown" ? ["operation.kind"] : persistent && !governance && targets.length === 0 ? ["operation.exact_targets"] : [],
+    unresolved: kind === "unknown"
+      ? ["operation.kind"]
+      : externalAction && targets.length === 0
+        ? ["operation.external_target"]
+        : persistent && !governance && targets.length === 0
+          ? ["operation.exact_targets"]
+          : [],
     detectors: [
       "structured.tool",
       ...(systemChange ? ["structured.software_system_change"] : []),
     ],
     adapterId: "structured.tool.v1",
+    targetsAreExternal: external || remoteGit,
   };
 }
 
@@ -409,14 +594,20 @@ export function buildOperationFacts(input: OperationFactsInput): OperationFacts 
     adapted.persistent = true;
     adapted.detectors.push("governance.untrusted_self_attestation");
   }
-  const canonicalTargets = adapted.targets.map((value) => canonicalPath(root, value));
+  const canonicalTargets = adapted.targets.map((value) =>
+    adapted.targetsAreExternal ? value.trim() : canonicalPath(root, value),
+  );
   const recursiveDelete = adapted.kind === "delete" && canonicalTargets.some((target) => {
     try { return existsSync(target) && lstatSync(target).isDirectory(); } catch { return false; }
   });
   const taskId = String(input.taskId ?? input.args["task_id"] ?? "").trim();
   const sessionId = String(input.sessionId ?? "").trim();
   const threadKey = String(input.threadKey ?? input.args["thread_key"] ?? "").trim();
-  const states = canonicalTargets.map((target) => classifyTarget(root, target, taskId, sessionId));
+  const states: OperationFacts["target_state"][] = canonicalTargets.map((target) =>
+    adapted.targetsAreExternal
+      ? { lifecycle_class: "external", link_boundary: "unknown" }
+      : classifyTarget(root, target, taskId, sessionId),
+  );
   const dominant = states.find((state) => state.lifecycle_class === "external") ??
     states.find((state) => state.lifecycle_class === "protected") ??
     states.find((state) => state.lifecycle_class === "governance") ??
@@ -474,7 +665,9 @@ function match(rule_id: NegativeRuleId, matched: boolean, evidence_fields: strin
 }
 
 export function negativeScopeEscape(facts: OperationFacts): NegativeMatch {
-  const matched = facts.impact.persistent && facts.operation.canonical_targets.some((target) => !inside(facts.context.project_root_realpath, target));
+  const matched = facts.impact.persistent &&
+    !["network_write", "remote_git", "publish"].includes(facts.operation.kind) &&
+    facts.operation.canonical_targets.some((target) => !inside(facts.context.project_root_realpath, target));
   return match("NEG.SCOPE.ESCAPE.WRITE", matched, ["context.project_root_realpath", "operation.canonical_targets"], "写入、移动或删除目标明确超出当前项目授权范围", ["context.project_root_realpath", "operation.canonical_targets"]);
 }
 export function negativeProtectedBoundary(facts: OperationFacts): NegativeMatch {

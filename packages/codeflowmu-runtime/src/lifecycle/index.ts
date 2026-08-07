@@ -27,6 +27,10 @@ export {
   type TrimTaskTransitionsResult,
 } from "./trimTaskTransitions.ts";
 export {
+  compactDuplicateRuntimeHistory,
+  type CompactDuplicateRuntimeHistoryResult,
+} from "./compactDuplicateRuntimeHistory.ts";
+export {
   inferTaskLine,
   resolveArchiveAuthority,
   resolveDoneAuthority,

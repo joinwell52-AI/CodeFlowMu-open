@@ -70,6 +70,13 @@ function genericApprovalInput(
   matches: NegativeMatch[],
 ): PrepareOperationInput {
   const targets = facts.operation.canonical_targets;
+  const targetText = targets.join("、") || "未识别目标";
+  const actionText = facts.operation.kind === "network_write"
+    ? "向外部系统发送或修改数据"
+    : facts.operation.kind === "remote_git"
+      ? "写入远程 Git 仓库"
+      : `执行 ${facts.operation.kind} 操作`;
+  const plainReason = `工具 ${facts.tool.canonical_tool_id} 准备${actionText}，真实目标：${targetText}。发送内容来自当前工具调用；不批准时不会执行该操作，原任务可继续选择安全步骤。`;
   const request = {
     subject: {
       actor: input.agentId,
@@ -102,11 +109,18 @@ function genericApprovalInput(
     snapshot: {
       operation_fingerprint: operationFingerprint(facts),
       operation_facts: facts,
+      admin_explanation: {
+        action: actionText,
+        tool: facts.tool.canonical_tool_id,
+        targets,
+        data: "当前工具调用携带的数据",
+        if_rejected: "本次操作不执行；原任务保持可恢复并可继续安全步骤",
+      },
     },
   };
   return {
     request,
-    reason: matches.map((item) => item.reason_zh).join("；"),
+    reason: plainReason,
     effects: matches.map((item) => item.rule_id),
     non_effects: ["current operation has not executed", "logical Session and Task remain recoverable"],
     recovery: "ADMIN decision is delivered to the original Agent; the Agent retries the exact call and Runtime consumes one matching authorization",

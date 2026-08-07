@@ -106,6 +106,16 @@ export interface PlanningValidationResult {
   valid_until: string;
 }
 
+export interface PlanningReviewSnapshot {
+  task_id: string;
+  thread_key: string;
+  body_digest: string;
+  validation_digest: string;
+  captured_at: string;
+  work_packages: Array<Record<string, unknown>>;
+  gates: Array<Record<string, unknown>>;
+}
+
 export interface ValidateLongHorizonPlanInput {
   taskId: string;
   rootTaskId: string;
@@ -486,6 +496,48 @@ export async function persistPlanningValidation(
   await writeFile(temporary, `${JSON.stringify(result, null, 2)}\n`, "utf8");
   await rename(temporary, path);
   return path;
+}
+
+export function planningReviewSnapshotPath(projectRoot: string, taskId: string): string {
+  const safe = taskId.replace(/[^A-Za-z0-9._-]/g, "-");
+  return join(projectRoot, ".codeflowmu", "pm-governance", "planning-review-snapshots", `${safe}.json`);
+}
+
+export async function persistPlanningReviewSnapshot(
+  projectRoot: string,
+  validation: PlanningValidationResult,
+  planningIr: Record<string, unknown>,
+): Promise<string> {
+  const path = planningReviewSnapshotPath(projectRoot, validation.root_task_id);
+  const snapshot: PlanningReviewSnapshot = {
+    task_id: validation.root_task_id,
+    thread_key: validation.thread_key,
+    body_digest: validation.body_digest,
+    validation_digest: validation.validation_digest,
+    captured_at: validation.validated_at,
+    work_packages: Array.isArray(planningIr["work_packages"])
+      ? (planningIr["work_packages"] as Array<Record<string, unknown>>)
+      : [],
+    gates: Array.isArray(planningIr["gates"])
+      ? (planningIr["gates"] as Array<Record<string, unknown>>)
+      : [],
+  };
+  await mkdir(join(path, ".."), { recursive: true });
+  const temporary = `${path}.tmp-${process.pid}-${Date.now()}`;
+  await writeFile(temporary, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+  await rename(temporary, path);
+  return path;
+}
+
+export async function readPlanningReviewSnapshot(
+  projectRoot: string,
+  taskId: string,
+): Promise<PlanningReviewSnapshot | null> {
+  try {
+    return JSON.parse(await readFile(planningReviewSnapshotPath(projectRoot, taskId), "utf8")) as PlanningReviewSnapshot;
+  } catch {
+    return null;
+  }
 }
 
 export async function readPlanningValidation(

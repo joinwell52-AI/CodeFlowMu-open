@@ -7,6 +7,10 @@ const html = readFileSync(
   join(import.meta.dirname, "..", "..", "..", "codeflowmu-desktop", "panel", "index.html"),
   "utf8",
 );
+const webPanel = readFileSync(
+  join(import.meta.dirname, "..", "web-panel.ts"),
+  "utf8",
+);
 
 test("Panel task detail explains PM planning level, gaps, and dispatch state", () => {
   assert.match(html, /id="tdp-planning-gate"/);
@@ -19,6 +23,15 @@ test("Panel task detail explains PM planning level, gaps, and dispatch state", (
   assert.match(html, /PM 下一步/);
   assert.match(html, /ADMIN 调整规划等级/);
   assert.match(html, /function adjustPmPlanningLevel\(/);
+});
+
+test("Planning approval and stage approval use distinct bounded server contracts", () => {
+  assert.match(webPanel, /approvedWpScope: \["WP-00"\]/);
+  assert.match(webPanel, /\/api\/v2\/pm\/governance\/planning-stage\/decide/);
+  assert.match(webPanel, /PLANNING_STAGE_SCOPE_NOT_ELIGIBLE/);
+  assert.match(webPanel, /requestedScope\.includes\("\*"\)/);
+  assert.match(webPanel, /prerequisiteEvidence: stage\.prerequisite_evidence/);
+  assert.match(webPanel, /本次批准范围：\$\{scopeText\}/);
 });
 
 test("root task rows expose an in-app PM planning brief card", () => {
@@ -65,4 +78,36 @@ test("root task rows expose an in-app PM planning brief card", () => {
     html,
     /function _canAdminArchive\(f\)\{return _canOperatorArchive\(f\);\}/,
   );
+});
+
+test("Planning Gate has a dedicated reachable review dialog with a fixed decision footer", () => {
+  assert.match(html, /id="tdp-planning-review-btn"/);
+  assert.match(html, />规划审核</);
+  assert.match(html, /id="planning-review-overlay"/);
+  assert.match(html, /role="dialog" aria-modal="true"/);
+  assert.match(html, /\.planning-review-body\{[^}]*overflow-y:auto/);
+  assert.match(html, /\.planning-review-footer\{[^}]*flex-shrink:0/);
+  assert.match(html, /\.planning-review-overlay\{[^}]*bottom:calc\(var\(--think-console-h,28px\) \+ var\(--queue-bar-h,0px\)\)/);
+  assert.match(html, /\.planning-review-dialog\{[^}]*height:min\(760px,calc\(100% - 16px\)\)/);
+  assert.match(html, /scrollBody\.insertBefore\(el,scrollBody\.firstChild\)/);
+  for (const label of ["仅批准 WP-00", "要求修改规划", "暂停", "重新规划", "终止"]) {
+    assert.match(html, new RegExp(label));
+  }
+  assert.match(html, /function planningReviewKeydown\(event\)/);
+  assert.match(html, /event\.key!==?'Tab'/);
+  assert.match(html, /规划内容已更新，旧审核窗口不能提交决定/);
+  assert.match(html, /planning-gate\/history\?task_id=/);
+  assert.match(html, /canonical_preview/);
+  assert.match(html, /业务 Planning Gate（不属于操作审批）/);
+  assert.match(html, /待规划审批/);
+  assert.match(html, /待阶段审批/);
+  for (const label of ["批准下一阶段", "批准所选 WP", "要求补充证据", "暂停后续阶段", "撤销未执行授权", "终止任务"]) {
+    assert.match(html, new RegExp(label));
+  }
+  assert.match(html, /class="planning-wp-check planning-wp-select"/);
+  assert.match(html, /wp\.recommended/);
+  assert.match(html, /本次批准：/);
+  assert.match(html, /尚未批准：/);
+  assert.match(html, /planning-stage\/decide/);
+  assert.match(html, /function ensurePlanningDecisionReachable/);
 });

@@ -49,6 +49,7 @@ test("cleanup preflight returns an exact manifest and approved execution quarant
       projectRoot,
       targets: [cache],
       subject,
+      threadKey: "thread-cleanup-1",
     });
     assert.equal(preparedInput.request.snapshot["file_count"], 2);
     assert.equal(preparedInput.request.snapshot["total_size"], 6);
@@ -76,6 +77,7 @@ test("cleanup preflight returns an exact manifest and approved execution quarant
       projectRoot,
       targets: [cache],
       subject,
+      threadKey: "thread-cleanup-1",
     });
     const completed = await service.execute(
       prepared.approval.approval_id,

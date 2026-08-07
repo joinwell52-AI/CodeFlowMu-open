@@ -71,6 +71,7 @@ export function createControlledExecutorRegistry(
         mode?: "quarantine" | "permanent_delete";
         retention_days?: number;
         reason?: string;
+        thread_key?: string;
       };
       return buildFilesystemCleanupApprovalInput({
         projectRoot: opts.projectRoot(),
@@ -79,6 +80,7 @@ export function createControlledExecutorRegistry(
         mode: input.mode ?? "quarantine",
         retentionDays: input.retention_days ?? 14,
         reason: input.reason,
+        threadKey: input.thread_key,
       });
     },
     preview(raw: unknown) { return { executor: "filesystem.cleanup", ...(raw as object) }; },
@@ -90,6 +92,7 @@ export function createControlledExecutorRegistry(
         mode: String(scope(record)["mode"] ?? "quarantine") === "permanent_delete" ? "permanent_delete" : "quarantine",
         retentionDays: Number(scope(record)["retention_days"] ?? 14),
         reason: record.reason,
+        threadKey: record.thread_key,
       });
       return current.request;
     },

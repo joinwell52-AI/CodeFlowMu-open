@@ -65,6 +65,29 @@ export class SessionLeaseStore {
     }
   }
 
+  /**
+   * Read-only lookup used by queue reconciliation after a Runtime restart.
+   * `owners` only contains leases acquired by this process, so it cannot be
+   * used as the liveness source of truth for a persisted `running` Session.
+   */
+  async inspectOwner(ownerSessionId: string): Promise<SessionLeaseRecord | null> {
+    const owner = String(ownerSessionId ?? "").trim();
+    if (!owner) return null;
+    let names: string[];
+    try {
+      names = await fs.readdir(this.options.dir);
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") return null;
+      throw error;
+    }
+    for (const name of names) {
+      if (!name.endsWith(".json")) continue;
+      const record = await this.read(join(this.options.dir, name));
+      if (record?.owner_session_id === owner) return record;
+    }
+    return null;
+  }
+
   async acquire(key: SessionLeaseKey, ownerSessionId: string): Promise<SessionLeaseRecord> {
     await fs.mkdir(this.options.dir, { recursive: true });
     const path = join(this.options.dir, leaseFilename(key));

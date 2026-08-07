@@ -67,6 +67,7 @@ function request(overrides: RequestOverrides = {}): CapabilityRequest {
 function prepare(service: OperationApprovalService, req = request()) {
   return service.prepare({
     request: req,
+    thread_key: "thread-1",
     reason: "需要推送已验证的分支",
     effects: ["远端分支将更新"],
     non_effects: ["不会合并，也不会发布"],
@@ -77,6 +78,29 @@ function prepare(service: OperationApprovalService, req = request()) {
 function tempRoot(): string {
   return mkdtempSync(join(tmpdir(), "cfm-operation-approval-"));
 }
+
+test("agent approval is not queued when decision-delivery routing is incomplete", () => {
+  const root = tempRoot();
+  try {
+    const service = new OperationApprovalService({ projectRoot: root });
+    assert.throws(
+      () => service.prepare({
+        request: request(),
+        reason: "real external write",
+        effects: ["NEG.EXTERNAL.WRITE"],
+        non_effects: ["operation not executed"],
+        recovery: "retry after a routable decision",
+      }),
+      (error: unknown) =>
+        error instanceof OperationApprovalError &&
+        error.code === "APPROVAL_ROUTING_INCOMPLETE",
+    );
+    assert.equal(service.list().length, 0);
+    assert.match(readFileSync(join(root, ".codeflowmu", "operation-approvals", "audit.jsonl"), "utf-8"), /operation\.approval_routing_incomplete/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("classifier requires approval for every deterministic high-impact effect class", () => {
   const mapping = [
@@ -341,6 +365,7 @@ test("expired approval and invalid token both fail before executor invocation", 
     });
     const prepared = service.prepare({
       request: request(),
+      thread_key: "thread-1",
       reason: "需要推送已验证的分支",
       effects: ["远端分支将更新"],
       non_effects: ["不会合并，也不会发布"],

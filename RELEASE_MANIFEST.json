@@ -3,7 +3,7 @@
   "edition": "open-dev-team",
   "productName": "CodeFlowMu Open Dev Team Edition",
   "positioning": "A multi-agent development team application governed by the FCoP protocol and driven through Cursor SDK interfaces.",
-  "motherVersion": "V1.2.26",
+  "motherVersion": "V1.2.27",
   "features": [
     {
       "id": "fcop-development-team",
@@ -542,10 +542,12 @@
           "packages/codeflowmu-runtime/src/scheduler/LifecycleGovernor.ts",
           "packages/codeflowmu-runtime/src/scheduler/RuntimeTaskControlTools.ts",
           "packages/codeflowmu-runtime/src/scheduler/TaskDispatchStall.ts",
+          "packages/codeflowmu-runtime/src/pm/agentTaskQueue.ts",
           "packages/codeflowmu-runtime/src/scheduler/__tests__/DispatchAttemptStore.test.ts",
           "packages/codeflowmu-runtime/src/scheduler/__tests__/DownstreamAutoNudge.test.ts",
           "packages/codeflowmu-runtime/src/scheduler/__tests__/RuntimeTaskControlTools.test.ts",
-          "packages/codeflowmu-runtime/src/scheduler/__tests__/TaskDispatchStall.test.ts"
+          "packages/codeflowmu-runtime/src/scheduler/__tests__/TaskDispatchStall.test.ts",
+          "packages/codeflowmu-runtime/src/scheduler/__tests__/TaskDispatcher.agentQueue.test.ts"
         ]
       },
       {
@@ -558,9 +560,12 @@
           "docs/skills/agent-skills.manifest.json",
           "docs/skills/pm-planning-governance.md",
           "docs/skills/pm-skills-mapping.md",
+          "codeflowmu-shell/src/__tests__/pm-planning-panel-ui.test.ts",
           "packages/codeflowmu-runtime/src/pm/LongHorizonPlanning.ts",
           "packages/codeflowmu-runtime/src/pm/PlanningGateStore.ts",
+          "packages/codeflowmu-runtime/src/pm/PlanningStageReview.ts",
           "packages/codeflowmu-runtime/src/pm/__tests__/LongHorizonPlanning.test.ts",
+          "packages/codeflowmu-runtime/src/pm/__tests__/PlanningStageReview.test.ts",
           "skills/README.md",
           "skills/README.zh.md",
           "skills/pm-long-horizon-planning/**"
@@ -754,8 +759,8 @@
   },
   "sourceRepository": "joinwell52-AI/codeflowmu1.2.21",
   "targetRepository": "joinwell52-AI/CodeFlowMu-open",
-  "version": "V1.2.26-open",
-  "npmVersion": "1.2.26-open",
+  "version": "V1.2.27-open",
+  "npmVersion": "1.2.27-open",
   "status": "public-open",
   "releaseChannel": "open",
   "updatePolicy": {
@@ -796,10 +801,10 @@
     "mustNotShareRuntimeState": true,
     "mustNotShareWorkspaceState": true
   },
-  "builtAt": "2026-08-07T10:12:41.214Z",
+  "builtAt": "2026-08-07T14:00:18.110Z",
   "sourceRoot": ".",
   "outputRoot": "release/open-dev-team/CodeFlowMu",
-  "sourceGitCommit": "a27357c963a49554b4a5862a737b39e4b936c150",
+  "sourceGitCommit": "31d44b5856e1aa95a4f69677915e261880873168",
   "sourceGitBranch": "main",
   "sourceDirty": false,
   "sourceDirtyPaths": [],
@@ -1402,7 +1407,7 @@
   ],
   "buildTool": {
     "path": "scripts/build-open-dev-team.mjs",
-    "sha256": "8edf4352888d08e9ee62bc5ea9326f35e82f608d11eee6edac915d2546eaa705"
+    "sha256": "5b639c4b5e7f061af678651e04c967aeb031a2f8484df12fd852b952dd658662"
   },
   "included": [
     "LICENSE",
@@ -2037,6 +2042,7 @@
     "packages/codeflowmu-runtime/src/lifecycle/__tests__/TransitionRecorder.test.ts",
     "packages/codeflowmu-runtime/src/lifecycle/__tests__/authorityDefaults.test.ts",
     "packages/codeflowmu-runtime/src/lifecycle/__tests__/childTaskArchiveGate.test.ts",
+    "packages/codeflowmu-runtime/src/lifecycle/__tests__/compactDuplicateRuntimeHistory.test.ts",
     "packages/codeflowmu-runtime/src/lifecycle/__tests__/helpers.ts",
     "packages/codeflowmu-runtime/src/lifecycle/__tests__/reconcileReworkSuperseded.test.ts",
     "packages/codeflowmu-runtime/src/lifecycle/__tests__/repairMisplacedArchive.test.ts",
@@ -2045,6 +2051,7 @@
     "packages/codeflowmu-runtime/src/lifecycle/authorityDefaults.ts",
     "packages/codeflowmu-runtime/src/lifecycle/childTaskArchiveGate.ts",
     "packages/codeflowmu-runtime/src/lifecycle/closedParentResidue.ts",
+    "packages/codeflowmu-runtime/src/lifecycle/compactDuplicateRuntimeHistory.ts",
     "packages/codeflowmu-runtime/src/lifecycle/index.ts",
     "packages/codeflowmu-runtime/src/lifecycle/reconcileReworkSuperseded.ts",
     "packages/codeflowmu-runtime/src/lifecycle/repairMisplacedArchive.ts",
@@ -2073,6 +2080,7 @@
     "packages/codeflowmu-runtime/src/pm/PlanningGateStore.ts",
     "packages/codeflowmu-runtime/src/pm/PlanningGrantStore.ts",
     "packages/codeflowmu-runtime/src/pm/PlanningRuntimeIdentity.ts",
+    "packages/codeflowmu-runtime/src/pm/PlanningStageReview.ts",
     "packages/codeflowmu-runtime/src/pm/PmCoreCapabilities.ts",
     "packages/codeflowmu-runtime/src/pm/PmGovernanceActions.ts",
     "packages/codeflowmu-runtime/src/pm/PmGovernancePlanner.ts",
@@ -2089,6 +2097,7 @@
     "packages/codeflowmu-runtime/src/pm/UsageAggregator.ts",
     "packages/codeflowmu-runtime/src/pm/__tests__/LongHorizonPlanning.test.ts",
     "packages/codeflowmu-runtime/src/pm/__tests__/PlanningGrantStore.test.ts",
+    "packages/codeflowmu-runtime/src/pm/__tests__/PlanningStageReview.test.ts",
     "packages/codeflowmu-runtime/src/pm/__tests__/PmCoreCapabilities.test.ts",
     "packages/codeflowmu-runtime/src/pm/__tests__/PmGovernanceActions.test.ts",
     "packages/codeflowmu-runtime/src/pm/__tests__/PmGovernancePlanner.auto-review.test.ts",
@@ -2674,14 +2683,16 @@
   ],
   "warnings": [],
   "releaseNotes": {
-    "version": "V1.2.26-open",
+    "version": "V1.2.27-open",
     "date": "2026-08-07",
     "tasks": [
       "TASK-20260803-001"
     ],
-    "title": "CodeFlowMu 开源版本 V1.2.25-open",
+    "title": "CodeFlowMu Open V1.2.27 规划授权与发布闭包修复",
     "changes": [
-      "发布开源版本"
+      "发布 CodeFlowMu Open V1.2.27-open。",
+      "修复 PM FIFO 失活消费者恢复、外部写事实识别以及规划审批与阶段审批两级授权。",
+      "修复 Open 审批过滤遗漏 PlanningStageReview 与 agentTaskQueue 更新的问题，并加强多行 import/export 依赖闭包和关键导出校验。"
     ],
     "affected": [
       "CodeFlowMu",
@@ -2694,7 +2705,7 @@
   "approvalFiltering": {
     "policy": "deny_unregistered_mother_changes",
     "baselineRepository": "joinwell52-AI/CodeFlowMu-open",
-    "baselineCommit": "2b3739129ed620c3c2520fe5bc227c1bc846a5f4",
+    "baselineCommit": "2ec5d0948081aff49b50950c1b5fc7ab7a78068a",
     "firstRelease": false,
     "filteredCount": 68,
     "evaluatedPaths": [
@@ -2725,18 +2736,18 @@
       "codeflowmu-shell/src/__tests__/bounded-server-close.test.ts",
       "codeflowmu-shell/src/__tests__/eval-promotion.test.ts",
       "codeflowmu-shell/src/__tests__/gateway-pwa-apps.test.ts",
-      "codeflowmu-shell/src/__tests__/issue-enrichment.test.ts",
       "codeflowmu-shell/src/__tests__/mobile-task-timeline.test.ts",
       "codeflowmu-shell/src/__tests__/panel-git-remote-status.test.ts",
       "codeflowmu-shell/src/__tests__/panel-issue-closure-browser.test.ts",
       "codeflowmu-shell/src/__tests__/panel-issue-closure-simple.test.ts",
       "codeflowmu-shell/src/__tests__/panel-settings-thinking-safe-area.test.ts",
+      "codeflowmu-shell/src/__tests__/pm-planning-panel-ui.test.ts",
       "codeflowmu-shell/src/__tests__/pm-runtime-session-mcp.test.ts",
       "codeflowmu-shell/src/__tests__/task-timeline-tab.test.ts",
       "codeflowmu-shell/src/__tests__/ui-i18n-completeness.test.ts",
       "codeflowmu-shell/src/config.ts",
+      "codeflowmu-shell/src/controlled-executor-registry.ts",
       "codeflowmu-shell/src/eval-promotion.ts",
-      "codeflowmu-shell/src/issue-enrichment.ts",
       "codeflowmu-shell/src/mobile/gatewayPwaApps.ts",
       "codeflowmu-shell/src/mobile/mobileEvents.ts",
       "codeflowmu-shell/src/mobile/mobileListMappers.ts",
@@ -2770,14 +2781,31 @@
       "packages/codeflowmu-runtime/src/alerts/RuntimeAlertManager.ts",
       "packages/codeflowmu-runtime/src/alerts/__tests__/RuntimeAlertManager.test.ts",
       "packages/codeflowmu-runtime/src/alerts/alert-taxonomy.ts",
+      "packages/codeflowmu-runtime/src/approval/FilesystemCleanupApproval.ts",
+      "packages/codeflowmu-runtime/src/approval/OperationApprovalService.ts",
+      "packages/codeflowmu-runtime/src/approval/OperationFacts.ts",
+      "packages/codeflowmu-runtime/src/approval/UnifiedOperationPolicy.ts",
+      "packages/codeflowmu-runtime/src/approval/__tests__/FilesystemCleanupApproval.test.ts",
+      "packages/codeflowmu-runtime/src/approval/__tests__/OperationApprovalService.test.ts",
+      "packages/codeflowmu-runtime/src/approval/__tests__/OperationFacts.test.ts",
       "packages/codeflowmu-runtime/src/index.ts",
       "packages/codeflowmu-runtime/src/ledger/__tests__/LedgerBuilder.test.ts",
       "packages/codeflowmu-runtime/src/ledger/__tests__/frontmatter.test.ts",
+      "packages/codeflowmu-runtime/src/lifecycle/__tests__/compactDuplicateRuntimeHistory.test.ts",
+      "packages/codeflowmu-runtime/src/lifecycle/compactDuplicateRuntimeHistory.ts",
+      "packages/codeflowmu-runtime/src/lifecycle/index.ts",
+      "packages/codeflowmu-runtime/src/pm/LongHorizonPlanning.ts",
+      "packages/codeflowmu-runtime/src/pm/PlanningGateStore.ts",
+      "packages/codeflowmu-runtime/src/pm/PlanningGrantStore.ts",
+      "packages/codeflowmu-runtime/src/pm/PlanningStageReview.ts",
       "packages/codeflowmu-runtime/src/pm/PmCoreCapabilities.ts",
       "packages/codeflowmu-runtime/src/pm/PmPlaybookSkillResolver.ts",
       "packages/codeflowmu-runtime/src/pm/ProductDeliveryRuntimeGate.ts",
+      "packages/codeflowmu-runtime/src/pm/__tests__/PlanningStageReview.test.ts",
       "packages/codeflowmu-runtime/src/pm/__tests__/PmPlaybookSkillResolver.test.ts",
       "packages/codeflowmu-runtime/src/pm/__tests__/PmSkillManifest.test.ts",
+      "packages/codeflowmu-runtime/src/pm/agentTaskQueue.ts",
+      "packages/codeflowmu-runtime/src/pm/index.ts",
       "packages/codeflowmu-runtime/src/pm/pmAdminRejectPrompt.ts",
       "packages/codeflowmu-runtime/src/registry/AgentSdkAdapter.ts",
       "packages/codeflowmu-runtime/src/registry/FcopToolOutcome.ts",
@@ -2790,9 +2818,12 @@
       "packages/codeflowmu-runtime/src/registry/writeReportTaskIdGuard.ts",
       "packages/codeflowmu-runtime/src/scheduler/TaskDispatcher.ts",
       "packages/codeflowmu-runtime/src/scheduler/__tests__/ReportWatcher.test.ts",
+      "packages/codeflowmu-runtime/src/scheduler/__tests__/TaskDispatcher.agentQueue.test.ts",
       "packages/codeflowmu-runtime/src/scheduler/__tests__/reportIssueTemplate.test.ts",
       "packages/codeflowmu-runtime/src/scheduler/reportIssueTemplate.ts",
+      "packages/codeflowmu-runtime/src/session/SessionLeaseStore.ts",
       "packages/codeflowmu-runtime/src/session/SessionManager.ts",
+      "packages/codeflowmu-runtime/src/session/__tests__/SessionManager.test.ts",
       "packages/codeflowmu-runtime/src/session/__tests__/sdk-failure-classifier.test.ts",
       "packages/codeflowmu-runtime/src/session/index.ts",
       "packages/codeflowmu-runtime/src/session/sdk-failure-classifier.ts",
@@ -2872,5 +2903,5 @@
     ]
   },
   "checksumFile": "SHA256SUMS",
-  "checksumCount": 1107
+  "checksumCount": 1111
 }

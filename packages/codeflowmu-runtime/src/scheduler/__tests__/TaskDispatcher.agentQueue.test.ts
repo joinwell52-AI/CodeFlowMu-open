@@ -38,6 +38,65 @@ function makeAgentSpec(overrides: Partial<Agent> = {}): Agent {
 }
 
 describe("TaskDispatcher agent FIFO queue", () => {
+  it("stale PM consumer is cancelled and the same queued task is dispatched automatically", async () => {
+    await withTempScheduler(async ({ rootDir, inboxDir, stateDir }) => {
+      const sdk = new InMemorySdkAdapter();
+      const registry = new AgentRegistry({
+        store: new JsonFileStore({ path: join(stateDir, "agents.json") }),
+        sdk,
+      });
+      const sessionManager = new SessionManager({
+        registry,
+        sdk,
+        sessionStore: new SessionStore({ dir: join(stateDir, "sessions") }),
+        transcriptWriter: new TranscriptWriter({ dir: join(stateDir, "transcripts") }),
+      });
+      const logger = quietLogger();
+      const dispatcher = new TaskDispatcher({
+        watcher: new InboxWatcher({ dir: inboxDir, logger }),
+        historyWriter: new StateHistoryWriter(),
+        registry,
+        sessionManager,
+        logger,
+        projectRoot: rootDir,
+      });
+      await registry.register(makeAgentSpec({ agent_id: "PM-01", role: "PM", layer: "leader" }));
+      sdk.sendHandleFactory = (spec) => new InMemoryRunHandle({
+        sessionId: spec.sessionId,
+        agentId: spec.agentId,
+        manualSettle: true,
+      });
+
+      const firstTaskId = "TASK-20260807-053";
+      const firstPath = join(inboxDir, `${firstTaskId}-ADMIN-to-PM.md`);
+      await writeFile(firstPath, `---\nprotocol: fcop\ntask_id: ${firstTaskId}\nsender: ADMIN\nrecipient: PM\npriority: P2\nstate: inbox\n---\n\n# first\n`, "utf-8");
+      assert.equal((await dispatcher.dispatchTaskFromControlPlane(firstPath, `${firstTaskId}-ADMIN-to-PM.md`, "PM")).kind, "dispatched");
+      const staleSessionId = (await sessionManager.listActive())[0]!.protocol.session_id;
+      const originalAssess = sessionManager.assessSessionLiveness.bind(sessionManager);
+      sessionManager.assessSessionLiveness = async (record) =>
+        record.protocol.session_id === staleSessionId
+          ? { live: false, source: "missing_or_expired_lease", age_ms: 120_000 }
+          : originalAssess(record);
+
+      const queuedTaskId = "TASK-20260807-054";
+      const queuedPath = join(inboxDir, `${queuedTaskId}-ADMIN-to-PM.md`);
+      await writeFile(queuedPath, `---\nprotocol: fcop\ntask_id: ${queuedTaskId}\nsender: ADMIN\nrecipient: PM\npriority: P2\nstate: inbox\n---\n\n# queued\n`, "utf-8");
+      const recovered = await dispatcher.dispatchTaskFromControlPlane(
+        queuedPath,
+        `${queuedTaskId}-ADMIN-to-PM.md`,
+        "PM",
+      );
+      assert.equal(recovered.kind, "dispatched");
+      const active = await sessionManager.listActive();
+      assert.equal(active.length, 1);
+      assert.equal(active[0]!.protocol.task_id, queuedTaskId);
+      assert.ok(logger.warns.some((line) => line.includes("stalled_queue_entry")));
+      const queue = await loadAgentTaskQueue(rootDir);
+      assert.equal(queue.agents["PM-01"]?.running?.task_id, queuedTaskId);
+      assert.equal(queue.agents["PM-01"]?.queue.length, 0);
+    });
+  });
+
   it("stale persisted busy state is cleared when no active session exists", async () => {
     await withTempScheduler(async ({ rootDir, inboxDir, stateDir }) => {
       const govDir = join(rootDir, ".codeflowmu", "pm-governance");
@@ -261,6 +320,25 @@ state: inbox
       assert.equal(
         logger.logs.filter((line) => line.includes("agent FIFO queued")).length,
         0,
+      );
+
+      const queuedFileBefore = await readFile(secondPath, "utf-8");
+      const queueRawBefore = await readFile(agentTaskQueuePath(rootDir), "utf-8");
+      for (let scan = 0; scan < 100; scan += 1) {
+        const observed = await dispatcher.dispatchTaskFromControlPlane(
+          secondPath,
+          `${queuedTaskId}-PM-to-DEV.md`,
+          "DEV",
+        );
+        assert.equal(observed.kind, "already_dispatched");
+        if (observed.kind === "already_dispatched") {
+          assert.equal(observed.queue_state, "duplicate_scan");
+        }
+      }
+      assert.equal(await readFile(secondPath, "utf-8"), queuedFileBefore);
+      assert.equal(await readFile(agentTaskQueuePath(rootDir), "utf-8"), queueRawBefore);
+      assert.ok(
+        logger.logs.filter((line) => line.includes("already in agent FIFO queue")).length <= 1,
       );
 
       const duplicateOutcome = await dispatcher.dispatchTaskFromControlPlane(
