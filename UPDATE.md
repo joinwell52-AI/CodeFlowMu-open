@@ -14,6 +14,8 @@ The update process must preserve:
 - `node_modules/`
 - `.venv/` and `venv/`
 - `.env` and `.env.*`
+- `.codeflowmu/instance.json`
+- `.codeflowmu/projects-registry.json`
 - `projects/`
 - legacy `workspace/`
 - external project roots outside `CodeFlowMu-open`

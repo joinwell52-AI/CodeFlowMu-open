@@ -1166,7 +1166,7 @@ Recovery succeeded while the mother root cause remains open.
     const promotionSummary = await request(app)
       .get("/api/v2/mobile/issues/promotions")
       .set("Authorization", `Bearer ${token}`);
-    assert.equal(promotionSummary.status, 200);
+    assert.equal(promotionSummary.status, 200, JSON.stringify(promotionSummary.body));
     assert.equal(promotionSummary.body.promotions.length, 1);
     assert.equal(promotionSummary.body.promotions[0].promotion_id, promotionId);
     const history = await request(app)

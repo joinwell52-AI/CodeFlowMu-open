@@ -3,16 +3,34 @@
   "productName": "CodeFlowMu Open Dev Team Edition",
   "positioning": "A multi-agent development team application governed by the FCoP protocol and driven through Cursor SDK interfaces.",
   "edition": "open-dev-team",
-  "version": "V1.2.23-open",
-  "npmVersion": "1.2.23-open",
+  "version": "V1.2.24-open",
+  "npmVersion": "1.2.24-open",
   "releaseChannel": "open",
   "status": "public-open",
   "sourceRepository": "joinwell52-AI/codeflowmu1.2.21",
   "targetRepository": "joinwell52-AI/CodeFlowMu-open",
-  "builtAt": "2026-08-07T05:00:29.602Z",
-  "sourceGitCommit": "0dd7a55b8f89424a45c6240e2c5810608b4d1beb",
+  "builtAt": "2026-08-07T06:01:17.300Z",
+  "sourceGitCommit": "c1b2b93a2aed9af5990aab9dfc550cf48b01ee6c",
   "sourceDirty": false,
-  "motherVersion": "V1.2.23",
+  "motherVersion": "V1.2.24",
+  "releaseNotes": {
+    "version": "V1.2.24-open",
+    "date": "2026-08-07",
+    "tasks": [
+      "TASK-20260803-001"
+    ],
+    "title": "CodeFlowMu 开源版本 V1.2.23-open",
+    "changes": [
+      "发布新的开源版本"
+    ],
+    "affected": [
+      "CodeFlowMu",
+      "Shell",
+      "Runtime",
+      "Mobile API",
+      "Open Edition"
+    ]
+  },
   "features": [
     {
       "id": "fcop-development-team",
@@ -222,6 +240,8 @@
       "venv/",
       ".env",
       ".env.*",
+      ".codeflowmu/instance.json",
+      ".codeflowmu/projects-registry.json",
       "projects/",
       "workspace/ (legacy project collection)",
       "external project roots outside CodeFlowMu-open"

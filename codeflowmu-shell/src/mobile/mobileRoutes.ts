@@ -19,7 +19,6 @@ import {
   issueClosureErrorResponse,
 } from "../issue-closure.ts";
 import {
-  buildIssueGithubApprovalInput,
   generateIssuePromotionBundle,
   listIssuePromotions,
   loadIssuePromotionConfig,
@@ -1270,7 +1269,13 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
       let promotionTarget: Record<string, unknown>;
       try {
         const config = loadIssuePromotionConfig(ctx.getProjectRoot());
-        promotionTarget = { ok: true, target_repo: config.target_repo, source: config.source };
+        promotionTarget = {
+          ok: true,
+          target_repo: config.target_repo,
+          visibility_policy: config.visibility_policy,
+          labels: config.labels,
+          source: config.source,
+        };
       } catch (error) {
         const out = issueClosureErrorResponse(error);
         promotionTarget = { ok: false, code: out.code, message: out.message, ...(out.details && typeof out.details === "object" ? out.details as Record<string, unknown> : {}) };
@@ -1367,19 +1372,13 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
     }
   });
 
-  router.post("/issues/promotion/:promotionId/github/prepare", (req: Request, res: Response) => {
-    try {
-      const preparedInput = buildIssueGithubApprovalInput({
-        projectRoot: ctx.getProjectRoot(),
-        promotion_id: String(req.params["promotionId"] ?? ""),
-        actor: String(req.body?.actor ?? ""),
-      });
-      const prepared = mobileApprovalService(ctx).prepare(preparedInput);
-      res.status(prepared.decision === "REQUIRE_APPROVAL" ? 202 : 200).json({ ok: true, ...prepared });
-    } catch (error) {
-      const out = issueClosureErrorResponse(error);
-      res.status(out.status).json({ ok: false, error: out.message, code: out.code, details: out.details });
-    }
+  router.post("/issues/promotion/:promotionId/github/prepare", async (req: Request, res: Response) => {
+    const proxied = await proxyPanelPost(
+      ctx.panelPort,
+      `/api/v2/issues/promotion/${encodeURIComponent(String(req.params["promotionId"] ?? ""))}/github/prepare`,
+      req.body ?? {},
+    );
+    res.status(proxied.status).json(proxied.body);
   });
 
   router.get("/approvals", async (req: Request, res: Response) => {

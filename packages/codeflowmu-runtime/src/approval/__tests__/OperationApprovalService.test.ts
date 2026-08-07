@@ -166,11 +166,60 @@ test("prepare is side-effect free and approval can execute the exact digest only
     assert.equal(completed.status, "succeeded");
     assert.equal(targetChanged, true);
     assert.equal(completed.execution.evidence.length, 1);
+    assert.equal(completed.authorization?.status, "consumed");
+    assert.ok(completed.authorization?.consumed_at);
 
     await assert.rejects(
       () => service.execute(prepared.approval.approval_id, approved.execution_token, request(), async () => ({})),
       (error: unknown) => error instanceof OperationApprovalError && error.code === "APPROVAL_ALREADY_CONSUMED",
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an approved direct user operation can resume with a rotated one-time token", async () => {
+  const root = tempRoot();
+  try {
+    const service = new OperationApprovalService({ projectRoot: root, idFactory: () => "APPROVAL-USER-RESUME-1" });
+    const input = request({
+      context: {
+        workspace: root,
+        environment: "local_desktop",
+        initiated_by: "user",
+        authorization_source: "none",
+      },
+      subject: {
+        actor: "PANEL-USER",
+        role: "ADMIN",
+        project_id: "project-a",
+        agent_id: undefined,
+        session_id: undefined,
+        task_id: undefined,
+      },
+    });
+    const prepared = service.prepare({
+      request: input,
+      reason: "publish one exact public issue",
+      effects: ["one external issue write"],
+      non_effects: ["no source issue lifecycle change"],
+      recovery: "retry after repairing GitHub access",
+      rule_ids: ["NEG.EXTERNAL.WRITE"],
+    });
+    if (prepared.decision !== "REQUIRE_APPROVAL") assert.fail("approval expected");
+    service.approve(prepared.approval.approval_id, "ADMIN", "approved exact public content");
+
+    const resumed = service.reissueExecutionTokenForApproved(prepared.approval.approval_id, "ADMIN");
+    const completed = await service.execute(
+      prepared.approval.approval_id,
+      resumed.execution_token,
+      input,
+      async () => ({ evidence: [{ issue_url: "https://github.com/example/public/issues/1" }] }),
+    );
+
+    assert.equal(completed.status, "succeeded");
+    assert.equal(completed.authorization?.status, "consumed");
+    assert.equal(completed.execution.evidence[0]?.issue_url, "https://github.com/example/public/issues/1");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

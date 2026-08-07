@@ -3,7 +3,7 @@
   "edition": "open-dev-team",
   "productName": "CodeFlowMu Open Dev Team Edition",
   "positioning": "A multi-agent development team application governed by the FCoP protocol and driven through Cursor SDK interfaces.",
-  "motherVersion": "V1.2.23",
+  "motherVersion": "V1.2.24",
   "features": [
     {
       "id": "fcop-development-team",
@@ -593,7 +593,7 @@
       {
         "id": "issue-closure-evidence-promotion",
         "productPolicy": "open-core",
-        "description": "提供 ISSUE 结构化结案、不可变历史、显式 TASK 解阻、本地脱敏母版证据包及 ADMIN 审批后的受控 GitHub Issue 发布。",
+        "description": "提供 ISSUE 结构化结案、本地公开草稿、GitHub 登录与公共目标预检、ADMIN 审批后直接受控发布、幂等回执及失败恢复。",
         "paths": [
           "codeflowmu-shell/src/issue-closure.ts",
           "codeflowmu-shell/src/issue-enrichment.ts",
@@ -754,8 +754,8 @@
   },
   "sourceRepository": "joinwell52-AI/codeflowmu1.2.21",
   "targetRepository": "joinwell52-AI/CodeFlowMu-open",
-  "version": "V1.2.23-open",
-  "npmVersion": "1.2.23-open",
+  "version": "V1.2.24-open",
+  "npmVersion": "1.2.24-open",
   "status": "public-open",
   "releaseChannel": "open",
   "updatePolicy": {
@@ -767,6 +767,8 @@
       "venv/",
       ".env",
       ".env.*",
+      ".codeflowmu/instance.json",
+      ".codeflowmu/projects-registry.json",
       "projects/",
       "workspace/ (legacy project collection)",
       "external project roots outside CodeFlowMu-open"
@@ -794,10 +796,10 @@
     "mustNotShareRuntimeState": true,
     "mustNotShareWorkspaceState": true
   },
-  "builtAt": "2026-08-07T05:00:29.602Z",
+  "builtAt": "2026-08-07T06:01:17.300Z",
   "sourceRoot": ".",
   "outputRoot": "release/open-dev-team/CodeFlowMu",
-  "sourceGitCommit": "0dd7a55b8f89424a45c6240e2c5810608b4d1beb",
+  "sourceGitCommit": "c1b2b93a2aed9af5990aab9dfc550cf48b01ee6c",
   "sourceGitBranch": "main",
   "sourceDirty": false,
   "sourceDirtyPaths": [],
@@ -1400,7 +1402,7 @@
   ],
   "buildTool": {
     "path": "scripts/build-open-dev-team.mjs",
-    "sha256": "4865bb01918e75c465670ddf4483e6bbbd9e1eb4634e0cd41d04023506b5f1e9"
+    "sha256": "8edf4352888d08e9ee62bc5ea9326f35e82f608d11eee6edac915d2546eaa705"
   },
   "included": [
     "LICENSE",
@@ -2671,10 +2673,28 @@
     "**/__pycache__/**"
   ],
   "warnings": [],
+  "releaseNotes": {
+    "version": "V1.2.24-open",
+    "date": "2026-08-07",
+    "tasks": [
+      "TASK-20260803-001"
+    ],
+    "title": "CodeFlowMu 开源版本 V1.2.23-open",
+    "changes": [
+      "发布新的开源版本"
+    ],
+    "affected": [
+      "CodeFlowMu",
+      "Shell",
+      "Runtime",
+      "Mobile API",
+      "Open Edition"
+    ]
+  },
   "approvalFiltering": {
     "policy": "deny_unregistered_mother_changes",
     "baselineRepository": "joinwell52-AI/CodeFlowMu-open",
-    "baselineCommit": "0c1507bb8a597bb3d5b04df7f2decfb46c267dec",
+    "baselineCommit": "9936c94d809caa35061197811224e8fa39fc9229",
     "firstRelease": false,
     "filteredCount": 68,
     "evaluatedPaths": [
@@ -2686,6 +2706,7 @@
       "RELEASE_MANIFEST.json",
       "SHA256SUMS",
       "START-CODEFLOWMU-OPEN.bat",
+      "UPDATE.md",
       "VERSION.json",
       "VERSION_HISTORY.json",
       "codeflowmu-desktop/mobile/icon.svg",
@@ -2708,6 +2729,7 @@
       "codeflowmu-shell/src/__tests__/fcop-bootstrap-transaction.test.ts",
       "codeflowmu-shell/src/__tests__/gateway-pwa-apps.test.ts",
       "codeflowmu-shell/src/__tests__/issue-closure.test.ts",
+      "codeflowmu-shell/src/__tests__/mobile-api.test.ts",
       "codeflowmu-shell/src/__tests__/mobile-task-timeline.test.ts",
       "codeflowmu-shell/src/__tests__/panel-git-remote-status.test.ts",
       "codeflowmu-shell/src/__tests__/panel-issue-closure-browser.test.ts",
@@ -2717,8 +2739,8 @@
       "codeflowmu-shell/src/__tests__/task-timeline-tab.test.ts",
       "codeflowmu-shell/src/__tests__/ui-i18n-completeness.test.ts",
       "codeflowmu-shell/src/config.ts",
+      "codeflowmu-shell/src/controlled-executor-registry.ts",
       "codeflowmu-shell/src/eval-promotion.ts",
-      "codeflowmu-shell/src/fcop-bootstrap-transaction.ts",
       "codeflowmu-shell/src/issue-closure.ts",
       "codeflowmu-shell/src/issue-promotion.ts",
       "codeflowmu-shell/src/mobile/gatewayPwaApps.ts",
@@ -2735,6 +2757,8 @@
       "docs/images/task-010r-a/03-task-detail.png",
       "docs/images/task-010r-a/04-chat.png",
       "docs/images/task-010r-a/05-my-settings.png",
+      "docs/open/help.md",
+      "docs/open/help.zh.md",
       "fcop_sdk/__init__.py",
       "fcop_sdk/kernel.py",
       "package-lock.json",
@@ -2755,6 +2779,8 @@
       "packages/codeflowmu-runtime/src/alerts/RuntimeAlertManager.ts",
       "packages/codeflowmu-runtime/src/alerts/__tests__/RuntimeAlertManager.test.ts",
       "packages/codeflowmu-runtime/src/alerts/alert-taxonomy.ts",
+      "packages/codeflowmu-runtime/src/approval/OperationApprovalService.ts",
+      "packages/codeflowmu-runtime/src/approval/__tests__/OperationApprovalService.test.ts",
       "packages/codeflowmu-runtime/src/index.ts",
       "packages/codeflowmu-runtime/src/ledger/__tests__/LedgerBuilder.test.ts",
       "packages/codeflowmu-runtime/src/ledger/__tests__/frontmatter.test.ts",

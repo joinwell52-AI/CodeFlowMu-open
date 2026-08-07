@@ -34,7 +34,7 @@ import {
   unlinkSync,
   renameSync,
 } from "node:fs";
-import { execFile as execFileCb, exec as execCb, spawn as spawnProc } from "node:child_process";
+import { execFile as execFileCb, exec as execCb, execFileSync, spawn as spawnProc } from "node:child_process";
 import { promisify } from "node:util";
 import * as os from "node:os";
 import { CursorUsageSyncer } from "./cursor-usage-syncer.ts";
@@ -45,12 +45,15 @@ import {
   issueClosureErrorResponse,
 } from "./issue-closure.ts";
 import {
-  buildIssueGithubApprovalInput,
+  getGithubAuthenticationStatus,
   exportIssuePromotionBundle,
   generateIssuePromotionBundle,
   listIssuePromotions,
   loadIssuePromotionConfig,
+  prepareIssueGithubApprovalInput,
   readIssuePromotion,
+  syncIssuePromotionApprovalStatus,
+  type IssueGithubExecutorDependencies,
 } from "./issue-promotion.ts";
 import {
   fcopV3Paths,
@@ -4132,6 +4135,8 @@ export function buildWebPanelApp(
      * confirmation dialog; tests may inject a deterministic decision.
      */
     trustedForegroundConfirmation?: (input: { title: string; message: string }) => Promise<boolean>;
+    /** Test seam for public GitHub Issue target preflight and creation. */
+    issueGithubExecutorDependencies?: IssueGithubExecutorDependencies;
   } = {},
 ): ReturnType<typeof express> {
   const app = express();
@@ -9751,15 +9756,52 @@ export function buildWebPanelApp(
       let promotionTarget: Record<string, unknown>;
       try {
         const config = loadIssuePromotionConfig(projectRoot());
-        promotionTarget = { ok: true, target_repo: config.target_repo, source: config.source };
+        promotionTarget = {
+          ok: true,
+          target_repo: config.target_repo,
+          visibility_policy: config.visibility_policy,
+          labels: config.labels,
+          source: config.source,
+        };
       } catch (error) {
         const out = issueClosureErrorResponse(error);
         promotionTarget = { ok: false, code: out.code, message: out.message, ...(out.details && typeof out.details === "object" ? out.details as Record<string, unknown> : {}) };
       }
-      res.json({ promotions, _meta: { count: promotions.length, promotion_target: promotionTarget } });
+      res.json({
+        promotions,
+        _meta: {
+          count: promotions.length,
+          promotion_target: promotionTarget,
+          github_auth: getGithubAuthenticationStatus(),
+        },
+      });
     } catch (err) {
       const out = issueClosureErrorResponse(err);
       sendError(res, out.status, out.code, out.message, out.details);
+    }
+  });
+
+  app.get("/api/v2/github/issue-publisher/status", (_req: Request, res: Response) => {
+    res.json({ ok: true, ...getGithubAuthenticationStatus() });
+  });
+
+  app.post("/api/v2/github/connect", (_req: Request, res: Response) => {
+    try {
+      execFileSync("gh", ["--version"], { encoding: "utf8", timeout: 10_000, windowsHide: true });
+      const child = spawnProc(
+        "gh",
+        ["auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web"],
+        { detached: true, stdio: "ignore", windowsHide: false },
+      );
+      child.on("error", () => undefined);
+      child.unref();
+      res.status(202).json({
+        ok: true,
+        status: "login_started",
+        message: "已启动 GitHub 浏览器登录。完成授权后返回此页面刷新状态。",
+      });
+    } catch (error) {
+      sendError(res, 503, "GITHUB_CLI_UNAVAILABLE", `无法启动 GitHub 登录：${error instanceof Error ? error.message : String(error)}`);
     }
   });
 
@@ -9872,15 +9914,43 @@ export function buildWebPanelApp(
     }
   });
 
-  app.post("/api/v2/issues/promotion/:promotionId/github/prepare", (req: Request, res: Response) => {
+  app.post("/api/v2/issues/promotion/:promotionId/github/prepare", async (req: Request, res: Response) => {
     try {
-      const preparedInput = buildIssueGithubApprovalInput({
+      const promotionId = String(req.params["promotionId"] ?? "");
+      const existingPromotion = readIssuePromotion(projectRoot(), promotionId);
+      if (existingPromotion.target_issue_url || existingPromotion.status === "published") {
+        res.json({ ok: true, deduplicated: true, promotion: existingPromotion });
+        return;
+      }
+      const preparedInput = await prepareIssueGithubApprovalInput({
         projectRoot: projectRoot(),
-        promotion_id: String(req.params["promotionId"] ?? ""),
+        promotion_id: promotionId,
         actor: String(req.body?.actor ?? ""),
-      });
-      const prepared = operationApprovalService().prepare(preparedInput);
-      res.status(prepared.decision === "REQUIRE_APPROVAL" ? 202 : 200).json({ ok: true, ...prepared });
+      }, opts.issueGithubExecutorDependencies);
+      const service = operationApprovalService();
+      const prepared = service.prepare(preparedInput);
+      if (prepared.decision !== "REQUIRE_APPROVAL") {
+        res.status(200).json({ ok: true, ...prepared });
+        return;
+      }
+      await syncIssuePromotionApprovalStatus(prepared.approval);
+      if (prepared.approval.status === "approved" && prepared.approval.authorization?.status === "available") {
+        const resumed = service.reissueExecutionTokenForApproved(prepared.approval.approval_id, "ADMIN");
+        const execution = await executeApprovedGithubIssue(service, resumed.approval, resumed.execution_token);
+        res.status(execution.approval.status === "succeeded" ? 200 : 502).json({
+          ok: execution.approval.status === "succeeded",
+          decision: "REQUIRE_APPROVAL",
+          resumed: true,
+          approval: execution.approval,
+          promotion: execution.promotion,
+          ...(execution.approval.status === "succeeded" ? {} : {
+            code: String(execution.promotion?.publish_error_code ?? "GITHUB_ISSUE_PUBLISH_FAILED"),
+            message: String(execution.promotion?.publish_error ?? execution.approval.execution.error ?? "GitHub Issue 发布失败，可修复后重试。"),
+          }),
+        });
+        return;
+      }
+      res.status(202).json({ ok: true, ...prepared });
     } catch (err) {
       if (err instanceof OperationApprovalError) {
         sendOperationApprovalError(res, err);
@@ -9906,7 +9976,25 @@ export function buildWebPanelApp(
           projectRoot: projectRoot(),
           updates: updates as ReviewPolicyUpdates,
         }) as unknown as Promise<Record<string, unknown>>,
+      issueGithubDependencies: opts.issueGithubExecutorDependencies,
     });
+  }
+
+  async function executeApprovedGithubIssue(
+    service: OperationApprovalService,
+    approval: OperationApprovalRecord,
+    executionToken: string,
+  ): Promise<{ approval: OperationApprovalRecord; promotion: Record<string, unknown> | null }> {
+    const registry = manualControlledExecutorRegistry();
+    const currentRequest = await registry.recomputeRequest(approval);
+    const completed = await service.execute(
+      approval.approval_id,
+      executionToken,
+      currentRequest,
+      (record) => registry.execute(record),
+    );
+    const promotion = await syncIssuePromotionApprovalStatus(completed);
+    return { approval: completed, promotion };
   }
 
   async function resumeAfterOperationDecision(
@@ -10285,6 +10373,30 @@ export function buildWebPanelApp(
     if (decision === "approve") {
       const approvedResult = service.approve(id, "ADMIN", reason);
       const approved = approvedResult.approval;
+      if (
+        approved.request.action.executor === "github.issue.create"
+        && approved.initiator_type === "user"
+        && !approved.agent_id
+        && !approved.session_id
+        && !approved.task_id
+      ) {
+        await syncIssuePromotionApprovalStatus(approved);
+        const execution = await executeApprovedGithubIssue(service, approved, approvedResult.execution_token);
+        const succeeded = execution.approval.status === "succeeded";
+        return {
+          status: succeeded ? 200 : 502,
+          body: {
+            ok: succeeded,
+            approval: execution.approval,
+            promotion: execution.promotion,
+            recovery: { delivered: false, manual_user_operation: true, executed_directly: true },
+            ...(succeeded ? {} : {
+              code: String(execution.promotion?.publish_error_code ?? "GITHUB_ISSUE_PUBLISH_FAILED"),
+              error: String(execution.promotion?.publish_error ?? execution.approval.execution.error ?? "GitHub Issue 发布失败，可修复后重试。"),
+            }),
+          },
+        };
+      }
       if (row.initiator_type === "user" && !row.agent_id && !row.session_id && !row.task_id) {
         return {
           status: 200,
@@ -10300,6 +10412,7 @@ export function buildWebPanelApp(
       return { status: 200, body: { ok: true, approval: approved, recovery } };
     }
     const rejected = service.reject(id, "ADMIN", reason);
+    await syncIssuePromotionApprovalStatus(rejected);
     const recovery = await resumeAfterOperationDecision(rejected, "rejected");
     return { status: 200, body: { ok: true, approval: rejected, recovery } };
   }
@@ -10332,6 +10445,7 @@ export function buildWebPanelApp(
       const id = String(req.params["approvalId"] ?? "");
       const row = service.get(id);
       const cancelled = service.cancel(id, row.requested_by, String(req.body?.reason ?? ""));
+      await syncIssuePromotionApprovalStatus(cancelled);
       const recovery = await resumeAfterOperationDecision(cancelled, "revoked");
       res.json({ ok: true, approval: cancelled, recovery });
     } catch (err) { sendOperationApprovalError(res, err); }
@@ -10359,6 +10473,7 @@ export function buildWebPanelApp(
       }
       const currentRequest = await registry.recomputeRequest(row);
       const completed = await service.execute(id, token, currentRequest, (approval) => registry.execute(approval));
+      await syncIssuePromotionApprovalStatus(completed);
       res.status(completed.status === "failed" ? 500 : 200).json({ ok: completed.status === "succeeded", approval: completed });
     } catch (err) {
       sendOperationApprovalError(res, err);

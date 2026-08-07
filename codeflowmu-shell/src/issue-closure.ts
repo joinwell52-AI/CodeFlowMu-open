@@ -1097,7 +1097,18 @@ export function issueClosureErrorResponse(error: unknown): { status: number; cod
       ISSUE_CLOSE_AUTHORITY_REQUIRED: "当前操作者没有结案权限。",
       ISSUE_PROMOTION_SECRET_DETECTED: "证据中检测到敏感信息，已停止生成母版证据。",
       ISSUE_PROMOTION_REDACTION_FAILED: "证据脱敏检查未通过，已停止生成母版证据。",
-      GITHUB_TARGET_NOT_CONFIGURED: "未配置母版目标仓库，请检查 .codeflowmu/issue-promotion-target.json。",
+      GITHUB_TARGET_NOT_CONFIGURED: "未配置公共 Issue 目标仓库，请检查 .codeflowmu/issue-promotion-target.json。",
+      ISSUE_PROMOTION_PUBLIC_DRAFT_UNSAFE: "公开 Issue 草稿仍含内部标识、敏感信息或损坏内容，已禁止发布。",
+      GITHUB_PUBLICATION_DISABLED: "当前目标策略仅允许保留本地草稿。",
+      GITHUB_NOT_AUTHENTICATED: "尚未连接 GitHub，当前仅可预览草稿和下载证据包。",
+      GITHUB_CLI_UNAVAILABLE: "未安装 GitHub CLI，当前仅可本地查看和下载。",
+      GITHUB_REPO_ACCESS_DENIED: "当前 GitHub 身份无法访问目标仓库。",
+      GITHUB_ISSUE_PERMISSION_DENIED: "当前 GitHub 身份没有创建 Issue 所需的权限。",
+      GITHUB_ISSUES_DISABLED: "目标仓库已关闭 Issues。",
+      GITHUB_LABELS_MISSING: "目标仓库缺少配置标签，请移除标签、由管理员创建标签，或取消发布。",
+      GITHUB_INTERACTION_RESTRICTED: "当前 GitHub 身份受到仓库交互限制，暂时不能创建 Issue。",
+      GITHUB_NETWORK_FAILED: "无法连接 GitHub，请检查网络后重试。",
+      GITHUB_ISSUE_CREATE_FAILED: "GitHub Issue 创建失败，请修复外部条件后重试。",
     };
     return { status: error.httpStatus, code: error.code, message: zhMessages[error.code] ?? error.message, ...(error.details === undefined ? {} : { details: error.details }) };
   }

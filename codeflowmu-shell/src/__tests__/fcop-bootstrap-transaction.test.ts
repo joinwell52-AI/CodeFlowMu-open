@@ -42,7 +42,7 @@ function sourceFixture(): string {
   write(root, ".cursor/rules/fcop-protocol.mdc", "> Rules version: `3.2.5` · Protocol commentary version: `3.2.5`\n");
   write(root, "AGENTS.md", "rules 3.2.5\n");
   write(root, "CLAUDE.md", "rules 3.2.5\n");
-  write(root, ".codeflowmu/issue-promotion-target.json", `${JSON.stringify({ target_repo: "joinwell52-AI/codeflowmu1.2.21", labels: ["runtime", "evidence"] }, null, 2)}\n`);
+  write(root, ".codeflowmu/issue-promotion-target.json", `${JSON.stringify({ target_repo: "joinwell52-AI/CodeFlowMu-open", visibility_policy: "public_issue", labels: [] }, null, 2)}\n`);
   write(root, "fcop/LETTER-TO-ADMIN.md", "admin guide\n");
   write(root, "fcop/shared/TEAM-README.md", "team\n");
   write(root, "fcop/shared/TEAM-ROLES.md", "roles\n");
@@ -101,7 +101,7 @@ test("new initialization writes only the confirmed signed plan and passes digest
     assert.equal(agentSkills.common_skills.length, 58);
     assert.deepEqual(
       JSON.parse(readFileSync(join(target, ".codeflowmu", "issue-promotion-target.json"), "utf8")),
-      { target_repo: "joinwell52-AI/codeflowmu1.2.21", labels: ["runtime", "evidence"] },
+      { target_repo: "joinwell52-AI/CodeFlowMu-open", visibility_policy: "public_issue", labels: [] },
     );
     assert.equal(existsSync(join(target, ".codeflowmu", "instance.json")), false);
     assert.equal(existsSync(join(target, ".codeflowmu", "mobile-gateway.json")), false);
@@ -132,7 +132,7 @@ test("upgrade restores a missing promotion target but preserves an existing cust
     });
     assert.ok(missingUpgrade.create.some((row) => row.target_rel === ".codeflowmu/issue-promotion-target.json"));
     await new FcopInitTransaction(missingUpgrade).execute(missingUpgrade.plan_digest);
-    assert.equal(JSON.parse(readFileSync(configPath, "utf8")).target_repo, "joinwell52-AI/codeflowmu1.2.21");
+    assert.equal(JSON.parse(readFileSync(configPath, "utf8")).target_repo, "joinwell52-AI/CodeFlowMu-open");
 
     const custom = `${JSON.stringify({ target_repo: "example/private-mother", labels: ["custom"] }, null, 2)}\n`;
     writeFileSync(configPath, custom, "utf8");

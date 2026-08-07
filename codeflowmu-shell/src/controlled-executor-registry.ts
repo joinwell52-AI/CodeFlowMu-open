@@ -12,9 +12,11 @@ import {
   executeGitPushApproval,
 } from "./git-operation-approval.ts";
 import {
-  buildIssueGithubApprovalInput,
   executeIssueGithubApproval,
+  prepareIssueGithubApprovalInput,
+  publishIssuePromotionWithExecutor,
   recomputeIssueGithubApprovalRequest,
+  type IssueGithubExecutorDependencies,
 } from "./issue-promotion.ts";
 import {
   buildWorkspaceOperationApprovalInput,
@@ -29,6 +31,7 @@ type RegistryOptions = {
   gitRoot: () => string;
   buildReviewPolicyInput: (updates: Record<string, unknown>) => Promise<PrepareOperationInput>;
   saveReviewPolicy: (updates: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  issueGithubDependencies?: IssueGithubExecutorDependencies;
 };
 
 function scope(record: OperationApprovalRecord): Record<string, unknown> {
@@ -96,19 +99,25 @@ export function createControlledExecutorRegistry(
 
   registry.register({
     name: "github.issue.create",
-    prepare(raw: unknown) {
+    async prepare(raw: unknown) {
       const input = raw as { promotion_id: string; actor?: string };
-      return buildIssueGithubApprovalInput({
+      return prepareIssueGithubApprovalInput({
         projectRoot: opts.projectRoot(),
         promotion_id: input.promotion_id,
         actor: input.actor ?? "ADMIN",
-      });
+      }, opts.issueGithubDependencies);
     },
     preview(raw: unknown) {
       return { executor: "github.issue.create", ...(raw as object) };
     },
-    recomputeRequest: recomputeIssueGithubApprovalRequest,
-    execute: executeIssueGithubApproval,
+    recomputeRequest(record) {
+      return recomputeIssueGithubApprovalRequest(record, opts.issueGithubDependencies);
+    },
+    execute(record) {
+      return opts.issueGithubDependencies
+        ? publishIssuePromotionWithExecutor(record, opts.issueGithubDependencies)
+        : executeIssueGithubApproval(record);
+    },
     recovery(record) {
       const scope = record.request.resource.scope ?? {};
       return {

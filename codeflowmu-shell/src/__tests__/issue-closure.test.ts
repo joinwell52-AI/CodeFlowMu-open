@@ -19,8 +19,10 @@ import {
   generateIssuePromotionBundle,
   listIssuePromotions,
   loadIssuePromotionConfig,
+  prepareIssueGithubApprovalInput,
   publishIssuePromotionWithExecutor,
   readIssuePromotion,
+  inspectPublicIssueDraft,
   validateGithubIssueTargetMetadata,
 } from "../issue-promotion.ts";
 
@@ -70,7 +72,7 @@ async function fixture(options: { blocked?: boolean; issue?: Record<string, unkn
   writeFileSync(taskPath, taskMarkdown(options.blocked ?? true), "utf8");
   writeFileSync(join(root, "package.json"), `${JSON.stringify({ repository: { url: "https://github.com/joinwell52-AI/codeflowmu.git" } }, null, 2)}\n`, "utf8");
   mkdirSync(join(root, ".codeflowmu"), { recursive: true });
-  writeFileSync(join(root, ".codeflowmu", "issue-promotion-target.json"), `${JSON.stringify({ target_repo: "joinwell52-AI/codeflowmu1.2.21", labels: ["runtime", "evidence"] }, null, 2)}\n`, "utf8");
+  writeFileSync(join(root, ".codeflowmu", "issue-promotion-target.json"), `${JSON.stringify({ target_repo: "joinwell52-AI/CodeFlowMu-open", visibility_policy: "public_issue", labels: [] }, null, 2)}\n`, "utf8");
   return {
     root,
     issuePath,
@@ -380,7 +382,8 @@ test("local promotion produces a deduplicated redacted evidence bundle and no ex
       expected_closure_digest: closed.closure_digest,
     });
     assert.equal(bundle.status, "draft_created");
-    assert.equal(bundle.target_repo.toLowerCase(), "joinwell52-ai/codeflowmu1.2.21");
+    assert.equal(bundle.target_repo.toLowerCase(), "joinwell52-ai/codeflowmu-open");
+    assert.equal((bundle as unknown as Record<string, unknown>).visibility_policy, "public_issue");
     assert.equal(existsSync(join(f.root, ...bundle.bundle_path.split("/"), "manifest.json")), true);
     assert.doesNotMatch(bundle.draft_body, /[A-Za-z]:\\/);
     const replay = await generateIssuePromotionBundle({ projectRoot: f.root, filename: ISSUE_FILENAME, actor: "ADMIN", expected_closure_digest: closed.closure_digest });
@@ -389,7 +392,9 @@ test("local promotion produces a deduplicated redacted evidence bundle and no ex
     const approval = buildIssueGithubApprovalInput({ projectRoot: f.root, promotion_id: bundle.promotion_id, actor: "ADMIN" });
     assert.equal(approval.request.action.executor, "github.issue.create");
     assert.equal(approval.request.effect.external_write, true);
-    assert.match(approval.reason, /joinwell52-AI\/codeflowmu1\.2\.21/);
+    assert.match(approval.reason, /joinwell52-AI\/CodeFlowMu-open/);
+    assert.equal(approval.request.action.operation, "create_public_product_issue");
+    assert.deepEqual(approval.request.resource.scope?.["labels"], []);
     assert.match(approval.effects[0] ?? "", /将在 GitHub 仓库 .* 新建 1 个 Issue，标题为/);
     assert.ok(approval.non_effects.some((item) => item.includes("不会完成、归档、解除或停止关联 TASK\/Session")));
     assert.equal(existsSync(join(f.root, ".codeflowmu", "operation-approvals")), false);
@@ -428,13 +433,13 @@ test("approved GitHub publication uses the controlled executor and persists a de
     let preflights = 0;
     let creates = 0;
     const dependencies = {
-      preflight(targetRepo: string) {
+      preflight(input: { targetRepo: string }) {
         preflights += 1;
-        return { full_name: targetRepo, private: true, has_issues: true, permissions: { push: true } };
+        return { full_name: input.targetRepo, private: false, has_issues: true, permissions: { issue_submission: "authenticated_user" } };
       },
       createIssue() {
         creates += 1;
-        return "https://github.com/joinwell52-AI/codeflowmu1.2.21/issues/321";
+        return "https://github.com/joinwell52-AI/CodeFlowMu-open/issues/321";
       },
     };
     const published = await publishIssuePromotionWithExecutor(approval, dependencies);
@@ -443,7 +448,7 @@ test("approved GitHub publication uses the controlled executor and persists a de
     assert.equal(creates, 1);
     const receipt = readIssuePromotion(f.root, bundle.promotion_id);
     assert.equal(receipt.status, "published");
-    assert.equal(receipt.target_issue_url, "https://github.com/joinwell52-AI/codeflowmu1.2.21/issues/321");
+    assert.equal(receipt.target_issue_url, "https://github.com/joinwell52-AI/CodeFlowMu-open/issues/321");
     const issueFm = parseMarkdownFrontmatter(readFileSync(f.issuePath, "utf8"));
     assert.equal(issueFm.promotion_status, "published");
     const detail = service.detail(ISSUE_FILENAME);
@@ -479,11 +484,14 @@ test("promotion summary lists every bundle and explicit download marks the proje
   } finally { await f.cleanup(); }
 });
 
-test("GitHub publication preflight requires a private Issues-enabled writable repository", async () => {
-  assert.throws(
-    () => validateGithubIssueTargetMetadata("example/public", { private: false, has_issues: true, permissions: { push: true } }),
-    (error: unknown) => error instanceof IssueClosureError && error.code === "GITHUB_PRIVATE_REPO_REQUIRED",
+test("GitHub publication preflight accepts ordinary authenticated users for public Issues", async () => {
+  const publicTarget = validateGithubIssueTargetMetadata(
+    "example/public",
+    { private: false, has_issues: true, permissions: {} },
+    { visibility_policy: "public_issue", requested_labels: [], available_labels: ["bug"] },
   );
+  assert.equal(publicTarget.can_create_issue, true);
+  assert.deepEqual(publicTarget.permissions, { issue_submission: "authenticated_user" });
   assert.throws(
     () => validateGithubIssueTargetMetadata("example/private", { private: true, has_issues: false, permissions: { push: true } }),
     (error: unknown) => error instanceof IssueClosureError && error.code === "GITHUB_ISSUES_DISABLED",
@@ -494,6 +502,41 @@ test("GitHub publication preflight requires a private Issues-enabled writable re
   );
   const accepted = validateGithubIssueTargetMetadata("example/private", { private: true, has_issues: true, permissions: { maintain: true } });
   assert.equal(accepted.private, true);
+  assert.throws(
+    () => validateGithubIssueTargetMetadata(
+      "example/public",
+      { private: false, has_issues: true, permissions: {} },
+      { visibility_policy: "public_issue", requested_labels: ["missing"], available_labels: ["bug"] },
+    ),
+    (error: unknown) => error instanceof IssueClosureError && error.code === "GITHUB_LABELS_MISSING",
+  );
+});
+
+test("GitHub authentication and target preflight run before an approval can be prepared", async () => {
+  const f = await fixture();
+  try {
+    const service = new IssueClosureService({ projectRoot: f.root });
+    const closed = await service.close(ISSUE_FILENAME, validDraft(f.issuePath));
+    const bundle = await generateIssuePromotionBundle({
+      projectRoot: f.root,
+      filename: ISSUE_FILENAME,
+      actor: "ADMIN",
+      expected_closure_digest: closed.closure_digest,
+    });
+    await assert.rejects(
+      () => prepareIssueGithubApprovalInput({
+        projectRoot: f.root,
+        promotion_id: bundle.promotion_id,
+        actor: "ADMIN",
+      }, {
+        preflight() {
+          throw new IssueClosureError("GITHUB_NOT_AUTHENTICATED", "尚未连接 GitHub", 401);
+        },
+      }),
+      (error: unknown) => error instanceof IssueClosureError && error.code === "GITHUB_NOT_AUTHENTICATED",
+    );
+    assert.equal(existsSync(join(f.root, ".codeflowmu", "operation-approvals")), false);
+  } finally { await f.cleanup(); }
 });
 
 test("controlled publication failure keeps the local closure and retryable promotion record", async () => {
@@ -507,9 +550,43 @@ test("controlled publication failure keeps the local closure and retryable promo
     await assert.rejects(() => publishIssuePromotionWithExecutor(approval, {
       preflight: () => ({ private: true, has_issues: true, permissions: { push: true } }),
       createIssue: () => { throw new Error("simulated network failure"); },
-    }), /simulated network failure/);
+    }), (error: unknown) => error instanceof IssueClosureError && error.code === "GITHUB_NETWORK_FAILED");
     assert.equal(parseMarkdownFrontmatter(readFileSync(f.issuePath, "utf8")).status, "closed");
     assert.equal(readIssuePromotion(f.root, bundle.promotion_id).status, "publish_failed_retryable");
+  } finally { await f.cleanup(); }
+});
+
+test("public Issue safety scan rejects internal identifiers, local paths, empty backticks and broken sentences", () => {
+  const findings = inspectPublicIssueDraft(
+    "TASK-20260804-001 failed for user@example.com",
+    "The source is D:\\private\\customer\\data.txt.\n\nThe result is `` and",
+  );
+  assert.ok(findings.includes("TASK-*"));
+  assert.ok(findings.includes("Windows 绝对路径"));
+  assert.ok(findings.includes("电子邮箱"));
+  assert.ok(findings.includes("空反引号"));
+  assert.ok(findings.includes("疑似残缺句子"));
+});
+
+test("unsafe generated public draft remains locally previewable but cannot create an approval", async () => {
+  const f = await fixture();
+  try {
+    const service = new IssueClosureService({ projectRoot: f.root });
+    const closed = await service.close(ISSUE_FILENAME, validDraft(f.issuePath, {
+      reason: "The visible result is `` and",
+    }));
+    const bundle = await generateIssuePromotionBundle({
+      projectRoot: f.root,
+      filename: ISSUE_FILENAME,
+      actor: "ADMIN",
+      expected_closure_digest: closed.closure_digest,
+    });
+    assert.equal(bundle.status, "draft_unsafe");
+    assert.equal(bundle.redaction.public_safe, false);
+    assert.throws(
+      () => buildIssueGithubApprovalInput({ projectRoot: f.root, promotion_id: bundle.promotion_id, actor: "ADMIN" }),
+      (error: unknown) => error instanceof IssueClosureError && error.code === "ISSUE_PROMOTION_PUBLIC_DRAFT_UNSAFE",
+    );
   } finally { await f.cleanup(); }
 });
 

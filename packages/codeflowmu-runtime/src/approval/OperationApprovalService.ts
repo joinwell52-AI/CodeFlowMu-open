@@ -756,6 +756,37 @@ export class OperationApprovalService {
     });
   }
 
+  reissueExecutionTokenForApproved(approvalId: string, actor: string): {
+    approval: OperationApprovalRecord;
+    execution_token: string;
+  } {
+    return this.withLock(approvalId, () => {
+      const record = this.getMutable(approvalId);
+      this.expireIfNeeded(record);
+      if (normalizeString(actor).toUpperCase() !== "ADMIN") {
+        throw new OperationApprovalError("APPROVER_NOT_AUTHORIZED", "only ADMIN may resume an approved execution", 403);
+      }
+      if (record.status !== "approved" || record.authorization?.status !== "available") {
+        throw new OperationApprovalError("PRE_APPROVAL_REQUIRED", `approval is ${record.status}`, 409);
+      }
+      if (record.initiator_type !== "user" || record.agent_id || record.session_id || record.task_id) {
+        throw new OperationApprovalError("APPROVAL_EXECUTION_RESUME_NOT_ALLOWED", "only direct user operations may resume server-side execution", 403);
+      }
+      const token = randomBytes(32).toString("base64url");
+      record.token_hash = hashToken(token);
+      record.updated_at = this.now().toISOString();
+      this.writeRecord(record);
+      this.audit("approval.execution_token_reissued", {
+        approval_id: record.approval_id,
+        actor: "ADMIN",
+        operation_digest: record.operation_digest,
+      });
+      const copy = cloneRecord(record);
+      delete copy.token_hash;
+      return { approval: copy, execution_token: token };
+    });
+  }
+
   reject(approvalId: string, actor: string, reason: string): OperationApprovalRecord {
     return this.decideTerminal(approvalId, actor, reason, "rejected");
   }
@@ -920,6 +951,22 @@ export class OperationApprovalService {
       record.execution.status = "executing";
       record.execution.started_at = now;
       record.execution.executor_pid = process.pid;
+      record.authorization = {
+        status: "consumed",
+        issued_at: record.authorization?.issued_at ?? record.decision?.at ?? now,
+        consumed_at: now,
+        ...(record.agent_id && record.session_id && record.task_id && record.thread_key
+          ? {
+              consumed_by: {
+                agent_id: record.agent_id,
+                session_id: record.session_id,
+                task_id: record.task_id,
+                thread_key: record.thread_key,
+                role: record.request.subject.role,
+              },
+            }
+          : {}),
+      };
       record.updated_at = now;
       delete record.token_hash;
       this.writeRecord(record);

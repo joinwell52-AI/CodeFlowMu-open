@@ -120,6 +120,8 @@ Open Approvals only when CodeFlowMu asks for human authorization.
 
 Typical approval-bound actions include destructive operations, external writes, releases, credentials, and governance-boundary changes. Review each request individually. Approval means the runtime may attempt the action; it does not mean the action succeeded. Return to Reports and the verification record for the final result.
 
+Closed issues can produce a public GitHub Issue draft. The default target is `joinwell52-AI/CodeFlowMu-open` with no default labels. When GitHub is disconnected, only preview and download are available. After browser authentication, review the final title, body, labels, and target preflight before requesting publication. ADMIN approval immediately invokes the controlled executor; success shows a clickable receipt, while authentication, permission, network, disabled-Issues, and missing-label failures remain retryable without reopening the local issue.
+
 ## 6. Inspect Agent Playbooks
 
 Open Skills.

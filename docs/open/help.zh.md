@@ -136,6 +136,8 @@ Windows Use 面向获准的本机 Windows 应用；Browser Use 面向获准的�
 
 「问题」用于查看结构化 ISSUE；「门铃」显示 MCP 工具调用、系统事件和故障记录，适合判断 Agent 是否真正开始工作。
 
+已结案问题可生成公共 GitHub Issue 草稿。默认目标是 `joinwell52-AI/CodeFlowMu-open`，不携带默认标签。未连接 GitHub 时仅显示预览和下载；点击“连接 GitHub”完成浏览器授权后，可审阅最终标题、正文和标签并申请发布。ADMIN 批准后受控执行器立即发布，成功时显示可点击回执；网络、权限、Issues 关闭或标签缺失会显示中文原因并保留草稿供重试。
+
 ![PC 问题页面](../images/pc/V1.2.5/pc-issues-V1.2.5.png)
 
 ![PC 门铃事件](../images/pc/V1.2.5/pc-doorbell-events-V1.2.5.png)

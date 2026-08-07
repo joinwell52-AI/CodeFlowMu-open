@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <code>V1.2.23-open</code> · <code>Windows 10/11</code> · <code>Node.js 22+</code> · <code>Python 3.10+</code> · <code>Cursor SDK</code>
+  <code>V1.2.24-open</code> · <code>Windows 10/11</code> · <code>Node.js 22+</code> · <code>Python 3.10+</code> · <code>Cursor SDK</code>
 </p>
 
 <p align="center">
@@ -21,6 +21,18 @@
 </p>
 
 ---
+
+<!-- OPEN_RELEASE_NOTES_START -->
+## V1.2.24-open Release Notes
+
+**CodeFlowMu 开源版本 V1.2.23-open**
+
+- 发布新的开源版本
+
+Affected：CodeFlowMu / Shell / Runtime / Mobile API / Open Edition
+
+Full release record：[RELEASES.md](RELEASES.md)
+<!-- OPEN_RELEASE_NOTES_END -->
 
 CodeFlowMu Open is a local-first multi-agent development team application. You submit a requirement; PM analyzes and dispatches it, DEV implements it, OPS handles runtime and delivery, and QA verifies it. Tasks, reports, evidence, approvals, and project state are visible in the PC Panel and available from the Mobile PWA.
 
@@ -45,7 +57,7 @@ Requirement → PM Plan → TASK → DEV / OPS / QA → REPORT → REVIEW / APPR
 
 ## Real Product Screens
 
-Every image below is captured from the real product, not a concept mockup. The current application version is `V1.2.23-open`; the English PC screenshots were captured from the running `V1.2.6-open` application. The phone screenshots are real PWA captures from V1.0.58, with the release-notes view from V1.0.59.
+Every image below is captured from the real product, not a concept mockup. The current application version is `V1.2.24-open`; the English PC screenshots were captured from the running `V1.2.6-open` application. The phone screenshots are real PWA captures from V1.0.58, with the release-notes view from V1.0.59.
 
 ### PC Panel: the complete team at a glance
 

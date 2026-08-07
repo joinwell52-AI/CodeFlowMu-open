@@ -3550,7 +3550,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
       <button type="button" class="rp-tab" data-st="all" onclick="setIssueStatusTab('all')" data-i18n="is.tab.all">全部</button>
     </div>
     <span class="tc" id="tc-issues">0</span>
-    <button type="button" class="rp-tab" id="is-promotion-summary-btn" onclick="showIssuePromotionSummary()">母版证据提交 <span class="tc" id="tc-issue-promotions">0</span></button>
+    <button type="button" class="rp-tab" id="is-promotion-summary-btn" onclick="showIssuePromotionSummary()">公共 Issue 提交 <span class="tc" id="tc-issue-promotions">0</span></button>
     <div style="flex:1"></div>
     <input class="rp-list-search" id="is-search" type="text" data-i18n-ph="is.searchPh" placeholder="搜索摘要/报告人…"
            oninput="onIssueSearch(this.value)" style="max-width:220px">
@@ -3577,7 +3577,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
       <div id="is-detail-toolbar" class="is-detail-toolbar" style="display:none">
         <button type="button" class="hbtn is-close-btn is-close-btn--open" id="is-close-btn" onclick="closeSelectedIssue()" data-i18n="is.closeBtn">结案</button>
         <button type="button" class="hbtn" id="is-reopen-btn" onclick="reopenSelectedIssue()" style="display:none">重新打开</button>
-        <button type="button" class="hbtn" id="is-promote-btn" onclick="promoteSelectedIssue()" style="display:none">提交为母版修复证据</button>
+        <button type="button" class="hbtn" id="is-promote-btn" onclick="promoteSelectedIssue()" style="display:none">生成公共 Issue 草稿</button>
       </div>
       <div class="is-detail-scroll">
         <div id="is-detail-empty" style="color:var(--text3)" data-i18n="is.detailEmpty">点击左侧条目查看详情</div>
@@ -3590,7 +3590,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
     </div>
   </div>
   <div id="is-promotion-pane" class="is-promotion-summary" style="display:none">
-    <div class="is-promotion-note" id="is-promotion-config-note">正在检查母版目标配置…</div>
+    <div class="is-promotion-note" id="is-promotion-config-note">正在检查公共 Issue 目标与 GitHub 登录状态…</div>
     <table class="is-table">
       <thead><tr><th>来源 ISSUE</th><th>状态</th><th>目标仓库</th><th>生成时间</th><th>GitHub 回执</th><th style="width:260px">操作</th></tr></thead>
       <tbody id="is-promotion-tbody"></tbody>
@@ -5077,12 +5077,12 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
 </dialog>
 
 <dialog id="issue-promotion-dialog" class="issue-closure-dialog">
-  <div class="issue-closure-head"><div style="flex:1"><div style="font-size:17px;font-weight:800">提交为母版修复证据</div><div id="issue-promotion-meta" style="font-size:12px;color:var(--text3);margin-top:4px"></div></div><button type="button" class="hbtn" onclick="document.getElementById('issue-promotion-dialog').close()">✕</button></div>
+  <div class="issue-closure-head"><div style="flex:1"><div style="font-size:17px;font-weight:800">公共 GitHub Issue 草稿</div><div id="issue-promotion-meta" style="font-size:12px;color:var(--text3);margin-top:4px"></div></div><button type="button" class="hbtn" onclick="document.getElementById('issue-promotion-dialog').close()">✕</button></div>
   <div style="padding:18px 20px;max-height:68vh;overflow:auto">
     <div class="issue-closure-badge">本地不可变证据包已生成</div><div class="issue-closure-badge">未写母版工作树</div><div class="issue-closure-badge">未创建 GitHub Issue</div>
     <pre id="issue-promotion-preview" class="issue-closure-preview" style="max-height:52vh"></pre>
   </div>
-  <div class="issue-closure-actions"><button type="button" class="hbtn" onclick="document.getElementById('issue-promotion-dialog').close()">仅保存本地草稿</button><button type="button" class="hbtn" onclick="downloadIssuePromotion()">下载证据包</button><button type="button" class="hbtn" id="issue-promotion-publish" onclick="prepareIssueGithubPublish()">申请发布</button></div>
+  <div class="issue-closure-actions"><button type="button" class="hbtn" onclick="document.getElementById('issue-promotion-dialog').close()">仅保存本地草稿</button><button type="button" class="hbtn" onclick="downloadIssuePromotion()">下载证据包</button><button type="button" class="hbtn" id="issue-promotion-connect" onclick="connectGithubForIssuePublish()" style="display:none">连接 GitHub</button><button type="button" class="hbtn" id="issue-promotion-publish" onclick="prepareIssueGithubPublish()">申请发布</button></div>
 </dialog>
 
 <div class="model-modal" id="modelModal" style="display:none" onclick="if(event.target===this)closeModelModal()">
@@ -7767,7 +7767,7 @@ let tasks=[], taskSubmissions=[], reports=[], issues=[], events=[], doorbells=[]
 let projectGraphProjection=null;
 let taskPrimaryTab='formal', selectedTaskSubmissionId='';
 window._diagNavOpen=false;
-let issueStatusTab='open', issueSearchQ='', issuePageMode='issues', issuePromotions=[], _isSelectedFn=null, _isSelectedDetail=null;
+let issueStatusTab='open', issueSearchQ='', issuePageMode='issues', issuePromotions=[], _issueGithubAuth={connected:false,code:'GITHUB_AUTH_UNKNOWN',message:'正在检查 GitHub 登录状态…'}, _isSelectedFn=null, _isSelectedDetail=null;
 let _issueClosurePreview=null, _issueClosureDraft=null, _issuePromotion=null;
 let _dbBuffer=[];  // ring-buffer: max 200 entries, persists across nav
 // P0 fix: dedup set for task_dispatched SSE events (prevents replay-toast on SSE reconnect)
@@ -14118,8 +14118,14 @@ async function apApprove(id){
       method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason})
     });
     const approved=await r.json().catch(()=>({}));
-    if(!r.ok||!approved.ok) throw new Error(approved.error||('HTTP '+r.status));
-    showToast(approved.recovery?.delivered===false?'审批已批准，Agent 通知正在重试':'审批已批准，原 Agent 已恢复','#4ade80');
+    if(!r.ok||!approved.ok) throw new Error((approved.code?approved.code+'：':'')+(approved.error||approved.message||('HTTP '+r.status)));
+    if(approved.recovery?.executed_directly){
+      const url=approved.promotion?.target_issue_url||approved.approval?.execution?.evidence?.[0]?.issue_url||'';
+      showToast('审批已批准，GitHub Issue 已发布'+(url?'：'+url:''),'#4ade80',7000);
+      await loadIssuePromotions().catch(()=>{});
+    }else{
+      showToast(approved.recovery?.delivered===false?'审批已批准，等待受控执行':'审批已批准，原 Agent 已恢复','#4ade80');
+    }
     await loadApprovals();
     await loadApprovalHistory();
     renderApprovals(document.getElementById('page-approvals'));
@@ -14496,11 +14502,16 @@ async function loadIssuePromotions(){
   if(!r.ok||d.ok===false)throw new Error((d.code?d.code+': ':'')+(d.message||d.error||r.status));
   issuePromotions=Array.isArray(d)?d:(Array.isArray(d?.promotions)?d.promotions:[]);
   const target=d?._meta?.promotion_target;
+  _issueGithubAuth=d?._meta?.github_auth||{connected:false,code:'GITHUB_AUTH_UNKNOWN',message:'无法确认 GitHub 登录状态，当前仅可本地查看。'};
   const note=document.getElementById('is-promotion-config-note');
   if(note){
-    note.textContent=target?.ok
-      ?'母版目标检查：配置来源 '+target.source+'；实际目标仓库 '+target.target_repo+'。本地证据不会自动写入 GitHub。'
-      :(target?.message||'未读取到母版目标配置，请检查 .codeflowmu/issue-promotion-target.json。');
+    const targetText=target?.ok
+      ?'公共 Issue 目标：'+target.target_repo+'；策略：'+(target.visibility_policy||'-')+'；标签：'+((target.labels||[]).join('、')||'无')+'。'
+      :(target?.message||'未读取到公共 Issue 目标配置，请检查 .codeflowmu/issue-promotion-target.json。');
+    const authText=_issueGithubAuth.connected
+      ?'GitHub 已连接；申请发布后仍需 ADMIN 审批，批准后由受控执行器直接发布。'
+      :(_issueGithubAuth.message||'尚未连接 GitHub，当前仅可本地查看和下载。');
+    note.innerHTML=esc(targetText+' '+authText)+(_issueGithubAuth.connected?'':' <button type="button" class="hbtn" onclick="connectGithubForIssuePublish()" style="margin-left:8px;padding:3px 9px">连接 GitHub</button>');
   }
   const count=document.getElementById('tc-issue-promotions');
   if(count)count.textContent=String(issuePromotions.length);
@@ -14554,7 +14565,7 @@ function renderIssuePage(){
       +'<td><div class="is-row-actions">'
       +'<button type="button" class="hbtn" data-issue-action="view" data-fn="'+esc(fn)+'">查看</button>'
       +(st==='closed'
-        ? '<button type="button" class="hbtn" data-issue-action="promote" data-fn="'+esc(fn)+'">母版证据</button><button type="button" class="hbtn" data-issue-action="reopen" data-fn="'+esc(fn)+'">重新打开</button>'
+        ? '<button type="button" class="hbtn" data-issue-action="promote" data-fn="'+esc(fn)+'">公共草稿</button><button type="button" class="hbtn" data-issue-action="reopen" data-fn="'+esc(fn)+'">重新打开</button>'
         : '<button type="button" class="hbtn is-close-btn is-close-btn--open" data-issue-action="close" data-fn="'+esc(fn)+'">关闭 ISSUE</button>')
       +'</div></td></tr>';
   }).join('');
@@ -14577,7 +14588,7 @@ async function issueRowAction(action,fn){
   if(action==='promote')return promoteSelectedIssue();
 }
 function issuePromotionStatusLabel(status){
-  const labels={draft_created:'本地证据/草稿已生成',exported:'证据已导出',import_pending:'等待外部审批',published:'已发布 GitHub',publish_failed_retryable:'发布失败，可重试',rejected:'发布已拒绝'};
+  const labels={draft_created:'本地草稿',draft_unsafe:'草稿不安全，禁止发布',exported:'本地草稿/证据已导出',pending_approval:'待审批',approved_pending_execution:'已批准待执行',publishing:'发布中',published:'已发布',publish_failed_retryable:'发布失败，可重试',rejected:'发布已拒绝'};
   return labels[String(status||'')]||String(status||'draft_created');
 }
 function issueResolutionLabel(value){
@@ -14586,16 +14597,21 @@ function issueResolutionLabel(value){
 function renderIssuePromotionPage(){
   const tb=document.getElementById('is-promotion-tbody');if(!tb)return;
   if(!issuePromotions.length){
-    tb.innerHTML='<tr><td colspan="6" style="color:var(--text3);padding:24px">暂无母版证据提交记录。请先在已结案 ISSUE 的“操作”列点击“母版证据”。</td></tr>';
+    tb.innerHTML='<tr><td colspan="6" style="color:var(--text3);padding:24px">暂无公共 Issue 草稿。请先在已结案 ISSUE 的“操作”列点击“公共草稿”。</td></tr>';
     return;
   }
   tb.innerHTML=issuePromotions.map(row=>{
     const id=String(row.promotion_id||'');
     const receipt=row.target_issue_url?'<a href="'+esc(row.target_issue_url)+'" target="_blank" rel="noopener">#'+esc(row.target_issue_number||row.target_issue_url)+'</a>':'—';
+    const status=String(row.status||'draft_created');
+    const publicSafe=row.redaction?.public_safe===true;
+    const canApply=_issueGithubAuth.connected&&publicSafe&&!['published','pending_approval','approved_pending_execution','publishing'].includes(status);
+    const actionLabel=status==='publish_failed_retryable'?'修复后重试发布':'审阅并申请发布';
+    const statusHint=row.publish_error?'<div style="font-size:11px;color:#fca5a5;margin-top:3px">'+esc((row.publish_error_code?row.publish_error_code+'：':'')+row.publish_error)+'</div>':'';
     return '<tr><td><button type="button" class="link-btn" data-promotion-issue="'+esc(row.source_issue_filename||'')+'">'+esc(row.source_issue_id||row.source_issue_filename||'-')+'</button><div class="mono muted" style="font-size:11px">'+esc(id)+'</div></td>'
-      +'<td>'+esc(issuePromotionStatusLabel(row.status))+'</td><td>'+esc(row.target_repo||'-')+'</td><td>'+esc(fmtTime(row.published_at||row.generated_at||''))+'</td><td>'+receipt+'</td>'
+      +'<td>'+esc(issuePromotionStatusLabel(status))+statusHint+'</td><td>'+esc(row.target_repo||'-')+'</td><td>'+esc(fmtTime(row.published_at||row.generated_at||''))+'</td><td>'+receipt+'</td>'
       +'<td><div class="is-row-actions"><button type="button" class="hbtn" data-promotion-action="preview" data-id="'+esc(id)+'">预览草稿</button><button type="button" class="hbtn" data-promotion-action="download" data-id="'+esc(id)+'">下载证据包</button>'
-      +(String(row.status||'')==='published'?'':'<button type="button" class="hbtn" data-promotion-action="publish" data-id="'+esc(id)+'">审阅并申请发布</button>')
+      +(canApply?'<button type="button" class="hbtn" data-promotion-action="publish" data-id="'+esc(id)+'">'+actionLabel+'</button>':'')
       +'</div></td></tr>';
   }).join('');
   tb.querySelectorAll('[data-promotion-issue]').forEach(btn=>btn.addEventListener('click',()=>{
@@ -14736,18 +14752,45 @@ function issueClosureUserMessage(data,fallback){
     ISSUE_ALREADY_CLOSED_REVIEW_HISTORY:'该 ISSUE 已由其他操作结案，请刷新查看。',
     ISSUE_CLOSURE_IN_PROGRESS:'该 ISSUE 正在结案，请稍后再试。',
     ISSUE_CLOSE_AUTHORITY_REQUIRED:'当前操作者没有结案权限。',
-    GITHUB_TARGET_NOT_CONFIGURED:'未配置母版目标仓库，请检查 .codeflowmu/issue-promotion-target.json。',
+    GITHUB_TARGET_NOT_CONFIGURED:'未配置公共 Issue 目标仓库，请检查 .codeflowmu/issue-promotion-target.json。',
+    GITHUB_NOT_AUTHENTICATED:'尚未连接 GitHub，当前仅可预览草稿和下载证据包。',
+    GITHUB_CLI_UNAVAILABLE:'未安装 GitHub CLI，当前仅可本地查看。',
+    GITHUB_REPO_ACCESS_DENIED:'当前 GitHub 身份无法访问目标仓库。',
+    GITHUB_ISSUE_PERMISSION_DENIED:'当前 GitHub 身份没有创建 Issue 所需的权限。',
+    GITHUB_ISSUES_DISABLED:'目标仓库已关闭 Issues，暂时不能申请发布。',
+    GITHUB_LABELS_MISSING:'目标仓库缺少配置标签；请选择移除标签、由管理员创建标签，或取消发布。',
+    GITHUB_INTERACTION_RESTRICTED:'当前 GitHub 身份受到仓库交互限制，暂时不能创建 Issue。',
+    GITHUB_NETWORK_FAILED:'无法连接 GitHub，请检查网络后重试。',
+    ISSUE_PROMOTION_PUBLIC_DRAFT_UNSAFE:'公开草稿仍含内部标识、敏感信息或损坏内容，禁止发布。',
     ISSUE_PROMOTION_SECRET_DETECTED:'证据中检测到敏感信息，已关闭 ISSUE，但未生成母版证据。',
-    ISSUE_PROMOTION_REDACTION_FAILED:'证据脱敏检查未通过，已关闭 ISSUE，但未生成母版证据。'
+    ISSUE_PROMOTION_REDACTION_FAILED:'证据脱敏检查未通过，已关闭 ISSUE，但未生成公共草稿。'
   };
   return messages[data?.code]||data?.message||data?.error||fallback||'操作失败，请稍后重试。';
 }
 function showIssuePromotionDraft(d){
   if(!d)return;
   _issuePromotion=d;
-  document.getElementById('issue-promotion-meta').textContent='目标仓库：'+(d.target_repo||'-')+' · Issue 标题：'+(d.draft_title||'-')+' · 本地草稿：'+(d.draft_file||'-');
+  const publicSafe=d.redaction?.public_safe===true;
+  const labels=Array.isArray(d.labels)?d.labels:[];
+  document.getElementById('issue-promotion-meta').textContent='目标仓库：'+(d.target_repo||'-')+' · 策略：'+(d.visibility_policy||'-')+' · 标签：'+(labels.join('、')||'无')+' · 公开安全：'+(publicSafe?'通过':'未通过，禁止发布')+' · Issue 标题：'+(d.draft_title||'-');
   document.getElementById('issue-promotion-preview').textContent=d.draft_body||'';
+  const publish=document.getElementById('issue-promotion-publish');
+  const connect=document.getElementById('issue-promotion-connect');
+  const status=String(d.status||'draft_created');
+  const canPublish=_issueGithubAuth.connected&&publicSafe&&!['published','pending_approval','approved_pending_execution','publishing'].includes(status);
+  if(publish){publish.style.display=canPublish?'':'none';publish.textContent=status==='publish_failed_retryable'?'修复后重试发布':'申请发布';}
+  if(connect)connect.style.display=!_issueGithubAuth.connected?'':'none';
   document.getElementById('issue-promotion-dialog').showModal();
+}
+
+async function connectGithubForIssuePublish(){
+  try{
+    const r=await fetch('/api/v2/github/connect',{method:'POST'});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok||!d.ok)throw new Error(d.message||d.error||('HTTP '+r.status));
+    showToast(d.message||'已启动 GitHub 浏览器登录。完成后请刷新状态。','#93c5fd',6000);
+    setTimeout(async()=>{try{await loadIssuePromotions();if(issuePageMode==='promotions')renderIssuePromotionPage();if(_issuePromotion)await openIssuePromotionById(_issuePromotion.promotion_id);}catch(_e){}},5000);
+  }catch(e){showToast('连接 GitHub 失败：'+(e.message||e),'#fca5a5',6000);}
 }
 async function submitIssueClosure(){
   const draft=collectIssueClosureDraft();
@@ -14769,7 +14812,7 @@ async function submitIssueClosure(){
     await openIssueDetail(closedFn);
     renderIssuePage();
     await loadIssuePromotions();
-    if(d.promotion){showToast('ISSUE 已结案，本地母版证据已生成。','#6ee7b7');showIssuePromotionDraft(d.promotion);}
+    if(d.promotion){showToast('ISSUE 已结案，本地公共 Issue 草稿已生成。','#6ee7b7');showIssuePromotionDraft(d.promotion);}
     else if(d.promotion_error){showToast('ISSUE 已结案；'+issueClosureUserMessage(d.promotion_error),'error');}
     else showToast('ISSUE 已结案。','#6ee7b7');
   }catch(e){const msg='无法连接本地服务，请确认服务正在运行后重试。';status.textContent=msg;showToast(msg,'error');}
@@ -14825,6 +14868,13 @@ async function prepareIssueGithubPublish(){
   try{
     const r=await fetch('/api/v2/issues/promotion/'+encodeURIComponent(_issuePromotion.promotion_id)+'/github/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({actor:(document.getElementById('tp-panel-operator')?.value||'ADMIN')})});
     const d=await r.json();if(!r.ok||d.ok===false)throw new Error(issueClosureUserMessage(d));
+    if(d.promotion?.status==='published'||d.approval?.status==='succeeded'){
+      const url=d.promotion?.target_issue_url||d.approval?.execution?.evidence?.[0]?.issue_url||'';
+      showToast('GitHub Issue 已发布'+(url?'：'+url:''),'#4ade80',7000);
+      document.getElementById('issue-promotion-dialog').close();
+      await loadIssuePromotions();renderIssuePromotionPage();
+      return;
+    }
     const approval=d.approval||{};
     showToast('已生成精确 GitHub 外部写入审批：'+(approval.approval_id||d.operation_digest),'#fcd34d');
     document.getElementById('issue-promotion-dialog').close();

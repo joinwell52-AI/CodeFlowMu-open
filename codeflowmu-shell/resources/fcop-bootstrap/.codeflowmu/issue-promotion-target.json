@@ -1,7 +1,5 @@
 {
-  "target_repo": "joinwell52-AI/codeflowmu1.2.21",
-  "labels": [
-    "runtime",
-    "evidence"
-  ]
+  "target_repo": "joinwell52-AI/CodeFlowMu-open",
+  "visibility_policy": "public_issue",
+  "labels": []
 }
