@@ -3382,6 +3382,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
           <button class="hbtn tdp-eval-watch-btn" id="tdp-eval-watch-btn" style="display:none;font-size:14px" onclick="tdpOpenEvalObservation()">eval旁观报告</button>
           <button class="hbtn" id="tdp-submit-btn" style="display:none;font-size:14px;color:#60a5fa;border-color:rgba(96,165,250,.4)" onclick="tdpSubmitReview()">📤 提交验收</button>
           <button class="hbtn" id="tdp-approve-btn" style="display:none;font-size:14px;color:#4ade80;border-color:rgba(74,222,128,.4)" onclick="tdpApprove()">✓ 审批</button>
+          <button class="hbtn" id="tdp-human-accept-btn" style="display:none;font-size:14px;color:#22d3ee;border-color:rgba(34,211,238,.45)" onclick="tdpHumanAccept()">✓ 以当前角色人工验收任务</button>
           <button class="hbtn" id="tdp-reject-btn" style="display:none;font-size:14px;color:#fca5a5;border-color:rgba(239,68,68,.4)" onclick="tdpReject()">↩ 打回</button>
           <button class="hbtn" id="tdp-reopen-btn" style="display:none;font-size:14px;color:#fbbf24;border-color:rgba(251,191,36,.4)" onclick="tdpReopen()">↺ 重开</button>
           <button class="hbtn" id="tdp-archive-btn" style="display:none;font-size:14px;color:#4ade80;border-color:rgba(74,222,128,.4)" onclick="tdpArchive()" data-i18n="tdp.archive">📦 归档</button>
@@ -18727,6 +18728,18 @@ function _canOperatorApprove(f){
   if(taskNormScope(f)!=='review')return false;
   return rolesMatch(_panelOperatorRole(),taskDoneAuthorityRole(f));
 }
+function taskHasAuditedFactCheckException(f){
+  return !!(
+    f&&isTruthyFlag(f.fact_check_exception)&&
+    rolesMatch(f.fact_check_exception_by,'ADMIN')&&
+    String(f.fact_check_decision_id||'').trim()&&
+    String(f.fact_check_exception_review_id||'').trim()&&
+    String(f.fact_check_exception_report_id||'').trim()
+  );
+}
+function _canHumanAccept(f){
+  return !!(f&&taskNormScope(f)==='review'&&taskHasAuditedFactCheckException(f));
+}
 
 /** Resolve REPORT id for submit-review (runtime requires report_id). */
 function reportIdForTask(taskFn){
@@ -18853,7 +18866,7 @@ async function autoSubmitPmPendingReviews(){
 }
 window.autoSubmitPmPendingReviews=autoSubmitPmPendingReviews;
 
-const _TDP_LIFECYCLE_BTN_IDS=['tdp-submit-btn','tdp-approve-btn','tdp-reject-btn','tdp-reopen-btn','tdp-archive-btn','tdp-force-archive-btn'];
+const _TDP_LIFECYCLE_BTN_IDS=['tdp-submit-btn','tdp-approve-btn','tdp-human-accept-btn','tdp-reject-btn','tdp-reopen-btn','tdp-archive-btn','tdp-force-archive-btn'];
 let _lifecyclePostInflight=false;
 
 function setTdpLifecycleButtonsBusy(busy){
@@ -18907,6 +18920,12 @@ function updateTdpLifecycleHint(f,scope,actor){
   }else if(scope==='review'&&adminMainlineWaitingEval(f)&&rolesMatch(actor,'ADMIN')){
     hintEl.style.display='block';
     hintEl.innerHTML=t('tdp.hint.waitEvalObservation');
+  }else if(scope==='review'&&taskHasAuditedFactCheckException(f)){
+    hintEl.style.display='block';
+    const requiredRole=taskDoneAuthorityRole(f);
+    hintEl.innerHTML=rolesMatch(actor,requiredRole)
+      ?`事实核查例外已记录。当前真人将以 ${actor} 角色验收；该角色符合 done_authority。请使用专用人工验收入口，普通 Agent 审批仍会被拒绝。`
+      :`事实核查例外已记录，但当前角色 ${actor} 不符合 done_authority=${requiredRole}。请将“操作者”切换为 ${requiredRole}；needs_human 不等同于 ADMIN。`;
   }else if(scope==='review'&&!rolesMatch(actor,taskDoneAuthorityRole(f))&&!rolesMatch(actor,taskReviewerRole(f))){
     hintEl.style.display='block';
     const auth=taskDoneAuthorityRole(f);
@@ -18931,6 +18950,7 @@ function updateTdpLifecycleButtons(f){
   const scope=effScope==='waiting_pm_consolidation'?'active':effScope;
   const submitBtn=document.getElementById('tdp-submit-btn');
   const approveBtn=document.getElementById('tdp-approve-btn');
+  const humanAcceptBtn=document.getElementById('tdp-human-accept-btn');
   const rejectBtn=document.getElementById('tdp-reject-btn');
   const archBtn=document.getElementById('tdp-archive-btn');
   const forceArchBtn=document.getElementById('tdp-force-archive-btn');
@@ -18940,7 +18960,7 @@ function updateTdpLifecycleButtons(f){
   const resumePriBtn=document.getElementById('tdp-resume-priority-btn');
   const hide=b=>{if(b){b.style.display='none';b.disabled=false;b.style.opacity='';b.style.pointerEvents='';}};
   const show=b=>{if(b)b.style.display='';};
-  [submitBtn,approveBtn,rejectBtn,archBtn,forceArchBtn,reopenBtn,pauseBtn,resumeBtn,resumePriBtn].forEach(hide);
+  [submitBtn,approveBtn,humanAcceptBtn,rejectBtn,archBtn,forceArchBtn,reopenBtn,pauseBtn,resumeBtn,resumePriBtn].forEach(hide);
   if(_canOperatorPauseTask(f))show(pauseBtn);
   if(_canOperatorResumeTask(f)){
     show(resumeBtn);
@@ -18959,8 +18979,19 @@ function updateTdpLifecycleButtons(f){
   if(scope==='review'){
     if(adminMainlineWaitingEval(f)){
       /* EVAL 缺失：禁止 approve/reject/正常 archive，保留强行归档 */
+    }else if(taskHasAuditedFactCheckException(f)){
+      if(rolesMatch(actor,taskReviewerRole(f))||rolesMatch(actor,taskDoneAuthorityRole(f)))show(rejectBtn);
     }else if(rolesMatch(actor,taskDoneAuthorityRole(f))){show(approveBtn);show(rejectBtn);}
     else if(rolesMatch(actor,taskReviewerRole(f)))show(rejectBtn);
+    if(_canHumanAccept(f)){
+      const requiredRole=taskDoneAuthorityRole(f);
+      show(humanAcceptBtn);
+      humanAcceptBtn.disabled=!rolesMatch(actor,requiredRole);
+      humanAcceptBtn.textContent=rolesMatch(actor,requiredRole)
+        ?`✓ 以 ${actor} 人工验收任务`
+        :`切换 ${requiredRole} 后人工验收`;
+      humanAcceptBtn.title='必须由真人确认且当前角色符合 done_authority；仅将任务 review → done，不代表产品风险接受，不开放 WP，不发布、不部署、不归档';
+    }
   }
   if(scope==='done'){
     if(rolesMatch(actor,taskArchiveAuthorityRole(f)))show(archBtn);
@@ -19112,6 +19143,46 @@ async function taskRejectInline(filename){
 function tdpApprove(){
   if(!_tdpFile)return;
   taskApproveInline(_tdpFile.filename||_tdpFile.id||'');
+}
+async function tdpHumanAccept(){
+  if(!_tdpFile)return;
+  const f=_tdpFile;
+  const fn=f.filename||f.id||'';
+  if(!fn){showToast(t('toast.taskFileUnknown'),'#fca5a5');return;}
+  const actor=_panelOperatorRole();
+  const requiredRole=taskDoneAuthorityRole(f);
+  if(!rolesMatch(actor,requiredRole)){
+    showToast(`当前任务需要真人以 ${requiredRole} 角色验收，请先切换操作者`,'#fbbf24');
+    return;
+  }
+  if(!_canHumanAccept(f)){
+    showToast('当前任务没有可用于最终验收的事实核查例外记录','#fca5a5');
+    return;
+  }
+  const taskId=String(fn).replace(/\.md$/i,'');
+  const decisionId=String(f.fact_check_decision_id||'').trim();
+  const reviewId=String(f.fact_check_exception_review_id||'').trim();
+  const reportId=String(f.fact_check_exception_report_id||'').trim();
+  const noteRaw=prompt(`请输入真人 ${actor} 的最终验收说明（将写入独立审计记录）`,'已核对事实核查例外、REPORT 与 REVIEW，同意当前任务进入 done');
+  if(noteRaw===null)return;
+  const note=String(noteRaw||'').trim();
+  if(!note){showToast('人工验收说明不能为空','#fbbf24');return;}
+  const d=await taskLifecyclePost(fn,'human-accept',{
+    confirmed:true,
+    actor,
+    decision_id:decisionId,
+    review_id:reviewId,
+    report_id:reportId,
+    idempotency_key:'human-accept:'+actor+':'+decisionId,
+    note,
+  });
+  if(d.ok){
+    showToast(d.idempotent_replay?`${actor} 人工验收已完成（重复提交未重复写入）`:`${actor} 人工验收完成：任务已进入 done`,'#4ade80',6000);
+    closeTaskDetail();
+    await loadAll();
+  }else{
+    showToast(d.error||d.message||'人工验收失败',d.httpStatus===403?'#fca5a5':'#fbbf24',7000);
+  }
 }
 function tdpReject(){
   if(!_tdpFile)return;

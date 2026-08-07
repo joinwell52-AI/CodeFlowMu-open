@@ -7,6 +7,7 @@ export type {
   TaskFm,
   TransitionInput,
   AppendTransitionResult,
+  HumanTaskAcceptance,
 } from "./types.ts";
 
 export { TaskFrontmatterStore } from "./TaskFrontmatterStore.ts";
@@ -39,6 +40,12 @@ export {
   taskRouteRoles,
 } from "./authorityDefaults.ts";
 export { AuthorityGuard, AuthorityError } from "./AuthorityGuard.ts";
+export {
+  assertTrustedHumanTaskAcceptance,
+  findPendingHumanReview,
+  humanDecisionTaskPatch,
+  type PendingHumanReview,
+} from "./humanTaskAcceptance.ts";
 export { ArchiveGuard } from "./ArchiveGuard.ts";
 export {
   ChildTasksNotAcceptedError,

@@ -40,6 +40,14 @@ export type LifecycleRuntimeAction =
   | "archive_task"
   | "finish_task";
 
+export type LifecycleTrustedContext = {
+  humanDecision?: {
+    verifiedByHost: true;
+    source: "panel_trusted_foreground_confirmation";
+    sessionId?: string;
+  };
+};
+
 export function resolveLifecycleProjectRoot(): string {
   const fromEnv = process.env["FCOP_PROJECT_DIR"]?.trim();
   if (fromEnv) return pathResolve(fromEnv);
@@ -375,6 +383,7 @@ export async function executeLifecycleRuntimeAction(
   action: LifecycleRuntimeAction,
   args: Record<string, unknown>,
   projectRoot?: string,
+  trustedContext?: LifecycleTrustedContext,
 ): Promise<LifecycleRuntimeResult> {
   const root = projectRoot ?? resolveLifecycleProjectRoot();
   const taskId = taskIdFromArgs(args);
@@ -382,12 +391,30 @@ export async function executeLifecycleRuntimeAction(
     return { ok: false, error: "task_id is required" };
   }
   const actor = pickStr(args, "actor", "sender", "role", "reviewer") || "PM";
+  const acceptanceDecisionId = pickStr(args, "acceptance_decision_id");
+  const acceptanceReviewId = pickStr(args, "acceptance_review_id");
+  const acceptanceReportId = pickStr(args, "acceptance_report_id");
+  const note = pickStr(args, "note", "reason");
+  const trustedHuman = trustedContext?.humanDecision;
+  const humanAcceptance =
+    action === "approve_review" &&
+    trustedHuman?.verifiedByHost === true &&
+    acceptanceDecisionId && acceptanceReviewId && acceptanceReportId
+      ? {
+          decisionId: acceptanceDecisionId,
+          reviewId: acceptanceReviewId,
+          reportId: acceptanceReportId,
+          operatorRole: actor,
+          source: trustedHuman.source,
+          ...(trustedHuman.sessionId ? { sessionId: trustedHuman.sessionId } : {}),
+          ...(note ? { note } : {}),
+        }
+      : undefined;
 
   if (action === "approve_review" || action === "reject_review") {
     const hot = await locateHotPathTask(root, taskId);
     if (hot) {
       try {
-        const note = pickStr(args, "note", "reason");
         const reason = pickStr(args, "reason", "note");
         if (action === "approve_review") {
           const hotResult = await approveHotPathTaskReview({
@@ -395,6 +422,7 @@ export async function executeLifecycleRuntimeAction(
             taskId,
             actor,
             ...(note ? { note } : {}),
+            ...(humanAcceptance ? { humanAcceptance } : {}),
           });
           return finalizeLifecycleResult(action, taskId, actor, hotResult, root);
         }
@@ -417,7 +445,6 @@ export async function executeLifecycleRuntimeAction(
     const projected = await locateProjectedPmReviewLifecycleTask(root, taskId);
     if (projected) {
       try {
-        const note = pickStr(args, "note", "reason");
         const reason = pickStr(args, "reason", "note");
         if (action === "approve_review") {
           const projectedResult = await approveProjectedLifecycleTaskReview({
@@ -425,6 +452,7 @@ export async function executeLifecycleRuntimeAction(
             taskId,
             actor,
             ...(note ? { note } : {}),
+            ...(humanAcceptance ? { humanAcceptance } : {}),
           });
           return finalizeLifecycleResult(action, taskId, actor, projectedResult, root);
         }
@@ -488,11 +516,11 @@ export async function executeLifecycleRuntimeAction(
         return finalizeLifecycleResult(action, taskId, actor, result, root);
       }
       case "approve_review": {
-        const note = pickStr(args, "note", "reason");
         const result = await sm.approveReview({
           taskId,
           actor,
           ...(note ? { note } : {}),
+          ...(humanAcceptance ? { humanAcceptance } : {}),
         });
         return finalizeLifecycleResult(action, taskId, actor, result, root);
       }

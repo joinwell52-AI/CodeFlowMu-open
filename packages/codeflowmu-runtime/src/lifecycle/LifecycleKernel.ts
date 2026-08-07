@@ -42,6 +42,7 @@ export class LifecycleKernel {
     taskId: string;
     actor: string;
     note?: string;
+    humanAcceptance?: import("./types.ts").HumanTaskAcceptance;
   }): Promise<LifecycleTransitionResult> {
     return withProjectWriteLease(this.#projectRoot, "lifecycle.approve-review", () =>
       this.#sm.approveReview(input));

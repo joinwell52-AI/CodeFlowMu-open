@@ -74,7 +74,7 @@ describe("LifecycleStateMachine", () => {
     });
   });
 
-  it("needs_human blocks automatic PM approval but allows explicit ADMIN acceptance", async () => {
+  it("needs_human accepts a trusted human PM when PM is done_authority", async () => {
     await withTempLifecycle(async ({ rootDir, lifecycleRoot }) => {
       const taskId = "TASK-20260712-003-PM-to-QA";
       await writeTaskAt(lifecycleRoot, "review", `${taskId}.md`, {
@@ -85,26 +85,122 @@ describe("LifecycleStateMachine", () => {
         reviewer: "PM",
         done_authority: "PM",
         review_status: "pending",
+        fact_check_exception: true,
+        fact_check_exception_by: "ADMIN",
+        fact_check_exception_reason: "ADMIN verified the available evidence",
+        fact_check_decision_id: "fact-decision-003",
+        fact_check_exception_review_id: "REVIEW-20260712-003",
+        fact_check_exception_report_id: "REPORT-20260712-003-QA-to-PM",
       });
       const reviewsDir = join(rootDir, "fcop", "reviews");
       await mkdir(reviewsDir, { recursive: true });
       await writeFile(
         join(reviewsDir, "REVIEW-20260712-003.md"),
-        ["---", `task_id: ${taskId}`, "decision: needs_human", "---"].join("\n"),
+        [
+          "---",
+          "review_id: REVIEW-20260712-003",
+          `task_id: ${taskId}`,
+          "report_id: REPORT-20260712-003-QA-to-PM",
+          "decision: needs_human",
+          "---",
+        ].join("\n"),
         "utf-8",
       );
 
       const sm = new LifecycleStateMachine({ lifecycleRoot });
       await assert.rejects(
         () => sm.approveReview({ taskId, actor: "PM" }),
-        /explicit ADMIN risk acceptance/,
+        /trusted human decision/,
+      );
+      await assert.rejects(
+        () => sm.approveReview({ taskId, actor: "ADMIN" }),
+        /not done_authority PM/,
       );
       const accepted = await sm.approveReview({
         taskId,
-        actor: "ADMIN",
-        note: "risk accepted",
+        actor: "PM",
+        note: "task result accepted after evidence exception",
+        humanAcceptance: {
+          decisionId: "fact-decision-003",
+          reviewId: "REVIEW-20260712-003",
+          reportId: "REPORT-20260712-003-QA-to-PM",
+          operatorRole: "PM",
+          source: "panel_trusted_foreground_confirmation",
+          sessionId: "panel-test-session",
+          note: "task-only acceptance",
+        },
       });
       assert.equal(accepted.to, "done");
+      const store = new TaskFrontmatterStore();
+      const { fm } = await store.read(
+        `${lifecycleRoot}/done/${taskId}.md`.replace(/\\/g, "/"),
+      );
+      assert.equal(fm.approved_by, "PM");
+      assert.equal(fm.human_decision, true);
+      assert.equal(fm.human_decision_by, "PM");
+      assert.equal(fm.human_decision_source, "panel_trusted_foreground_confirmation");
+      assert.equal(fm.human_decision_session_id, "panel-test-session");
+      assert.equal(fm.human_decision_decision_id, "fact-decision-003");
+      assert.equal(fm.human_decision_review_id, "REVIEW-20260712-003");
+      assert.equal(fm.human_decision_report_id, "REPORT-20260712-003-QA-to-PM");
+      assert.equal(fm.human_decision_scope, "task_review_only_no_wp_publish_deploy_archive");
+      assert.deepEqual(
+        fm.transitions?.at(-1)?.based_on,
+        ["fact-decision-003", "REVIEW-20260712-003", "REPORT-20260712-003-QA-to-PM"],
+      );
+    });
+  });
+
+  it("needs_human still requires ADMIN when ADMIN is done_authority", async () => {
+    await withTempLifecycle(async ({ rootDir, lifecycleRoot }) => {
+      const taskId = "TASK-20260712-004-ADMIN-to-PM";
+      const reviewId = "REVIEW-20260712-004";
+      const reportId = "REPORT-20260712-004-PM-to-ADMIN";
+      await writeTaskAt(lifecycleRoot, "review", `${taskId}.md`, {
+        task_id: taskId,
+        from: "ADMIN",
+        to: "PM",
+        driver: "PM",
+        done_authority: "ADMIN",
+        review_status: "pending",
+        fact_check_exception: true,
+        fact_check_exception_by: "ADMIN",
+        fact_check_decision_id: "fact-decision-004",
+        fact_check_exception_review_id: reviewId,
+        fact_check_exception_report_id: reportId,
+      });
+      const reviewsDir = join(rootDir, "fcop", "reviews");
+      await mkdir(reviewsDir, { recursive: true });
+      await writeFile(join(reviewsDir, `${reviewId}.md`), [
+        "---",
+        `review_id: ${reviewId}`,
+        `task_id: ${taskId}`,
+        `report_id: ${reportId}`,
+        "decision: needs_human",
+        "---",
+      ].join("\n"), "utf-8");
+      const humanAcceptance = {
+        decisionId: "fact-decision-004",
+        reviewId,
+        reportId,
+        operatorRole: "PM",
+        source: "panel_trusted_foreground_confirmation" as const,
+      };
+      const sm = new LifecycleStateMachine({ lifecycleRoot });
+      await assert.rejects(
+        () => sm.approveReview({ taskId, actor: "PM", humanAcceptance }),
+        /not done_authority ADMIN/,
+      );
+      const result = await sm.approveReview({
+        taskId,
+        actor: "ADMIN",
+        humanAcceptance: { ...humanAcceptance, operatorRole: "ADMIN" },
+      });
+      assert.equal(result.to, "done");
+      const store = new TaskFrontmatterStore();
+      const { fm } = await store.read(`${lifecycleRoot}/done/${taskId}.md`.replace(/\\/g, "/"));
+      assert.equal(fm.approved_by, "ADMIN");
+      assert.equal(fm.human_decision_by, "ADMIN");
     });
   });
 

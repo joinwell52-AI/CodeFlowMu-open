@@ -24,6 +24,7 @@ export async function buildGitPushApprovalInput(input: {
   cwd: string;
   branch: string;
   subject: GitPushSubject;
+  threadKey?: string;
 }): Promise<PrepareOperationInput> {
   const branch = input.branch.trim();
   if (!branch || !/^[A-Za-z0-9._/-]+$/.test(branch) || branch.startsWith("-") || branch.includes("..")) {
@@ -55,6 +56,7 @@ export async function buildGitPushApprovalInput(input: {
   };
   return {
     request,
+    ...(input.threadKey?.trim() ? { thread_key: input.threadKey.trim() } : {}),
     reason: `向 origin/${branch} 推送本地提交 ${afterSha.slice(0, 12)}`,
     effects: [
       beforeSha === "absent"

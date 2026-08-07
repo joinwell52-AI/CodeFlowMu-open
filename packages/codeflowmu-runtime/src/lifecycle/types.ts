@@ -57,6 +57,8 @@ export type TaskFm = {
   fact_check_exception_at?: string;
   fact_check_exception_reason?: string;
   fact_check_decision_id?: string;
+  fact_check_exception_review_id?: string;
+  fact_check_exception_report_id?: string;
   fact_check_correction_id?: string;
   fact_check_correction_reason?: string;
   resolution_status?: string;
@@ -106,6 +108,17 @@ export type TaskFm = {
   archived_at?: string;
 
   approved_by?: string;
+  human_decision?: boolean;
+  human_decision_at?: string;
+  human_decision_by?: string;
+  human_decision_role?: string;
+  human_decision_source?: string;
+  human_decision_session_id?: string;
+  human_decision_decision_id?: string;
+  human_decision_review_id?: string;
+  human_decision_report_id?: string;
+  human_decision_note?: string;
+  human_decision_scope?: string;
   archived_by?: string;
   archive_reason?: string;
   archive_mode?: string;
@@ -153,6 +166,16 @@ export type LifecycleTransitionResult = {
   from: LifecycleStage;
   to: LifecycleStage;
   path: string;
+};
+
+export type HumanTaskAcceptance = {
+  decisionId: string;
+  reviewId: string;
+  reportId: string;
+  operatorRole: string;
+  source: "panel_trusted_foreground_confirmation";
+  sessionId?: string;
+  note?: string;
 };
 
 export type LifecycleWriteOpts = {

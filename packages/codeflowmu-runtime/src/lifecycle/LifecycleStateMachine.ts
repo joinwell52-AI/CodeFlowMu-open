@@ -15,8 +15,12 @@ import {
 } from "./childTaskArchiveGate.ts";
 import { isAdminMainlineTaskFilename } from "./closedParentResidue.ts";
 import { evaluateReworkSettlement } from "../ledger/reworkSettlement.ts";
-import { parseMarkdownFrontmatter } from "../ledger/frontmatter.ts";
 import { isTaskReopenedForReworkFromLedger } from "../ledger/taskReworkSemantics.ts";
+import {
+  assertTrustedHumanTaskAcceptance,
+  findPendingHumanReview,
+  humanDecisionTaskPatch,
+} from "./humanTaskAcceptance.ts";
 import { TaskFrontmatterStore } from "./TaskFrontmatterStore.ts";
 import { TransitionRecorder } from "./TransitionRecorder.ts";
 import {
@@ -68,39 +72,6 @@ function resolveRejectDisplayStatus(
     return "waiting_pm_rework";
   }
   return "waiting_rework";
-}
-
-async function hasPendingHumanReview(
-  lifecycleRoot: string,
-  taskId: string,
-): Promise<boolean> {
-  const reviewsDir = join(lifecycleRoot, "..", "reviews");
-  let names: string[] = [];
-  try {
-    names = await fs.readdir(reviewsDir);
-  } catch {
-    return false;
-  }
-  const canonical = /^TASK-\d{8}-\d{3,}/i.exec(taskId)?.[0].toUpperCase() ?? taskId.toUpperCase();
-  for (const name of names) {
-    if (!name.startsWith("REVIEW-") || !name.endsWith(".md")) continue;
-    const raw = await fs.readFile(join(reviewsDir, name), "utf-8").catch(() => "");
-    const review = parseMarkdownFrontmatter(raw) as Record<string, unknown>;
-    if (String(review.decision ?? "").toLowerCase() !== "needs_human") continue;
-    const reviewTask = String(review.task_id ?? review.subject_id ?? "");
-    const reviewCanonical =
-      /^TASK-\d{8}-\d{3,}/i.exec(reviewTask)?.[0].toUpperCase() ?? reviewTask.toUpperCase();
-    if (reviewCanonical !== canonical) continue;
-    const approval = review.human_approval;
-    if (
-      !approval ||
-      typeof approval !== "object" ||
-      !String((approval as Record<string, unknown>).approved_at ?? "").trim()
-    ) {
-      return true;
-    }
-  }
-  return false;
 }
 
 export class LifecycleStateMachine {
@@ -217,6 +188,7 @@ export class LifecycleStateMachine {
     taskId: string;
     actor: string;
     note?: string;
+    humanAcceptance?: import("./types.ts").HumanTaskAcceptance;
   }): Promise<LifecycleTransitionResult> {
     const { path, filename } = await this.locateTask(input.taskId);
     const { fm } = await this.store.read(path);
@@ -233,21 +205,24 @@ export class LifecycleStateMachine {
         `approve_review denied: unresolved blocking ISSUE ${fm.blocking_issue_id}`,
       );
     }
-    const actorIsAdmin = input.actor.trim().toUpperCase() === "ADMIN";
-    const pendingHumanReview = await hasPendingHumanReview(
+    const pendingHumanReview = await findPendingHumanReview(
       this.lifecycleRoot,
       input.taskId,
     );
-    // A needs_human decision is a risk boundary: only ADMIN may explicitly
-    // accept it, even when the normal task done_authority is PM.
-    if (!(actorIsAdmin && pendingHumanReview)) {
-      this.authority.assert(fm, input.actor, "approve_review");
-    }
-    if (!actorIsAdmin && pendingHumanReview) {
-      throw new Error(
-        "approve_review denied: unresolved needs_human review requires explicit ADMIN risk acceptance",
-      );
-    }
+    // needs_human means a trusted human must decide; it does not imply ADMIN.
+    // The selected role must still satisfy the task's ordinary done_authority.
+    this.authority.assert(fm, input.actor, "approve_review");
+    const acceptance = pendingHumanReview
+      ? assertTrustedHumanTaskAcceptance({
+          task: fm,
+          actor: input.actor,
+          pending: pendingHumanReview,
+          acceptance: input.humanAcceptance,
+        })
+      : undefined;
+    const basedOn = acceptance
+      ? [acceptance.decisionId, acceptance.reviewId, acceptance.reportId]
+      : undefined;
 
     await this.appendTransition(path, {
       from,
@@ -255,15 +230,18 @@ export class LifecycleStateMachine {
       by: input.actor,
       action: "approve_review",
       decision: "approved",
+      ...(basedOn ? { based_on: basedOn } : {}),
       ...(input.note ? { reason: input.note } : {}),
     });
 
+    const approvedAt = new Date().toISOString();
     await this.store.patch(path, {
       review_status: "approved",
       approved_by: input.actor,
-      approved_at: new Date().toISOString(),
+      approved_at: approvedAt,
       lifecycle_projection: "done",
       display_status: "done",
+      ...(acceptance ? humanDecisionTaskPatch(acceptance, input.actor, approvedAt, input.note) : {}),
     });
 
     return this.moveTask(path, filename, from, "done");

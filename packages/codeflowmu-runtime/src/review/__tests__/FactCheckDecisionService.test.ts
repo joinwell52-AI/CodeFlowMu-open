@@ -100,7 +100,10 @@ test("overrule replay converges stale rework and blocking issue projections", as
     assert.deepEqual(first.projection.rework_tasks_cancelled, ["TASK-20260805-002"]);
     assert.deepEqual(first.projection.blocking_issues_resolved, ["ISSUE-20260805-001"]);
     assert.equal(replay.idempotent, true);
-    assert.match(await readFile(rootPath, "utf8"), /fact_check_exception: true/);
+    const rootTask = await readFile(rootPath, "utf8");
+    assert.match(rootTask, /fact_check_exception: true/);
+    assert.match(rootTask, /fact_check_exception_review_id: REVIEW-20260805-001-REVIEW-GATE/);
+    assert.match(rootTask, new RegExp(`fact_check_exception_report_id: ${reportId}`));
     assert.match(await readFile(reworkPath, "utf8"), /dispatch_state: cancelled/);
     assert.match(await readFile(issuePath, "utf8"), /resolution_status: resolved/);
   } finally {

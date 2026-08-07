@@ -388,6 +388,7 @@ import {
   evaluateAgentWakeGate,
   evaluateTaskDispatchWakeGate,
   humanApprovalApprovedAt,
+  resolveDoneAuthority,
   isReviewPendingHuman,
   reviewMatchesScope,
   loadReviewDecisionPolicy,
@@ -9698,7 +9699,7 @@ export function buildWebPanelApp(
         subject: { actor: "PANEL-REQUEST", role: "AGENT", project_id: activeProjectId || "active-project" },
         action: { capability: "runtime.governance.policy.write", operation: "save_review_decision_policy", executor: "review.policy.save" },
         resource: { type: "governance_policy", targets: ["fcop/shared/policies/review-decision-policy.yaml"], scope: { updates } },
-        context: { workspace: root, environment: "runtime_governance", initiated_by: "agent", authorization_source: "none", human_confirmation_id: null },
+        context: { workspace: root, environment: "runtime_governance", initiated_by: "user", authorization_source: "none", human_confirmation_id: null },
         effect: { governance_change: true },
         snapshot: { current_policy: current, proposed_updates: updates },
       },
@@ -13540,6 +13541,7 @@ export function buildWebPanelApp(
       const prepared = operationApprovalService().prepare(await buildGitPushApprovalInput({
         cwd,
         branch,
+        threadKey: String(req.body?.thread_key ?? ""),
         subject: {
           actor: String(req.body?.requested_by ?? "PANEL-REQUEST").trim() || "PANEL-REQUEST",
           role: String(req.body?.role ?? "AGENT").trim() || "AGENT",
@@ -14960,6 +14962,186 @@ export function buildWebPanelApp(
       });
     } catch (err) {
       sendError(res, 500, "APPROVE_FAILED", String(err));
+    }
+  });
+
+  app.post("/api/v2/tasks/:taskId/human-accept", async (req: Request, res: Response) => {
+    try {
+      const root = projectRoot();
+      const taskId = lifecycleTaskIdParam(String(req.params["taskId"] ?? ""));
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      if (body["confirmed"] !== true) {
+        sendError(
+          res,
+          400,
+          "HUMAN_ACCEPTANCE_CONFIRMATION_REQUIRED",
+          "Human task acceptance requires an explicit confirmation request",
+        );
+        return;
+      }
+      const actor = String(body["actor"] ?? "").trim().toUpperCase();
+      if (actor !== "PM" && actor !== "ADMIN") {
+        sendError(res, 403, "HUMAN_ACCEPTANCE_ROLE_INVALID", "Select PM or ADMIN as the human operator role");
+        return;
+      }
+      const taskHit = findTaskFileByIdPrefix(root, taskId);
+      if (!taskHit?.path) {
+        sendError(res, 404, "TASK_NOT_FOUND", taskId);
+        return;
+      }
+      const raw = readFileSync(taskHit.path, "utf-8");
+      const fm = parseMarkdownFrontmatter(raw) as Record<string, unknown>;
+      const stageFromFile = taskHit.path.replace(/\\/g, "/").toLowerCase()
+        .match(/\/fcop\/_lifecycle\/(inbox|active|review|done|archive)\//)?.[1];
+      const stage = stageFromFile || String(fm["lifecycle_projection"] ?? fm["state"] ?? "").trim().toLowerCase();
+      const exceptionAccepted = fm["fact_check_exception"] === true ||
+        String(fm["fact_check_exception"] ?? "").trim().toLowerCase() === "true";
+      const exceptionBy = String(fm["fact_check_exception_by"] ?? "").trim().toUpperCase();
+      const decisionId = String(fm["fact_check_decision_id"] ?? "").trim();
+      const reviewId = String(fm["fact_check_exception_review_id"] ?? "").trim();
+      const reportId = String(fm["fact_check_exception_report_id"] ?? "").trim();
+      const requestedDecisionId = String(body["decision_id"] ?? "").trim();
+      const requestedReviewId = String(body["review_id"] ?? "").trim();
+      const requestedReportId = String(body["report_id"] ?? "").trim();
+      if (
+        !exceptionAccepted || exceptionBy !== "ADMIN" ||
+        !decisionId || !reviewId || !reportId
+      ) {
+        sendError(
+          res,
+          409,
+          "FACT_CHECK_EXCEPTION_REQUIRED",
+          "Human task acceptance requires an audited fact-check exception",
+        );
+        return;
+      }
+      if (
+        requestedDecisionId !== decisionId ||
+        requestedReviewId !== reviewId ||
+        requestedReportId !== reportId
+      ) {
+        sendError(
+          res,
+          409,
+          "HUMAN_ACCEPTANCE_STALE",
+          "Fact-check decision, review, or report changed; refresh the task before accepting it",
+        );
+        return;
+      }
+      const acceptedDecisionId = String(fm["human_decision_decision_id"] ?? "").trim();
+      const acceptedBy = String(fm["human_decision_by"] ?? "").trim().toUpperCase();
+      if (stage === "done" && acceptedDecisionId === decisionId && acceptedBy === actor) {
+        res.json({
+          ok: true,
+          idempotent_replay: true,
+          task_id: taskId,
+          from: "review",
+          to: "done",
+          path: taskHit.path,
+          acceptance: {
+            actor,
+            human_decision: true,
+            source: String(fm["human_decision_source"] ?? "panel_trusted_foreground_confirmation"),
+            decision_id: decisionId,
+            review_id: reviewId,
+            report_id: reportId,
+            scope: "task_review_only_no_wp_publish_deploy_archive",
+          },
+        });
+        return;
+      }
+      if (stage !== "review") {
+        sendError(res, 409, "HUMAN_ACCEPTANCE_STATE_CHANGED", `task ${taskId} is ${stage || "unknown"}`);
+        return;
+      }
+      const requiredRole = resolveDoneAuthority(fm);
+      if (actor !== requiredRole) {
+        sendError(
+          res,
+          403,
+          "HUMAN_ACCEPTANCE_DONE_AUTHORITY_REQUIRED",
+          `Human task acceptance denied: selected role ${actor} is not done_authority ${requiredRole}; switch the operator to ${requiredRole}`,
+        );
+        return;
+      }
+      const gate = await adminApprovalBlockedByMissingEval(root, taskId, actor);
+      if (gate.blocked) {
+        sendError(
+          res,
+          403,
+          "EVAL_REQUIRED_BEFORE_HUMAN_ACCEPTANCE",
+          "PM final report exists but EVAL observation is missing; generate EVAL before human task acceptance",
+        );
+        return;
+      }
+      const note = String(body["note"] ?? "").trim() || `${actor} 人工验收事实核查例外后的任务结果`;
+      const humanConfirmed = await trustedForegroundConfirmation({
+        title: `CodeFlowMu · 以 ${actor} 人工验收任务`,
+        message: [
+          `操作者：${actor}（真人操作）`,
+          `目标任务：${taskId}`,
+          `关联 REPORT：${reportId}`,
+          `关联 REVIEW：${reviewId}`,
+          `事实核查决定：${decisionId}`,
+          `例外理由：${String(fm["fact_check_exception_reason"] ?? "—")}`,
+          "",
+          "影响：仅将当前任务从 review 转为 done。",
+          "不代表产品或高风险接受，不开放后续 WP，不发布、不部署、不归档。",
+        ].join("\n"),
+      });
+      if (!humanConfirmed) {
+        sendError(res, 409, "HUMAN_ACCEPTANCE_CANCELLED", "Human operator cancelled task acceptance");
+        return;
+      }
+      const result = await executeLifecycleRuntimeAction(
+        "approve_review",
+        {
+          task_id: taskId,
+          actor,
+          note,
+          acceptance_decision_id: decisionId,
+          acceptance_review_id: reviewId,
+          acceptance_report_id: reportId,
+        },
+        root,
+        {
+          humanDecision: {
+            verifiedByHost: true,
+            source: "panel_trusted_foreground_confirmation",
+            sessionId: opts.runtimeInstance?.instanceId ?? `panel-${panelPort}`,
+          },
+        },
+      );
+      if (!result.ok) {
+        sendLifecycleHttp(res, result, {
+          panelAction: "human_accept_task",
+          taskId,
+          actor,
+        });
+        return;
+      }
+      await ensureLedgerFresh(root, { rebuild: true, force: true });
+      appendPanelRuntimeAction(root, {
+        operator: actor,
+        action: "human_accept_task",
+        target_task: taskId,
+        result: "ok",
+        detail: `${decisionId} · ${reviewId} · ${reportId} · task review only; no WP/publish/deploy/archive grant`,
+      });
+      res.json({
+        ...result,
+        acceptance: {
+          actor,
+          human_decision: true,
+          source: "panel_trusted_foreground_confirmation",
+          decision_id: decisionId,
+          review_id: reviewId,
+          report_id: reportId,
+          scope: "task_review_only_no_wp_publish_deploy_archive",
+        },
+      });
+    } catch (err) {
+      sendError(res, 500, "HUMAN_ACCEPTANCE_FAILED", err instanceof Error ? err.message : String(err));
     }
   });
 

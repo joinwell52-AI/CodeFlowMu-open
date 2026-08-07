@@ -151,6 +151,8 @@ export class FactCheckDecisionService {
       projection.fact_check_exception_at = record.at;
       projection.fact_check_exception_reason = record.reason;
       projection.fact_check_decision_id = record.idempotency_key;
+      projection.fact_check_exception_review_id = record.review_id;
+      projection.fact_check_exception_report_id = record.report_id;
       await store.write(rootTask.path, fm, body);
       result.root_projection_updated = true;
     }
