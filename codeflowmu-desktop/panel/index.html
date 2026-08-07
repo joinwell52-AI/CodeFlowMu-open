@@ -3550,7 +3550,7 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
       <button type="button" class="rp-tab" data-st="all" onclick="setIssueStatusTab('all')" data-i18n="is.tab.all">全部</button>
     </div>
     <span class="tc" id="tc-issues">0</span>
-    <button type="button" class="rp-tab" id="is-promotion-summary-btn" onclick="showIssuePromotionSummary()">公共 Issue 提交 <span class="tc" id="tc-issue-promotions">0</span></button>
+    <button type="button" class="rp-tab" id="is-promotion-summary-btn" onclick="showIssuePromotionSummary()">公共 Issue（已发布/全部） <span class="tc" id="tc-issue-promotions">0/0</span></button>
     <div style="flex:1"></div>
     <input class="rp-list-search" id="is-search" type="text" data-i18n-ph="is.searchPh" placeholder="搜索摘要/报告人…"
            oninput="onIssueSearch(this.value)" style="max-width:220px">
@@ -5064,9 +5064,9 @@ select.ap-hf-btn{background:var(--bg3);-webkit-appearance:none;appearance:none;m
     <div class="issue-closure-field wide"><label>结案原因 *</label><textarea id="ic-reason" placeholder="请说明为什么关闭这个 ISSUE" oninput="invalidateIssueClosurePreview()"></textarea><div id="ic-reason-error" class="issue-closure-field-error"></div></div>
     <div class="issue-closure-field wide">
       <div class="issue-closure-checks">
-        <label><input type="checkbox" id="ic-promote" checked onchange="invalidateIssueClosurePreview()">生成母版修复证据</label>
+          <label><input type="checkbox" id="ic-promote" onchange="invalidateIssueClosurePreview()">生成公共 Issue 草稿</label>
       </div>
-      <div style="font-size:12px;color:var(--text3)">只生成本地脱敏草稿并自动预览；不会自动写入 GitHub。</div>
+      <div id="ic-promote-hint" style="font-size:12px;color:var(--text3)">系统先判断产品归属、内容质量和隐私风险；只生成本地脱敏草稿，不会自动写入 GitHub。</div>
     </div>
     <div id="ic-submit-status" class="issue-closure-field wide" style="min-height:20px;color:var(--text3);font-size:13px"></div>
   </div>
@@ -14514,7 +14514,11 @@ async function loadIssuePromotions(){
     note.innerHTML=esc(targetText+' '+authText)+(_issueGithubAuth.connected?'':' <button type="button" class="hbtn" onclick="connectGithubForIssuePublish()" style="margin-left:8px;padding:3px 9px">连接 GitHub</button>');
   }
   const count=document.getElementById('tc-issue-promotions');
-  if(count)count.textContent=String(issuePromotions.length);
+  if(count){
+    const published=issuePromotions.filter(row=>row?.target_issue_url||String(row?.status||'')==='published').length;
+    count.textContent=published+'/'+issuePromotions.length;
+    count.title='已发布 '+published+'，全部本地记录 '+issuePromotions.length;
+  }
   return issuePromotions;
 }
 async function showIssuePromotionSummary(){
@@ -14560,7 +14564,7 @@ function renderIssuePage(){
       +'<td style="font-family:monospace;font-size:13px">'+esc(fn)+'</td>'
       +'<td class="is-sev-'+esc(sev)+'">'+esc(sev+(i.severity_level?' · '+i.severity_level:''))+'</td>'
       +'<td>'+esc(i.reporter||'?')+'</td>'
-      +'<td>'+esc((i.summary||i.preview||'').slice(0,120))+'</td>'
+      +'<td>'+esc((i.summary||i.preview||'').slice(0,120))+'<div style="font-size:11px;color:var(--text3);margin-top:3px">'+esc(issueOwnershipLabel(i.analysis?.ownership_scope))+' · '+esc(issueEligibilityLabel(i.analysis?.public_eligibility))+' · 质量 '+esc(i.analysis?.quality_score??'-')+'</div></td>'
       +'<td>'+esc(stLbl)+'</td>'
       +'<td><div class="is-row-actions">'
       +'<button type="button" class="hbtn" data-issue-action="view" data-fn="'+esc(fn)+'">查看</button>'
@@ -14594,6 +14598,12 @@ function issuePromotionStatusLabel(status){
 function issueResolutionLabel(value){
   return ({fixed:'问题已解决',development_fix:'转为开发修复',duplicate:'重复问题',no_action:'无需处理'})[String(value||'')]||String(value||'-');
 }
+function issueOwnershipLabel(value){
+  return ({codeflowmu_product:'CodeFlowMu 产品',project_product:'项目产品',environment_or_deployment:'环境/部署',insufficient_information:'信息不足',sensitive_project_data:'敏感项目数据'})[String(value||'')]||String(value||'未分类');
+}
+function issueEligibilityLabel(value){
+  return ({candidate:'可进入公共预审',local_only:'仅项目内处理',blocked_sensitive:'含敏感数据，禁止公开',needs_information:'补充事实后再判断'})[String(value||'')]||String(value||'未判断');
+}
 function renderIssuePromotionPage(){
   const tb=document.getElementById('is-promotion-tbody');if(!tb)return;
   if(!issuePromotions.length){
@@ -14608,7 +14618,8 @@ function renderIssuePromotionPage(){
     const canApply=_issueGithubAuth.connected&&publicSafe&&!['published','pending_approval','approved_pending_execution','publishing'].includes(status);
     const actionLabel=status==='publish_failed_retryable'?'修复后重试发布':'审阅并申请发布';
     const statusHint=row.publish_error?'<div style="font-size:11px;color:#fca5a5;margin-top:3px">'+esc((row.publish_error_code?row.publish_error_code+'：':'')+row.publish_error)+'</div>':'';
-    return '<tr><td><button type="button" class="link-btn" data-promotion-issue="'+esc(row.source_issue_filename||'')+'">'+esc(row.source_issue_id||row.source_issue_filename||'-')+'</button><div class="mono muted" style="font-size:11px">'+esc(id)+'</div></td>'
+    const cls=row.classification||{};
+    return '<tr><td><button type="button" class="link-btn" data-promotion-issue="'+esc(row.source_issue_filename||'')+'">'+esc(row.source_issue_id||row.source_issue_filename||'-')+'</button><div class="mono muted" style="font-size:11px">'+esc(id)+'</div><div style="font-size:11px;color:var(--text3);margin-top:3px">'+esc(issueOwnershipLabel(cls.category))+' · 质量 '+esc(cls.quality_score??'-')+'</div></td>'
       +'<td>'+esc(issuePromotionStatusLabel(status))+statusHint+'</td><td>'+esc(row.target_repo||'-')+'</td><td>'+esc(fmtTime(row.published_at||row.generated_at||''))+'</td><td>'+receipt+'</td>'
       +'<td><div class="is-row-actions"><button type="button" class="hbtn" data-promotion-action="preview" data-id="'+esc(id)+'">预览草稿</button><button type="button" class="hbtn" data-promotion-action="download" data-id="'+esc(id)+'">下载证据包</button>'
       +(canApply?'<button type="button" class="hbtn" data-promotion-action="publish" data-id="'+esc(id)+'">'+actionLabel+'</button>':'')
@@ -14641,8 +14652,16 @@ async function openIssueDetail(fn){
     if(md){
       const a=d.analysis||{};
       const analysis='## 分析判断\n\n'
-        +'原因类型：'+(a.cause_type||'未分类')+'\n\n'
+        +'触发类型：'+(a.trigger_type||'manual_issue')+'（只说明 ISSUE 如何产生，不等于技术根因）\n\n'
+        +'根因类型：'+(a.cause_type||'insufficient_evidence')+'\n\n'
         +'原因说明：'+(a.cause_summary||'暂无')+'\n\n'
+        +'问题归属：'+issueOwnershipLabel(a.ownership_scope)+'\n\n'
+        +'公共预分类：'+issueEligibilityLabel(a.public_eligibility)+'\n\n'
+        +'预分类依据：'+(a.public_reason||'暂无')+'\n\n'
+        +'内容质量：'+(a.quality_score??0)+'/100 · '+(a.quality_level||'insufficient')+(Array.isArray(a.quality_issues)&&a.quality_issues.length?'（待补：'+a.quality_issues.join('；')+'）':'')+'\n\n'
+        +'隐私风险：'+(a.privacy_risk||'none')+'\n\n'
+        +'状态一致性：'+(a.state_consistency||'consistent')+'\n\n'
+        +'建议标题：'+(a.suggested_title||'暂无')+'\n\n'
         +'影响范围：'+(a.impact_scope||'暂无')+'\n\n'
         +'严重度判断：'+(a.severity_reason||'暂无')+'\n\n'
         +'当前状态判断：'+(a.current_status_judgment||'暂无')+'\n\n'
@@ -14716,7 +14735,14 @@ async function closeSelectedIssue(){
   const context=document.getElementById('issue-closure-context');
   if(context)context.textContent=[_isSelectedFn,_isSelectedDetail.source_task||_isSelectedDetail.task_id||'',_isSelectedDetail.thread_key||'',_isSelectedDetail.blocking_issue_id?'blocker: '+_isSelectedDetail.blocking_issue_id:''].filter(Boolean).join(' · ');
   ['ic-resolution-type','ic-reason'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
-  document.getElementById('ic-promote').checked=true;
+  const promote=document.getElementById('ic-promote');
+  const eligibility=_isSelectedDetail?.analysis?.public_eligibility||'needs_information';
+  const eligible=eligibility==='candidate';
+  if(promote){promote.checked=eligible;promote.disabled=!eligible;}
+  const promoteHint=document.getElementById('ic-promote-hint');
+  if(promoteHint)promoteHint.textContent=eligible
+    ?'预分类通过：'+(_isSelectedDetail.analysis.public_reason||'属于 CodeFlowMu Open 产品候选。')+' 这里只生成本地脱敏草稿，不会自动写入 GitHub。'
+    :'预分类未通过：'+(_isSelectedDetail?.analysis?.public_reason||'需补充事实后再判断。')+' 本次结案不会生成公共草稿。';
   document.getElementById('ic-resolution-error').textContent='';
   document.getElementById('ic-reason-error').textContent='';
   document.getElementById('ic-submit-status').textContent='';
@@ -14772,7 +14798,9 @@ function showIssuePromotionDraft(d){
   _issuePromotion=d;
   const publicSafe=d.redaction?.public_safe===true;
   const labels=Array.isArray(d.labels)?d.labels:[];
-  document.getElementById('issue-promotion-meta').textContent='目标仓库：'+(d.target_repo||'-')+' · 策略：'+(d.visibility_policy||'-')+' · 标签：'+(labels.join('、')||'无')+' · 公开安全：'+(publicSafe?'通过':'未通过，禁止发布')+' · Issue 标题：'+(d.draft_title||'-');
+  const cls=d.classification||{};
+  const blockers=Array.isArray(cls.quality_issues)&&cls.quality_issues.length?' · 待补/阻断：'+cls.quality_issues.join('；'):'';
+  document.getElementById('issue-promotion-meta').textContent='目标仓库：'+(d.target_repo||'-')+' · 策略：'+(d.visibility_policy||'-')+' · 分类：'+issueOwnershipLabel(cls.category)+' · 质量：'+(cls.quality_score??'-')+'/100 · 公开安全：'+(publicSafe?'通过':'未通过，禁止发布')+blockers+' · Issue 标题：'+(d.draft_title||'-');
   document.getElementById('issue-promotion-preview').textContent=d.draft_body||'';
   const publish=document.getElementById('issue-promotion-publish');
   const connect=document.getElementById('issue-promotion-connect');

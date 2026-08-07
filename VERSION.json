@@ -3,25 +3,25 @@
   "productName": "CodeFlowMu Open Dev Team Edition",
   "positioning": "A multi-agent development team application governed by the FCoP protocol and driven through Cursor SDK interfaces.",
   "edition": "open-dev-team",
-  "version": "V1.2.24-open",
-  "npmVersion": "1.2.24-open",
+  "version": "V1.2.25-open",
+  "npmVersion": "1.2.25-open",
   "releaseChannel": "open",
   "status": "public-open",
   "sourceRepository": "joinwell52-AI/codeflowmu1.2.21",
   "targetRepository": "joinwell52-AI/CodeFlowMu-open",
-  "builtAt": "2026-08-07T06:01:17.300Z",
-  "sourceGitCommit": "c1b2b93a2aed9af5990aab9dfc550cf48b01ee6c",
+  "builtAt": "2026-08-07T09:46:47.894Z",
+  "sourceGitCommit": "51f224280ca8e94796a8a8212a5e492bc679f16f",
   "sourceDirty": false,
-  "motherVersion": "V1.2.24",
+  "motherVersion": "V1.2.25",
   "releaseNotes": {
-    "version": "V1.2.24-open",
+    "version": "V1.2.25-open",
     "date": "2026-08-07",
     "tasks": [
       "TASK-20260803-001"
     ],
-    "title": "CodeFlowMu 开源版本 V1.2.23-open",
+    "title": "CodeFlowMu 开源版本 V1.2.24-open",
     "changes": [
-      "发布新的开源版本"
+      "发布开源版本"
     ],
     "affected": [
       "CodeFlowMu",

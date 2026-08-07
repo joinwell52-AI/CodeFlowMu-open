@@ -57,6 +57,7 @@ export const ISSUE_EVENT_STATUSES = [
 export const ISSUE_PROMOTION_STATUSES = [
   "not_promoted",
   "draft_created",
+  "draft_unsafe",
   "exported",
   "import_pending",
   "imported",

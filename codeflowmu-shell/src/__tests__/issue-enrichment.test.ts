@@ -89,10 +89,58 @@ test("force archived parent makes an open issue historical", () => {
   assert.equal(result.inactive_reason, "parent_force_archived");
 });
 
+test("separates report trigger from a project algorithm regression root cause", () => {
+  const root = projectWithReports([]);
+  const result = enrichIssueMetadata(
+    root,
+    { reason: "failed_report", summary: "WP09 住址 exact 回退 0/8" },
+    "## 问题摘要\n\nlive expansion 门禁未通过，住址 exact 相对 ROI=off 基线无增益。\n\n## 证据\n\nQA 对比结果为 0/8 FAIL。\n\n## 建议动作\n\n固定样本与基线后重新验证。",
+  );
+  assert.equal(result.analysis.trigger_type, "failed_report");
+  assert.equal(result.analysis.cause_type, "product_algorithm_regression");
+  assert.equal(result.analysis.ownership_scope, "project_product");
+  assert.equal(result.analysis.public_eligibility, "local_only");
+});
+
+test("classifies REVIEW-GATE file evidence false positive as a public product candidate", () => {
+  const root = projectWithReports([]);
+  const result = enrichIssueMetadata(
+    root,
+    { summary: "误闸返工需要撤销" },
+    "## 背景\n\n自动 REVIEW-GATE 判定 missing_data_evidence，要求补造 data.query。\n\n## 真实事实\n\nQA 使用本地 JSON 文件读取与脚本评测，未声称数据库或 SQL；不应补造 data.query。\n\n## 影响\n\n误闸会生成无意义返工并阻塞 approve。\n\n## 仍需 Runtime\n\n修复证据类型判断并增加回归测试。",
+  );
+  assert.equal(result.analysis.cause_type, "evidence_gate_false_positive");
+  assert.equal(result.analysis.ownership_scope, "codeflowmu_product");
+  assert.equal(result.analysis.public_eligibility, "candidate");
+  assert.match(result.analysis.suggested_title, /REVIEW-GATE/);
+});
+
+test("blocks public promotion when an issue contains real-name and full-address evidence", () => {
+  const root = projectWithReports([]);
+  const result = enrichIssueMetadata(
+    root,
+    { summary: "生僻字 OCR 未吐字" },
+    "## 现象\n\n人审真值：呙生建。正确住址为资阳市安岳县周礼镇海棠村7组47号。\n\n## 处置\n\n脱敏后保留最小复现样本。",
+  );
+  assert.equal(result.analysis.privacy_risk, "high");
+  assert.equal(result.analysis.public_eligibility, "blocked_sensitive");
+});
+
+test("structured closed state wins over missing later report and body-only closure is flagged", () => {
+  const root = projectWithReports([]);
+  const closed = enrichIssueMetadata(root, { status: "closed" }, "## 现象\n\n存在明确问题。" );
+  assert.equal(closed.effective_status, "resolved");
+  const stale = enrichIssueMetadata(root, { status: "open" }, "## 状态更新\n\nstatus -> closed");
+  assert.equal(stale.effective_status, "active");
+  assert.equal(stale.analysis.state_consistency, "body_status_conflict");
+});
+
 test("issue detail UI renders structured analysis", () => {
   const html = readFileSync(join(process.cwd(), "..", "codeflowmu-desktop", "panel", "index.html"), "utf-8");
   assert.match(html, /## 分析判断/);
   assert.match(html, /a\.cause_type/);
+  assert.match(html, /a\.public_eligibility/);
+  assert.match(html, /a\.quality_score/);
   assert.match(html, /severity_level/);
 });
 

@@ -4,14 +4,41 @@ import { join } from "node:path";
 export type IssueCauseType =
   | "dependency_pending"
   | "premature_execution"
+  | "evidence_gate_false_positive"
+  | "product_algorithm_regression"
+  | "product_data_edge_case"
+  | "deployment_artifact_stale"
+  | "environment_configuration_missing"
   | "business_validation_fail"
   | "panel_display_issue"
   | "lifecycle_integrity_issue"
-  | "unclassified";
+  | "insufficient_evidence";
+
+export type IssueOwnershipScope =
+  | "codeflowmu_product"
+  | "project_product"
+  | "environment_or_deployment"
+  | "insufficient_information";
+
+export type IssuePublicEligibility =
+  | "candidate"
+  | "local_only"
+  | "blocked_sensitive"
+  | "needs_information";
 
 export interface IssueAnalysis {
+  trigger_type: string;
   cause_type: IssueCauseType;
   cause_summary: string;
+  ownership_scope: IssueOwnershipScope;
+  public_eligibility: IssuePublicEligibility;
+  public_reason: string;
+  privacy_risk: "none" | "possible" | "high";
+  quality_score: number;
+  quality_level: "good" | "needs_improvement" | "insufficient";
+  quality_issues: string[];
+  suggested_title: string;
+  state_consistency: "consistent" | "body_status_conflict" | "parent_archived";
   impact_scope: string;
   severity_reason: string;
   current_status_judgment: string;
@@ -135,13 +162,66 @@ function archivedParentProjection(
 
 export function classifyIssueCause(reporter: string, frontmatter: Record<string, unknown>, body: string): IssueCauseType {
   const text = `${Object.values(frontmatter).join(" ")} ${body}`.toLowerCase();
-  if (/(错误归档|错误 approve|状态错乱|任务.*丢失|报告.*丢失|bucket mismatch|lifecycle.*(?:corrupt|mismatch)|wrong archive)/i.test(text)) return "lifecycle_integrity_issue";
+  if (/review-gate|missing_data_evidence|data\.query|fact_check_deterministic_failure_not_overrulable/i.test(text)
+    && /(?:本地\s*(?:json|文件)|文件读取|未声称.*(?:数据库|sql)|不应补造|误闸)/i.test(text)) return "evidence_gate_false_positive";
+  if (/(错误归档|错误 approve|状态错乱|任务.*丢失|报告.*丢失|bucket mismatch|lifecycle.*(?:corrupt|mismatch|split)|wrong archive|session.*(?:ended|closed).*(?:task|任务).*(?:blocked|active|未完成))/i.test(text)) return "lifecycle_integrity_issue";
   if (/(reporter\s*=\s*\?|报告人.*\?|字段缺失|排序错误|列表显示不一致|display issue|sorting issue)/i.test(text)) return "panel_display_issue";
+  if (/(公网\s*pwa|gateway\s*静态|静态前端|frontend\/dist|旧\s*ui|发布物.*(?:旧|滞后)|artifact.*stale)/i.test(text)) return "deployment_artifact_stale";
+  if (/(?:^|\W)\.env|persist_|dataset_dir|配置未启用|环境变量|runtime setting/i.test(text)) return "environment_configuration_missing";
+  if (/(exact.*(?:0\s*\/\s*8|回退|无增益)|baseline.*(?:回退|无增益)|ocr.*(?:回退|退化)|识别.*(?:回退|退化)|算法.*回归)/i.test(text)) return "product_algorithm_regression";
+  if (/(生僻字|多行.*(?:ocr|粘连|合并)|字段串扰|姓名错位|地址.*串行|住址.*串接)/i.test(text)) return "product_data_edge_case";
   if (/(9\s*\/\s*10|qa\s*(?:最终\s*)?fail|试玩\s*fail|验收不通过|关卡缺失|磁铁|与.*验收期望不符|business validation)/i.test(text)) return "business_validation_fail";
   const dependencySignal = /(前置未满足|尚无.*write_report|未\s*done|depends_on|blocked_by|dependency pending|prerequisite)/i.test(text);
   if (dependencySignal && reporter === "QA" && /(?:dev[\s\S]*ops|ops[\s\S]*dev)/i.test(text)) return "premature_execution";
   if (dependencySignal) return "dependency_pending";
-  return "unclassified";
+  return "insufficient_evidence";
+}
+
+function issueText(frontmatter: Record<string, unknown>, body: string): string {
+  return `${Object.values(frontmatter).join(" ")}\n${body}`;
+}
+
+function firstConcreteSentence(body: string): string {
+  const section = body.match(/^##\s+(?:问题摘要|现象(?:（[^\n]+）)?|背景|Problem(?: Summary)?)\s*\r?\n+([\s\S]*?)(?=^##\s+|(?![\s\S]))/im)?.[1] ?? body;
+  const line = section
+    .split(/\r?\n/)
+    .map((value) => value.replace(/^[-*\d.\s]+/, "").replace(/[*`]/g, "").trim())
+    .find((value) => value.length >= 12) ?? "";
+  return line.split(/(?<=[。！？.!?])\s*/)[0]?.slice(0, 180) ?? "";
+}
+
+function issueQuality(frontmatter: Record<string, unknown>, body: string): { score: number; issues: string[] } {
+  const text = issueText(frontmatter, body);
+  const issues: string[] = [];
+  let score = 0;
+  const title = String(frontmatter.summary ?? frontmatter.title ?? body.match(/^#\s+(.+)$/m)?.[1] ?? "").trim();
+  if (title && !/^(?:runtime|product|public)?\s*issue$/i.test(title)) score += 20;
+  else issues.push("标题缺少可识别的具体故障");
+  if (/^##\s+(?:问题摘要|现象|背景|Problem)/im.test(body) && firstConcreteSentence(body).length >= 12) score += 20;
+  else issues.push("缺少具体问题现象");
+  if (/复现|步骤|输入|样本|同批|触发|尝试|repro|when\b/i.test(body)) score += 15;
+  else issues.push("缺少可执行复现条件");
+  if (/证据|report-|pass|fail|json|日志|返回|exact|基线|evidence/i.test(body)) score += 15;
+  else issues.push("缺少可核验事实或证据");
+  if (/期望|实际|不应|回退|影响|阻塞|未通过|expected|actual/i.test(text)) score += 15;
+  else issues.push("缺少期望、实际或影响说明");
+  if (/建议|处置|仍需|修复|重跑|回退|force_archive|request_rework/i.test(body)) score += 15;
+  else issues.push("缺少下一步处置建议");
+  return { score, issues };
+}
+
+function privacyRisk(frontmatter: Record<string, unknown>, body: string): "none" | "possible" | "high" {
+  const text = issueText(frontmatter, body);
+  if (/(?:人审真值|真实姓名|客户姓名)\s*[:：]?\s*[\u3400-\u9fff]{2,10}|(?:身份证|证件号)\s*[:：]?\s*\d{15,18}|[\u3400-\u9fff]{2,}(?:省|市|县|区)[\u3400-\u9fff\d]{2,}(?:镇|乡|街道)[\u3400-\u9fff\d]{2,}(?:村|社区).{0,20}\d+号/.test(text)) return "high";
+  if (/姓名|住址|地址|客户|样本原文|id-card/i.test(text)) return "possible";
+  return "none";
+}
+
+function ownershipForCause(cause: IssueCauseType): IssueOwnershipScope {
+  if (["evidence_gate_false_positive", "panel_display_issue", "lifecycle_integrity_issue"].includes(cause)) return "codeflowmu_product";
+  if (["deployment_artifact_stale", "environment_configuration_missing"].includes(cause)) return "environment_or_deployment";
+  if (["product_algorithm_regression", "product_data_edge_case", "business_validation_fail"].includes(cause)) return "project_product";
+  return "insufficient_information";
 }
 
 function severityLevel(severity: EnrichedIssueMetadata["severity"]): EnrichedIssueMetadata["severity_level"] {
@@ -151,13 +231,25 @@ function severityLevel(severity: EnrichedIssueMetadata["severity"]): EnrichedIss
 export function enrichIssueMetadata(projectRoot: string, frontmatter: Record<string, unknown>, body: string): EnrichedIssueMetadata {
   const reporter = inferIssueReporter(frontmatter, body);
   const cause = classifyIssueCause(reporter, frontmatter, body);
+  const ownership = ownershipForCause(cause);
+  const privacy = privacyRisk(frontmatter, body);
+  const quality = issueQuality(frontmatter, body);
   const covered = hasLaterSuccessfulCoverage(projectRoot, frontmatter, body);
   const archivedParent = archivedParentProjection(projectRoot, frontmatter, body);
+  const declaredStatus = String(frontmatter.status ?? "open").trim().toLowerCase();
+  const structuredResolved = ["closed", "resolved", "mitigated"].includes(declaredStatus);
+  const bodyClaimsClosed = /(?:status|状态)\s*(?:→|->|:|：)\s*(?:closed|resolved|已关闭|已解决)/i.test(body);
+  const stateConsistency = archivedParent.archived
+    ? "parent_archived" as const
+    : bodyClaimsClosed && !structuredResolved
+      ? "body_status_conflict" as const
+      : "consistent" as const;
+  const effectiveResolved = structuredResolved || covered;
   let severity: EnrichedIssueMetadata["severity"] = "medium";
   let impactScope = "局部任务或子线，通常可通过等待前置或返工恢复。";
   let severityReason = "P2：影响局部执行，但未发现系统完整性损坏，可通过重跑或返工恢复。";
-  let causeSummary = "现有信息不足以归入已知 ISSUE 原因类型。";
-  let action = "补充来源报告和影响链证据后重新分析。";
+  let causeSummary = "当前材料只说明 REPORT 被阻塞或失败，尚未说明可验证的技术根因。";
+  let action = "补充具体输入、期望、实际结果、复现条件和证据后重新分析。";
 
   if (cause === "lifecycle_integrity_issue") {
     severity = "critical";
@@ -171,6 +263,34 @@ export function enrichIssueMetadata(projectRoot: string, frontmatter: Record<str
     impactScope = "Panel 可观测性，不直接阻塞业务执行。";
     severityReason = "P3：属于展示和提示问题；若会误导关键决策，应重新评估并升级。";
     action = "修复 Panel enrichment 或展示逻辑，不阻塞业务主线。";
+  } else if (cause === "evidence_gate_false_positive") {
+    severity = "high";
+    causeSummary = "REVIEW-GATE 把文件/JSON 型 QA 证据误判为必须提供 data.query，生成了无意义返工且现有角色无法撤销确定性误判。";
+    impactScope = "CodeFlowMu 的事实门禁、返工派发和任务生命周期；会阻断本可通过的报告。";
+    severityReason = "P1：确定性误判会制造无效返工，并阻塞 approve/archive，需修复 Runtime 规则。";
+    action = "让门禁按证据来源类型校验；文件型评测不得强制 data.query，并提供可审计的误判撤销路径及回归测试。";
+  } else if (cause === "deployment_artifact_stale") {
+    causeSummary = "项目公开静态发布物落后于已验证的本地前端，运行入口仍提供旧 UI。";
+    impactScope = "当前项目的公开部署与用户可见版本，不属于 CodeFlowMu 产品自身。";
+    severityReason = "P2：会让用户继续看到旧行为，但可通过重新构建和发布项目产物恢复。";
+    action = "核对构建来源、产物摘要和发布目标，重新发布后做公网版本与功能复验。";
+  } else if (cause === "environment_configuration_missing") {
+    causeSummary = "项目运行环境缺少或未启用所需配置，导致预期能力未生效。";
+    impactScope = "当前项目环境和运行配置，不属于 CodeFlowMu 公共产品缺陷。";
+    severityReason = "P2：影响当前环境能力，可通过补齐配置、重启和验证恢复。";
+    action = "补齐明确配置并重启；记录生效证据，避免把环境缺失误报为产品缺陷。";
+  } else if (cause === "product_algorithm_regression") {
+    severity = covered ? "medium" : "high";
+    causeSummary = `${firstConcreteSentence(body) || "项目算法指标相对已知基线发生回退或未获得预期增益。"}`;
+    impactScope = covered ? "项目算法缺陷已有后续回执覆盖，仍需核对指标证据。" : "当前项目的算法验收与发布门禁；不属于 CodeFlowMu 产品自身。";
+    severityReason = covered ? "P2（已缓解）：已有后续 done 回执，但仍应保留指标回归证据。" : "P1：可重复的基线回退会直接阻塞项目验收。";
+    action = covered ? "核对修复前后同口径指标后结案。" : "固定样本与基线，定位算法/配置差异，修复后按相同口径复验。";
+  } else if (cause === "product_data_edge_case") {
+    severity = covered ? "low" : "medium";
+    causeSummary = `${firstConcreteSentence(body) || "项目数据中的生僻字、多行字段或版面边界触发识别异常。"}`;
+    impactScope = "当前项目的数据质量、OCR 边界案例和业务输出；不属于 CodeFlowMu 产品自身。";
+    severityReason = covered ? "P3（已缓解）：主缺陷已有覆盖，残差进入项目监控。" : "P2：影响部分边界样本，需要项目侧修复与回归。";
+    action = "脱敏保留最小复现样本，分别验证识别、字段切分和后处理，不允许用后处理发明原始识别结果。";
   } else if (cause === "premature_execution") {
     causeSummary = "下游 QA/OPS 在 DEV/OPS 前置完成前被派发，因缺少前置回执而 blocked。";
     action = covered ? "后续顺序执行与复验已通过，建议结案并保留为 dependency gate 历史证据。" : "检查 dependency gate，等待前置 done 后按 DEV→OPS→QA 顺序重跑。";
@@ -191,13 +311,29 @@ export function enrichIssueMetadata(projectRoot: string, frontmatter: Record<str
     }
   }
 
+  const publicEligibility: IssuePublicEligibility = privacy === "high"
+    ? "blocked_sensitive"
+    : ownership === "codeflowmu_product"
+      ? quality.score >= 55 ? "candidate" : "needs_information"
+      : ownership === "insufficient_information" ? "needs_information" : "local_only";
+  const publicReason = publicEligibility === "candidate"
+    ? "属于 CodeFlowMu Open 产品行为，且现有事实达到公共草稿预审最低质量。"
+    : publicEligibility === "blocked_sensitive"
+      ? "包含真实姓名、完整地址形态或证件信息，禁止进入公共草稿。"
+      : publicEligibility === "local_only"
+        ? "属于当前业务项目、部署或环境问题，应留在项目 ISSUE 中处理。"
+        : "尚不能证明是 CodeFlowMu Open 产品缺陷，需补充事实。";
+  const suggestedTitle = cause === "evidence_gate_false_positive"
+    ? "REVIEW-GATE 误将文件型 QA 证据判为缺少 data.query"
+    : String(frontmatter.summary ?? frontmatter.title ?? "").trim() || firstConcreteSentence(body);
+
   return {
     reporter,
     severity,
     severity_level: severityLevel(severity),
     effective_status: archivedParent.archived
       ? "historical"
-      : covered
+      : effectiveResolved
         ? "resolved"
         : "active",
     ...(archivedParent.archived ? { parent_task_state: "archive" as const } : {}),
@@ -210,13 +346,29 @@ export function enrichIssueMetadata(projectRoot: string, frontmatter: Record<str
       : {}),
     source_severity: String(frontmatter.severity ?? "").trim() || undefined,
     analysis: {
+      trigger_type: String(frontmatter.reason ?? "manual_issue") || "manual_issue",
       cause_type: cause,
       cause_summary: causeSummary,
+      ownership_scope: ownership,
+      public_eligibility: publicEligibility,
+      public_reason: publicReason,
+      privacy_risk: privacy,
+      quality_score: quality.score,
+      quality_level: quality.score >= 70 ? "good" : quality.score >= 45 ? "needs_improvement" : "insufficient",
+      quality_issues: quality.issues,
+      suggested_title: suggestedTitle,
+      state_consistency: stateConsistency,
       impact_scope: impactScope,
       severity_reason: severityReason,
-      current_status_judgment: covered
-        ? "resolved：来源 blocked/FAIL 已被同任务后续 done 回执覆盖，建议人工确认后结案。"
-        : "active：尚未发现同任务更晚的 done 回执，仍需按建议动作处理。",
+      current_status_judgment: archivedParent.archived
+        ? "historical：关联父任务已归档；保留为历史证据，不代表缺陷已被业务修复。"
+        : structuredResolved
+          ? `resolved：ISSUE 结构化状态为 ${declaredStatus}；结案不自动代表关联 TASK 或 Session 完成。`
+          : covered
+            ? "resolved：来源 blocked/FAIL 已被同任务后续 done 回执覆盖，建议人工确认后结案。"
+            : stateConsistency === "body_status_conflict"
+              ? "active：正文声称已关闭，但结构化 status 仍为 open；需通过正式结案动作修正，不能只写正文状态。"
+              : "active：尚未发现结构化结案或同任务更晚的 done 回执，仍需按建议动作处理。",
       recommended_action: action,
     },
   };

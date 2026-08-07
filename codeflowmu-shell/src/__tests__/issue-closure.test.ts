@@ -23,6 +23,7 @@ import {
   publishIssuePromotionWithExecutor,
   readIssuePromotion,
   inspectPublicIssueDraft,
+  syncIssuePromotionApprovalStatus,
   validateGithubIssueTargetMetadata,
 } from "../issue-promotion.ts";
 
@@ -42,7 +43,7 @@ function issueMarkdown(overrides: Record<string, unknown> = {}): string {
     severity: "high",
     ...overrides,
   };
-  return `---\n${Object.entries(fm).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n")}\n---\n\n# Runtime lifecycle split\n\nThe session ended while the task remained blocked.\n`;
+  return `---\n${Object.entries(fm).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n")}\n---\n\n# Runtime lifecycle split\n\n## Problem\n\nThe session ended while the task remained blocked, so lifecycle state diverged.\n\n## Reproduction\n\nEnd the session while its linked task is blocked and run startup reconciliation.\n\n## Evidence\n\nThe session is closed but the linked task remains active and blocked.\n\n## Impact\n\nThe panel and runtime disagree and automatic approval cannot continue.\n\n## Suggested action\n\nCommit Session and TASK lifecycle transitions atomically and add a regression test.\n`;
 }
 
 function taskMarkdown(blocked = true): string {
@@ -401,6 +402,36 @@ test("local promotion produces a deduplicated redacted evidence bundle and no ex
   } finally { await f.cleanup(); }
 });
 
+test("legacy promotion without quality classification is preserved and regenerated as quality v2", async () => {
+  const f = await fixture();
+  try {
+    const service = new IssueClosureService({ projectRoot: f.root });
+    const closed = await service.close(ISSUE_FILENAME, validDraft(f.issuePath));
+    const first = await generateIssuePromotionBundle({
+      projectRoot: f.root,
+      filename: ISSUE_FILENAME,
+      actor: "ADMIN",
+      expected_closure_digest: closed.closure_digest,
+    });
+    for (const name of ["promotion.json", "manifest.json"]) {
+      const path = join(f.root, ...first.bundle_path.split("/"), name);
+      const row = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+      delete row.classification;
+      writeFileSync(path, `${JSON.stringify(row, null, 2)}\n`, "utf8");
+    }
+    const regenerated = await generateIssuePromotionBundle({
+      projectRoot: f.root,
+      filename: ISSUE_FILENAME,
+      actor: "ADMIN",
+      expected_closure_digest: closed.closure_digest,
+    });
+    assert.notEqual(regenerated.promotion_id, first.promotion_id);
+    assert.match(regenerated.promotion_id, /-quality-v2$/);
+    assert.equal(regenerated.classification.category, "codeflowmu_product");
+    assert.equal(existsSync(join(f.root, ...first.bundle_path.split("/"), "promotion.json")), true);
+  } finally { await f.cleanup(); }
+});
+
 test("promotion target never falls back to package.json repository", async () => {
   const f = await fixture();
   try {
@@ -453,6 +484,24 @@ test("approved GitHub publication uses the controlled executor and persists a de
     assert.equal(issueFm.promotion_status, "published");
     const detail = service.detail(ISSUE_FILENAME);
     assert.equal((detail.promotion as Record<string, unknown>).status, "published");
+
+    const synchronized = await syncIssuePromotionApprovalStatus({
+      ...approval,
+      approval_id: "APPROVAL-PUBLIC-ISSUE-321",
+      status: "succeeded",
+      requested_at: "2026-08-07T09:00:00.000Z",
+      authorization: { status: "consumed", issued_at: "2026-08-07T09:00:00.000Z", consumed_at: "2026-08-07T09:00:01.000Z" },
+      decision: { outcome: "approved", actor: "ADMIN", at: "2026-08-07T09:00:01.000Z" },
+      execution: {
+        status: "succeeded",
+        started_at: "2026-08-07T09:00:01.000Z",
+        finished_at: "2026-08-07T09:00:02.000Z",
+        evidence: published.evidence,
+      },
+    } as unknown as OperationApprovalRecord);
+    assert.equal(synchronized?.status, "published");
+    assert.equal(synchronized?.authorization_status, "consumed");
+    assert.equal((synchronized?.approval_execution as Record<string, unknown>)?.status, "succeeded");
 
     const replay = await publishIssuePromotionWithExecutor(approval, dependencies);
     assert.equal(replay.evidence[0]?.deduplicated, true);
@@ -566,6 +615,65 @@ test("public Issue safety scan rejects internal identifiers, local paths, empty 
   assert.ok(findings.includes("电子邮箱"));
   assert.ok(findings.includes("空反引号"));
   assert.ok(findings.includes("疑似残缺句子"));
+  const generic = inspectPublicIssueDraft(
+    "[CodeFlowMu Open] Runtime Issue",
+    "During internal evaluation, a product or protocol gap was identified regarding this runtime issue.",
+  );
+  assert.ok(generic.includes("标题过于泛化"));
+  assert.ok(generic.includes("公开内容缺少具体问题信息"));
+});
+
+test("project-specific regression gets a personalized local draft but is blocked from public promotion", async () => {
+  const f = await fixture();
+  try {
+    writeFileSync(f.issuePath, issueMarkdown().replace(
+      /# Runtime lifecycle split[\s\S]*$/,
+      "# Runtime Issue\n\n## 问题摘要\n\nlive expansion 门禁未通过：住址 exact 相对 ROI=off 基线无增益。后续内部处置不应进入公开标题。",
+    ), "utf8");
+    const service = new IssueClosureService({ projectRoot: f.root });
+    const closed = await service.close(ISSUE_FILENAME, validDraft(f.issuePath));
+    const bundle = await generateIssuePromotionBundle({
+      projectRoot: f.root,
+      filename: ISSUE_FILENAME,
+      actor: "ADMIN",
+      expected_closure_digest: closed.closure_digest,
+    });
+    assert.equal(bundle.draft_title, "[CodeFlowMu Open] live expansion 门禁未通过：住址 exact 相对 ROI=off 基线无增益。");
+    assert.equal(bundle.status, "draft_unsafe");
+    assert.equal(bundle.redaction.public_safe, false);
+    assert.equal((bundle as unknown as { classification: { category: string } }).classification.category, "project_product");
+    assert.doesNotMatch(bundle.draft_body, /During internal evaluation, a product or protocol gap/i);
+  } finally { await f.cleanup(); }
+});
+
+test("generic public fallback stays previewable but cannot be approved", async () => {
+  const f = await fixture();
+  try {
+    writeFileSync(f.issuePath, issueMarkdown().replace(
+      /# Runtime lifecycle split[\s\S]*$/,
+      "# Runtime Issue\n\n确认转开发修复。",
+    ), "utf8");
+    const service = new IssueClosureService({ projectRoot: f.root });
+    const closed = await service.close(ISSUE_FILENAME, validDraft(f.issuePath, {
+      root_cause_summary: "",
+      reason: "确认转交开发继续修复",
+      recovery_action: "",
+      verification_summary: "",
+      residual_risk: "仍需处理",
+    }));
+    const bundle = await generateIssuePromotionBundle({
+      projectRoot: f.root,
+      filename: ISSUE_FILENAME,
+      actor: "ADMIN",
+      expected_closure_digest: closed.closure_digest,
+    });
+    assert.equal(bundle.status, "draft_unsafe");
+    assert.equal(bundle.redaction.public_safe, false);
+    assert.throws(
+      () => buildIssueGithubApprovalInput({ projectRoot: f.root, promotion_id: bundle.promotion_id, actor: "ADMIN" }),
+      (error: unknown) => error instanceof IssueClosureError && error.code === "ISSUE_PROMOTION_PUBLIC_DRAFT_UNSAFE",
+    );
+  } finally { await f.cleanup(); }
 });
 
 test("unsafe generated public draft remains locally previewable but cannot create an approval", async () => {

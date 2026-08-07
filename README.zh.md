@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <code>V1.2.24-open</code> · <code>Windows 10/11</code> · <code>Node.js 22+</code> · <code>Python 3.10+</code> · <code>Cursor SDK</code>
+  <code>V1.2.25-open</code> · <code>Windows 10/11</code> · <code>Node.js 22+</code> · <code>Python 3.10+</code> · <code>Cursor SDK</code>
 </p>
 
 <p align="center">
@@ -23,11 +23,11 @@
 ---
 
 <!-- OPEN_RELEASE_NOTES_START -->
-## V1.2.24-open 更新日志
+## V1.2.25-open 更新日志
 
-**CodeFlowMu 开源版本 V1.2.23-open**
+**CodeFlowMu 开源版本 V1.2.24-open**
 
-- 发布新的开源版本
+- 发布开源版本
 
 影响范围：CodeFlowMu / Shell / Runtime / Mobile API / Open Edition
 
@@ -71,7 +71,7 @@ CodeFlowMu Open 是一个本地优先的多 Agent 开发团队应用。你提交
 
 ## 真实界面
 
-以下均为真实系统截图，不是概念效果图。当前应用版本为 `V1.2.24-open`；中文 PC 截图采集自正在运行的 `V1.2.6-open`；手机截图采集自真实 PWA V1.0.58，“本版更新”截图采集于 V1.0.59。
+以下均为真实系统截图，不是概念效果图。当前应用版本为 `V1.2.25-open`；中文 PC 截图采集自正在运行的 `V1.2.6-open`；手机截图采集自真实 PWA V1.0.58，“本版更新”截图采集于 V1.0.59。
 
 ### PC Panel：一屏掌握整个开发团队
 

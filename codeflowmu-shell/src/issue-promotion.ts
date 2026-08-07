@@ -19,7 +19,6 @@ import type {
 import { atomicWriteJson } from "@codeflowmu/runtime";
 
 import {
-  buildGithubReadyIssueBody,
   scanIssueBodyForForbiddenTerms,
 } from "./eval-promotion.ts";
 import {
@@ -27,12 +26,23 @@ import {
   IssueClosureError,
   IssueClosureService,
 } from "./issue-closure.ts";
+import { enrichIssueMetadata } from "./issue-enrichment.ts";
 
 export type IssuePromotionConfig = {
   target_repo: string;
   visibility_policy: "public_issue" | "private_mother_issue" | "local_only";
   labels: string[];
   source: string;
+};
+
+export type IssuePublicClassification = {
+  category: "codeflowmu_product" | "project_product" | "environment_or_deployment" | "sensitive_project_data" | "insufficient_information";
+  public_candidate: boolean;
+  confidence: "high" | "medium" | "low";
+  quality_score: number;
+  reasons: string[];
+  quality_issues: string[];
+  suggested_title: string;
 };
 
 export type IssuePromotionBundleResult = {
@@ -54,6 +64,7 @@ export type IssuePromotionBundleResult = {
     warnings: string[];
     public_safe: boolean;
   };
+  classification: IssuePublicClassification;
   status: string;
 };
 
@@ -132,6 +143,7 @@ export function loadIssuePromotionConfig(projectRoot: string): IssuePromotionCon
 
 function sanitizePublicIssueTitle(raw: string): string {
   const normalized = normalizeSensitivePaths(raw).value
+    .replace(/^\s*\[CodeFlowMu Open\]\s*/i, "")
     .replace(/\bTASK-[A-Za-z0-9_.-]+\b/gi, "a local task")
     .replace(/\bREPORT-[A-Za-z0-9_.-]+\b/gi, "a local report")
     .replace(/\bISSUE-[A-Za-z0-9_.-]+\b/gi, "a local issue")
@@ -146,6 +158,157 @@ function sanitizePublicIssueTitle(raw: string): string {
   return normalized.slice(0, 160);
 }
 
+function isGenericPublicIssueTitle(raw: string): boolean {
+  const title = String(raw ?? "")
+    .replace(/^\s*\[CodeFlowMu Open\]\s*/i, "")
+    .replace(/[\s:：._-]+/g, " ")
+    .trim()
+    .toLowerCase();
+  if (!title || title.length < 10) return true;
+  return /^(?:codeflowmu open )?(?:runtime|product|public|protocol)?\s*(?:issue|problem|issue report|product issue report)$/.test(title)
+    || /^(?:确认)?(?:转|转交)(?:为)?开发(?:修复|处理)?$/.test(title)
+    || /^(?:please )?(?:fix|investigate)(?: this)?(?: issue| problem)?$/.test(title);
+}
+
+function extractIssueProblemSummary(rawBody: unknown): string {
+  const body = String(rawBody ?? "").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+  const explicit = body.match(/^##\s+(?:问题摘要|Problem Summary|Problem)\s*\r?\n+([\s\S]*?)(?=^##\s+|(?![\s\S]))/im)?.[1] ?? "";
+  const withoutHeading = body.replace(/^#\s+.*$/m, "").trim();
+  const source = (explicit || withoutHeading)
+    .replace(/^#{1,6}\s+.*$/gm, "")
+    .replace(/\*\*/g, "")
+    .replace(/^\s*(?:failed|failure|error)\s*[—:：-]\s*/i, "")
+    .trim();
+  const firstSentence = source.split(/(?<=[。！？.!?])\s*/)[0]?.trim() ?? "";
+  return firstSentence.length >= 12 ? firstSentence : source.split(/\r?\n/).find((line) => line.trim().length >= 12)?.trim() ?? "";
+}
+
+function extractClosureDecisionReason(closure: Record<string, unknown>): string {
+  const direct = String(closure.reason ?? "").trim();
+  if (direct) return direct;
+  return String(closure.body ?? "")
+    .match(/^##\s+Decision reason\s*\r?\n+([\s\S]*?)(?=^##\s+|(?![\s\S]))/im)?.[1]
+    ?.trim() ?? "";
+}
+
+function meaningfulPublicTitleCandidate(raw: unknown): string {
+  const candidate = sanitizePublicIssueTitle(String(raw ?? ""));
+  return isGenericPublicIssueTitle(candidate) ? "" : candidate;
+}
+
+export function classifyIssueForPublicPromotion(
+  issue: Record<string, unknown>,
+  closure: Record<string, unknown> = {},
+  projectRoot = process.cwd(),
+): IssuePublicClassification {
+  const body = String(issue.body ?? "");
+  const heading = body.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "";
+  const rawTitle = String(issue.summary ?? issue.title ?? heading).trim();
+  const enriched = enrichIssueMetadata(projectRoot, issue, body);
+  const analysis = enriched.analysis;
+  const category: IssuePublicClassification["category"] = analysis.privacy_risk === "high"
+    ? "sensitive_project_data"
+    : analysis.ownership_scope;
+  const suggested = meaningfulPublicTitleCandidate(analysis.suggested_title)
+    || meaningfulPublicTitleCandidate(rawTitle)
+    || meaningfulPublicTitleCandidate(extractIssueProblemSummary(body));
+  const publicCandidate = analysis.public_eligibility === "candidate" && Boolean(suggested);
+  const qualityIssues = [...analysis.quality_issues];
+  if (!publicCandidate) qualityIssues.push(analysis.public_reason);
+  return {
+    category,
+    public_candidate: publicCandidate,
+    confidence: category === "insufficient_information" ? "low" : analysis.quality_score >= 70 ? "high" : "medium",
+    quality_score: analysis.quality_score,
+    reasons: [analysis.public_reason, analysis.cause_summary],
+    quality_issues: [...new Set(qualityIssues)],
+    suggested_title: suggested ? `[CodeFlowMu Open] ${suggested.slice(0, 140)}` : "",
+  };
+}
+
+function sanitizePublicDetail(raw: unknown): { value: string; reasons: string[] } {
+  const reasons: string[] = [];
+  let value = normalizeSensitivePaths(String(raw ?? "")).value;
+  const replacements: Array<[RegExp, string, string]> = [
+    [/\bTASK-[A-Za-z0-9_.-]+\b/gi, "a local task", "redacted TASK id"],
+    [/\bREPORT-[A-Za-z0-9_.-]+\b/gi, "a QA result", "redacted REPORT id"],
+    [/\bISSUE-[A-Za-z0-9_.-]+\b/gi, "a related local issue", "redacted ISSUE id"],
+    [/\b(?:thread|session)[-_ :]+[A-Za-z0-9_.-]+\b/gi, "local runtime context", "redacted runtime context"],
+    [/\b(?:localhost|127\.0\.0\.1)?:?\d{4,5}\b/gi, "the local service", "redacted local service port"],
+    [/\b[A-Z][A-Z0-9_]{5,}\s*=\s*[^\s,，。;；]+/g, "a local runtime setting", "redacted runtime setting"],
+    [/sha256:[a-f0-9]{64}/gi, "", "redacted digest"],
+  ];
+  for (const [pattern, replacement, reason] of replacements) {
+    if (pattern.test(value)) {
+      reasons.push(reason);
+      pattern.lastIndex = 0;
+      value = value.replace(pattern, replacement);
+    }
+    pattern.lastIndex = 0;
+  }
+  value = value
+    .replace(/\*\*/g, "")
+    .replace(/`+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return { value, reasons };
+}
+
+function buildConcretePublicIssueDraft(input: {
+  title: string;
+  issue: Record<string, unknown>;
+  closure: Record<string, unknown>;
+}): { body: string; redactionReasons: string[] } {
+  const titleSubject = input.title.replace(/^\[CodeFlowMu Open\]\s*/i, "").trim();
+  const rawDetails = [
+    extractIssueProblemSummary(input.issue.body),
+    input.closure.root_cause_summary,
+    extractClosureDecisionReason(input.closure),
+    input.closure.residual_risk,
+  ];
+  const sanitized = rawDetails.map(sanitizePublicDetail);
+  const details = [...new Set(sanitized.map((item) => item.value).filter((value) => value.length >= 12))];
+  const reasons = [...new Set(sanitized.flatMap((item) => item.reasons))];
+  const concrete = !isGenericPublicIssueTitle(input.title) && details.length > 0;
+  const problem = concrete
+    ? details.slice(0, 3)
+    : ["当前来源没有足够的公开问题信息，无法生成可维护的 CodeFlowMu Open Issue。"];
+  if (!concrete) reasons.push("insufficient concrete public issue content");
+
+  const rawAction = sanitizePublicDetail(input.closure.recovery_action ?? input.closure.follow_up_reference ?? "");
+  reasons.push(...rawAction.reasons);
+  const proposalLead = rawAction.value.length >= 12
+    ? rawAction.value
+    : `复现并定位“${titleSubject}”对应的 Runtime、Panel 或门禁规则。`;
+  const body = [
+    `# ${input.title}`,
+    "",
+    "## 问题",
+    "",
+    ...problem,
+    "",
+    "## 影响",
+    "",
+    `- “${titleSubject}”会使用户或维护者得到错误、阻塞或不可解释的工作流结果。`,
+    `- 在修复前，相关状态、门禁或回执不能作为可靠的完成依据。`,
+    "",
+    "## 建议修复",
+    "",
+    `- ${proposalLead}`,
+    `- 修复责任模块，同时保持 Issue、TASK 与 Session 的生命周期边界清晰。`,
+    `- 为该具体场景增加公开安全的自动化回归，不依赖私有项目数据。`,
+    "",
+    "## 验收标准",
+    "",
+    `- [ ] 自动化测试能够复现“${titleSubject}”，并在修复后通过。`,
+    `- [ ] 相同输入不再产生错误门禁、状态漂移或误导性回执。`,
+    `- [ ] Panel 与 Runtime 对该场景展示一致、可解释的结果。`,
+    `- [ ] 公开 Issue 不包含本地编号、线程、路径、端口、凭据或私有业务数据。`,
+    "",
+  ].join("\n");
+  return { body, redactionReasons: [...new Set(reasons)] };
+}
+
 export function inspectPublicIssueDraft(title: string, body: string): string[] {
   const findings = new Set<string>([
     ...scanIssueBodyForForbiddenTerms(title),
@@ -153,6 +316,21 @@ export function inspectPublicIssueDraft(title: string, body: string): string[] {
     ...secretFindings(`${title}\n${body}`),
   ]);
   const combined = `${title}\n${body}`;
+  if (isGenericPublicIssueTitle(title)) findings.add("标题过于泛化");
+  if (/During internal evaluation, a product or protocol gap was identified regarding/i.test(body)
+    || /Define the expected public behavior and document the lifecycle or UI rule that should apply/i.test(body)
+    || /当前来源没有足够的公开问题信息/.test(body)) {
+    findings.add("公开内容缺少具体问题信息");
+  }
+  const section = (names: string) => body.match(new RegExp(`^##\\s+(?:${names})\\s*\\r?\\n+([\\s\\S]*?)(?=^##\\s+|(?![\\s\\S]))`, "im"))?.[1]?.trim() ?? "";
+  const problemSection = section("问题|Problem");
+  const impactSection = section("影响|Impact");
+  const proposalSection = section("建议修复|修复建议|Proposal");
+  const acceptanceSection = section("验收标准|Acceptance Criteria");
+  if (problemSection.replace(/[#*`\s-]/g, "").length < 24) findings.add("问题描述不具体");
+  if (impactSection.split(/\r?\n/).filter((line) => /^[-*]\s+\S/.test(line.trim())).length < 2) findings.add("影响说明不完整");
+  if (proposalSection.split(/\r?\n/).filter((line) => /^[-*]\s+\S/.test(line.trim())).length < 2) findings.add("修复建议不完整");
+  if (acceptanceSection.split(/\r?\n/).filter((line) => /^[-*]\s+\[[ xX]\]/.test(line.trim())).length < 3) findings.add("验收标准不完整");
   if (/(^|[^`])``([^`]|$)/m.test(combined)) findings.add("空反引号");
   if (/\[[^\]]*\]\(\s*\)/.test(combined)) findings.add("空链接");
   if (/\b(?:source closure digest|closure digest|operation digest)\s*:/i.test(combined)) findings.add("内部摘要标识");
@@ -199,18 +377,47 @@ function promotionId(issueId: string, closureDigest: string): string {
   return `ISSUE-PROMOTION-${issueId.replace(/^ISSUE-/i, "")}-${closureDigest.replace(/^sha256:/, "").slice(0, 12)}`;
 }
 
-function titleFromIssue(issue: Record<string, unknown>): string {
+function titleFromIssue(issue: Record<string, unknown>, closure: Record<string, unknown>): string {
   const bodyHeading = String(issue.body ?? "").match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "";
-  const summary = String(issue.summary ?? issue.title ?? bodyHeading).trim();
+  const candidates = [
+    issue.summary,
+    issue.title,
+    bodyHeading,
+    extractIssueProblemSummary(issue.body),
+    closure.root_cause_summary,
+    extractClosureDecisionReason(closure),
+  ];
+  const summary = candidates.map(meaningfulPublicTitleCandidate).find(Boolean) ?? "";
   return summary
-    ? `[CodeFlowMu Open] ${sanitizePublicIssueTitle(summary).slice(0, 140)}`
+    ? `[CodeFlowMu Open] ${summary.slice(0, 140)}`
     : "[CodeFlowMu Open] Product issue report";
+}
+
+function currentPublicSafety(row: Record<string, unknown>): {
+  redaction: Record<string, unknown>;
+  findings: string[];
+  publicSafe: boolean;
+} {
+  const existing = row.redaction && typeof row.redaction === "object"
+    ? row.redaction as Record<string, unknown>
+    : {};
+  const findings = inspectPublicIssueDraft(String(row.draft_title ?? ""), String(row.draft_body ?? ""));
+  const classification = row.classification && typeof row.classification === "object"
+    ? row.classification as Record<string, unknown>
+    : null;
+  if (classification && classification.public_candidate !== true) {
+    findings.push(...(Array.isArray(classification.quality_issues) ? classification.quality_issues.map(String) : ["未通过公共产品预分类"]));
+  }
+  const warnings = [...new Set([...(Array.isArray(existing.warnings) ? existing.warnings.map(String) : []), ...findings])];
+  const publicSafe = existing.public_safe === true && findings.length === 0;
+  return { redaction: { ...existing, warnings, public_safe: publicSafe }, findings, publicSafe };
 }
 
 function existingBundle(finalDir: string): IssuePromotionBundleResult | null {
   const record = readJson(join(finalDir, "promotion.json"));
   const manifest = readJson(join(finalDir, "manifest.json"));
   if (!record || !manifest) return null;
+  const safety = currentPublicSafety(record);
   return {
     ok: true,
     deduplicated: true,
@@ -224,8 +431,17 @@ function existingBundle(finalDir: string): IssuePromotionBundleResult | null {
     draft_title: String(record.draft_title ?? ""),
     draft_body: String(record.draft_body ?? ""),
     draft_body_digest: String(record.draft_body_digest ?? ""),
-    redaction: record.redaction as IssuePromotionBundleResult["redaction"],
-    status: String(record.status ?? "draft_created"),
+    redaction: safety.redaction as IssuePromotionBundleResult["redaction"],
+    classification: (record.classification ?? {
+      category: "insufficient_information",
+      public_candidate: false,
+      confidence: "low",
+      quality_score: 0,
+      reasons: ["历史草稿缺少公共预分类记录"],
+      quality_issues: ["请重新生成草稿"],
+      suggested_title: "",
+    }) as IssuePublicClassification,
+    status: !safety.publicSafe && !record.target_issue_url ? "draft_unsafe" : String(record.status ?? "draft_created"),
   };
 }
 
@@ -248,14 +464,20 @@ export async function generateIssuePromotionBundle(input: {
   if (actor !== "ADMIN") throw new IssueClosureError("ISSUE_PROMOTION_AUTHORITY_REQUIRED", "Mother evidence promotion requires ADMIN", 403);
   const config = loadIssuePromotionConfig(root);
   const issueId = String(issue.issue_id ?? input.filename.replace(/\.md$/i, ""));
-  const id = promotionId(issueId, closureDigest);
-  const bundleRel = `fcop/internal/issue-promotions/${id}`;
-  const finalDir = join(root, ...bundleRel.split("/"));
+  let id = promotionId(issueId, closureDigest);
+  let bundleRel = `fcop/internal/issue-promotions/${id}`;
+  let finalDir = join(root, ...bundleRel.split("/"));
+  const legacyRecord = readJson(join(finalDir, "promotion.json"));
+  if (legacyRecord && !legacyRecord.classification) {
+    id = `${id}-quality-v2`;
+    bundleRel = `fcop/internal/issue-promotions/${id}`;
+    finalDir = join(root, ...bundleRel.split("/"));
+  }
   const prior = existingBundle(finalDir);
   if (prior) return prior;
 
   const closureRaw = readFileSync(join(root, ...String(closure.path ?? issue.closure_record).split("/")), "utf8");
-  const secrets = secretFindings(closureRaw);
+  const secrets = secretFindings(`${closureRaw}\n${String(issue.body ?? "")}`);
   if (secrets.length) {
     const closureSource = String(closure.path ?? issue.closure_record);
     throw new IssueClosureError(
@@ -266,21 +488,11 @@ export async function generateIssuePromotionBundle(input: {
     );
   }
   const normalizedClosure = normalizeSensitivePaths(closureRaw);
-  const title = titleFromIssue(issue);
-  const publicDraft = buildGithubReadyIssueBody({
-    title,
-    rawProblem: [
-      String(issue.body ?? ""),
-      String(closure.body ?? ""),
-      `Root cause status: ${String(closure.root_cause_status ?? "unknown")}`,
-      `Residual risk: ${String(closure.residual_risk ?? "not recorded")}`,
-    ].join("\n\n"),
-    whyRepo: "The observed behavior belongs to CodeFlowMu Open and requires public maintainer tracking.",
-    targetLabel: "CodeFlowMu Open",
-    rawProposal: String(closure.follow_up_reference ?? closure.follow_up_target ?? ""),
-  });
+  const classification = classifyIssueForPublicPromotion(issue, closure, root);
+  const title = classification.suggested_title || titleFromIssue(issue, closure);
+  const publicDraft = buildConcretePublicIssueDraft({ title, issue, closure });
   const forbidden = inspectPublicIssueDraft(title, publicDraft.body);
-  const publicSafe = forbidden.length === 0;
+  const publicSafe = classification.public_candidate && forbidden.length === 0;
 
   const generatedAt = new Date().toISOString();
   const draftFilename = `CODEFLOWMU-ISSUE-DRAFT-${id.replace(/^ISSUE-PROMOTION-/, "")}.md`;
@@ -317,7 +529,7 @@ export async function generateIssuePromotionBundle(input: {
   const redaction = {
     secrets_found: 0,
     paths_normalized: normalizedClosure.changed,
-    warnings: [...new Set([...publicDraft.redactionReasons, ...forbidden])],
+    warnings: [...new Set([...publicDraft.redactionReasons, ...classification.quality_issues, ...forbidden])],
     public_safe: publicSafe,
   };
   const closureCopy = normalizedClosure.value;
@@ -345,6 +557,7 @@ export async function generateIssuePromotionBundle(input: {
     generated_by: actor,
     files: files.map((file) => ({ path: file.path, sha256: sha256(file.body) })),
     redaction,
+    classification,
   };
   const promotionDigest = sha256(JSON.stringify(manifestBase));
   const manifest = { ...manifestBase, promotion_digest: promotionDigest };
@@ -367,6 +580,7 @@ export async function generateIssuePromotionBundle(input: {
     draft_body: publicDraft.body,
     draft_body_digest: sha256(publicDraft.body),
     redaction,
+    classification,
     status: publicSafe ? "draft_created" : "draft_unsafe",
     generated_at: generatedAt,
     generated_by: actor,
@@ -387,7 +601,7 @@ export async function generateIssuePromotionBundle(input: {
   try {
     await service.updatePromotionProjection(input.filename, {
       expected_closure_digest: closureDigest,
-      status: "draft_created",
+      status: publicSafe ? "draft_created" : "draft_unsafe",
       promotion_record: promotionRecordRel,
     });
   } catch (error) {
@@ -425,16 +639,13 @@ function effectivePromotionConfig(projectRoot: string, row: Record<string, unkno
 }
 
 function assertPromotionPublicSafe(row: Record<string, unknown>): void {
-  const redaction = row.redaction && typeof row.redaction === "object"
-    ? row.redaction as Record<string, unknown>
-    : {};
-  const findings = inspectPublicIssueDraft(String(row.draft_title ?? ""), String(row.draft_body ?? ""));
-  if (redaction.public_safe !== true || findings.length > 0) {
+  const safety = currentPublicSafety(row);
+  if (!safety.publicSafe) {
     throw new IssueClosureError(
       "ISSUE_PROMOTION_PUBLIC_DRAFT_UNSAFE",
       "公开 Issue 草稿仍含内部标识、敏感信息或损坏的 Markdown，不能申请发布。",
       422,
-      { findings: [...new Set([...(Array.isArray(redaction.warnings) ? redaction.warnings.map(String) : []), ...findings])] },
+      { findings: safety.redaction.warnings },
     );
   }
 }
@@ -850,8 +1061,10 @@ export async function syncIssuePromotionApprovalStatus(
   if (!promotionId) return null;
   const loaded = loadPromotionRecord(record.project_root, promotionId);
   const current = loaded.row;
-  if (current.target_issue_url || String(current.status ?? "") === "published") return current;
-  const mappedStatus = record.status === "pending_approval" || record.status === "pending_executor"
+  const alreadyPublished = Boolean(current.target_issue_url) || String(current.status ?? "") === "published";
+  const mappedStatus = alreadyPublished
+    ? "published"
+    : record.status === "pending_approval" || record.status === "pending_executor"
     ? "pending_approval"
     : record.status === "approved"
       ? "approved_pending_execution"
@@ -885,7 +1098,9 @@ export async function syncIssuePromotionApprovalStatus(
 export function readIssuePromotion(projectRoot: string, promotionId: string): Record<string, unknown> {
   const row = loadPromotionRecord(projectRoot, promotionId).row;
   const config = effectivePromotionConfig(projectRoot, row);
-  return { ...row, target_repo: config.target_repo, visibility_policy: config.visibility_policy, labels: config.labels };
+  const safety = currentPublicSafety(row);
+  const status = !safety.publicSafe && !row.target_issue_url ? "draft_unsafe" : row.status;
+  return { ...row, status, redaction: safety.redaction, target_repo: config.target_repo, visibility_policy: config.visibility_policy, labels: config.labels };
 }
 
 export function listIssuePromotions(projectRoot: string): Array<Record<string, unknown>> {
@@ -898,7 +1113,9 @@ export function listIssuePromotions(projectRoot: string): Array<Record<string, u
     .filter((row): row is Record<string, unknown> => Boolean(row))
     .map((row) => {
       const config = effectivePromotionConfig(projectRoot, row);
-      return { ...row, target_repo: config.target_repo, visibility_policy: config.visibility_policy, labels: config.labels } as Record<string, unknown>;
+      const safety = currentPublicSafety(row);
+      const status = !safety.publicSafe && !row.target_issue_url ? "draft_unsafe" : row.status;
+      return { ...row, status, redaction: safety.redaction, target_repo: config.target_repo, visibility_policy: config.visibility_policy, labels: config.labels } as Record<string, unknown>;
     })
     .sort((a, b) => String(b.published_at ?? b.generated_at ?? "").localeCompare(String(a.published_at ?? a.generated_at ?? "")));
 }

@@ -1,13 +1,13 @@
 [
   {
-    "version": "V1.2.24-open",
+    "version": "V1.2.25-open",
     "date": "2026-08-07",
     "tasks": [
       "TASK-20260803-001"
     ],
-    "title": "CodeFlowMu 开源版本 V1.2.23-open",
+    "title": "CodeFlowMu 开源版本 V1.2.24-open",
     "changes": [
-      "发布新的开源版本"
+      "发布开源版本"
     ],
     "affected": [
       "CodeFlowMu",
