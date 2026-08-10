@@ -3,23 +3,23 @@
   "productName": "CodeFlowMu Open Dev Team Edition",
   "positioning": "A multi-agent development team application governed by the FCoP protocol and driven through Cursor SDK interfaces.",
   "edition": "open-dev-team",
-  "version": "V1.2.28-open",
-  "npmVersion": "1.2.28-open",
+  "version": "V1.2.29-open",
+  "npmVersion": "1.2.29-open",
   "releaseChannel": "open",
   "status": "public-open",
   "sourceRepository": "joinwell52-AI/codeflowmu1.2.21",
   "targetRepository": "joinwell52-AI/CodeFlowMu-open",
-  "builtAt": "2026-08-07T15:36:03.921Z",
-  "sourceGitCommit": "6476ca2912a2b5552760a79b150fc11dcb56e49a",
+  "builtAt": "2026-08-10T07:46:30.083Z",
+  "sourceGitCommit": "e417d853c4ef21170e144e61ae88e366939a785d",
   "sourceDirty": false,
-  "motherVersion": "V1.2.28",
+  "motherVersion": "V1.2.29",
   "releaseNotes": {
-    "version": "V1.2.28-open",
-    "date": "2026-08-07",
+    "version": "V1.2.29-open",
+    "date": "2026-08-10",
     "tasks": [
       "TASK-20260803-001"
     ],
-    "title": "CodeFlowMu 开源版本 V1.2.27-open",
+    "title": "CodeFlowMu 开源版本 V1.2.28-open",
     "changes": [
       "发布开源版本"
     ],
@@ -106,6 +106,12 @@
       "name": "Long-task continuation and contract-driven evidence gate",
       "status": "public",
       "publicSince": "V1.2.20-open"
+    },
+    {
+      "id": "open-pwa-product-identity",
+      "name": "Open compatibility PWA identity and isolated release package",
+      "status": "public",
+      "publicSince": "V1.2.28-open"
     }
   ],
   "boundary": {
@@ -225,6 +231,7 @@
       "fcop-init-write-barrier",
       "issue-closure-evidence-promotion",
       "long-task-continuation-evidence-gate",
+      "open-pwa-product-identity",
       "pre-action-approval-gate",
       "runtime-governance-remediation",
       "team-model-runtime-persistence"
@@ -242,6 +249,8 @@
       ".env.*",
       ".codeflowmu/instance.json",
       ".codeflowmu/projects-registry.json",
+      ".codeflowmu/mobile-gateway.json",
+      "codeflowmu.team.json",
       "projects/",
       "workspace/ (legacy project collection)",
       "external project roots outside CodeFlowMu-open"

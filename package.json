@@ -1,6 +1,6 @@
 {
   "name": "codeflowmu",
-  "version": "1.2.28-open",
+  "version": "1.2.29-open",
   "private": false,
   "description": "CodeFlowMu - AI-powered collaborative workflow system",
   "scripts": {
@@ -13,7 +13,8 @@
     "shell:typecheck": "npm --prefix codeflowmu-shell run typecheck",
     "protocol:install": "npm --prefix packages/codeflowmu-protocol install",
     "runtime:install": "npm --prefix packages/codeflowmu-runtime install",
-    "install:all": "npm install && npm --prefix packages/codeflowmu-protocol install && npm --prefix packages/codeflowmu-runtime install && npm --prefix codeflowmu-shell install"
+    "install:all": "npm install && npm --prefix packages/codeflowmu-protocol install && npm --prefix packages/codeflowmu-runtime install && npm --prefix codeflowmu-shell install",
+    "pwa:package": "node scripts/build-mobile-pwa-package.mjs"
   },
   "workspaces": [
     "packages/codeflowmu-protocol",

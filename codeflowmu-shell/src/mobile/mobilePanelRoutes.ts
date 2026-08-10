@@ -10,7 +10,11 @@ import {
 } from "./mobileGatewayClient.ts";
 import { resolvePublicBaseUrl } from "./mobileGatewayConfig.ts";
 import { getMobileInstanceId } from "./mobileInstance.ts";
-import { isRemoteGatewayPublishAvailable, publishPwaToGateway } from "./mobilePwaGatewayPublish.ts";
+import {
+  isPwaGatewayPublishReadOnly,
+  isRemoteGatewayPublishAvailable,
+  publishPwaToGateway,
+} from "./mobilePwaGatewayPublish.ts";
 import { fetchPwaGatewaySyncStatus } from "./mobilePwaGatewaySync.ts";
 import { readCodeflowmuVersionHistory, readCodeflowmuVersionManifest } from "./mobileVersion.ts";
 import type { MobilePanelContext } from "./types.ts";
@@ -62,7 +66,7 @@ export function registerMobilePanelRoutes(
     }
     const projectRoot = deps.ctx.getProjectRoot();
     const pwa_gateway = await fetchPwaGatewaySyncStatus(projectRoot);
-    const openReadOnly = process.env.CODEFLOW_OPEN_EDITION === "1";
+    const openReadOnly = isPwaGatewayPublishReadOnly();
     const pwa_gateway_publish = {
       available: isRemoteGatewayPublishAvailable(projectRoot),
       read_only: openReadOnly,
@@ -71,10 +75,10 @@ export function registerMobilePanelRoutes(
   });
 
   router.post("/panel/publish-gateway", async (req, res) => {
-    if (process.env.CODEFLOW_OPEN_EDITION === "1") {
+    if (isPwaGatewayPublishReadOnly()) {
       res.status(403).json({
         ok: false,
-        error: "OPEN_EDITION_GATEWAY_PUBLISH_DISABLED",
+        error: "PWA_GATEWAY_PUBLISH_AUTHORITY_EXTERNAL",
       });
       return;
     }

@@ -30,7 +30,7 @@
 |---|---|---|---|
 | `.git/` | 公开仓库 Git 历史和远端配置 | clone / git init 公开仓库 | 本地保留，不随应用包覆盖 |
 | `.gitignore` | 公开仓库忽略规则 | 发版脚本生成 | 随发版覆盖 |
-| `.codeflowmu/` | 开源版 UI 配置、导航、欢迎文案和本地运行标记 | 发版包 + 本地运行生成 | 配置文件随发版覆盖，运行标记保留 |
+| `.codeflowmu/` | 开源版 UI 配置、导航、欢迎文案和本地运行标记 | 发版包 + 本地运行生成 | 发行 UI 配置随发版覆盖；实例、项目注册表、Gateway 本机配置和运行标记保留 |
 | `.venv/` / `venv/` | Python 虚拟环境，安装 `fcop` / `fcop-mcp` | 启动脚本本地创建 | 保留，不随发版覆盖 |
 | `node_modules/` | Node 依赖 | `npm install` 本地创建 | 保留，不随发版覆盖 |
 | `adoptedSource/` | 公开版初始化素材源，包括 FCoP 协议骨架和 pending 条款 | 母版发版复制 | 随发版覆盖 |
@@ -41,7 +41,7 @@
 | `packages/` | 开源版运行需要的本地包，如 protocol/runtime | 母版发版复制 | 随发版覆盖 |
 | `projects/` | 多个 CodeFlowMu 团队项目的集合，首次启动创建 `newproject` | 本地运行创建，发版仅保留 README | 保留，不随发版覆盖 |
 | `workspace/` | 旧版安装级项目集合；项目内部也可能用作业务产物目录 | 升级兼容保留 | 保留，不自动移动或覆盖 |
-| `codeflowmu.team.json` | 固定开发团队 PM / DEV / OPS / QA，加独立观察者 EVAL | 发版脚本生成 | 随发版覆盖 |
+| `codeflowmu.team.json` | 固定开发团队 PM / DEV / OPS / QA，加独立观察者 EVAL；可保存本机模型选择 | 发版脚本生成 + 本机配置 | 首次安装生成；升级保留本机配置，不随发版覆盖 |
 | `package.json` / `package-lock.json` | 公开版 npm 安装与启动配置 | 发版脚本改写 | 随发版覆盖 |
 | `START-CODEFLOWMU-OPEN.bat` | Windows 一键启动脚本，检查依赖并启动服务 | 发版脚本生成 | 随发版覆盖 |
 | `VERSION.json` | 产品版本、渠道、仓库、更新策略 | 发版脚本生成 | 随发版覆盖 |
@@ -134,7 +134,10 @@ workspace/
 - `node_modules/`
 - `.venv/` / `venv/`
 - `.env` / `.env.*`
-- `.codeflowmu/mobile-gateway.example.json`
+- `.codeflowmu/instance.json`
+- `.codeflowmu/projects-registry.json`
+- `.codeflowmu/mobile-gateway.json`
+- `codeflowmu.team.json`
 - `projects/`
 - 旧版 `workspace/`
 - 用户添加的外部项目目录

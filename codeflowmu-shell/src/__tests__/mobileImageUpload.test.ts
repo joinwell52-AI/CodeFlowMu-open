@@ -50,7 +50,7 @@ test("mobile.js defines shared image compression for chat and task upload", () =
   assert.match(src, /imageAttachOriginal/);
   assert.match(src, /BUNDLE_VERSION = "V\d+\.\d+\.\d+"/);
   assert.match(src, /PWA_CACHE_BUST = "\d+\.\d+\.\d+"/);
-  assert.match(src, /PWA_LEGACY_CACHE_NAMES = \[[\s\S]*codeflowmu-pwa-v\d+\.\d+\.\d+/);
+  assert.match(src, /PWA_LEGACY_CACHE_NAMES = \[[\s\S]*codeflowmu-1-2-21-pwa-v\d+\.\d+\.\d+/);
 });
 
 test("mobile i18n includes image upload error and preview strings", () => {

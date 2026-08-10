@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "pwa_app_id": "codeflowmu-1-2-21",
+  "pwa_name": "码流 CodeFlowMu 开源兼容版",
+  "source_repo": "joinwell52-AI/codeflowmu1.2.21",
+  "api_contract": "codeflowmu-mobile-v2",
+  "version": "V1.0.64",
+  "resource_version": "1.0.64",
+  "source_git_commit": "e417d853c4ef21170e144e61ae88e366939a785d",
+  "source_dirty": false,
+  "published_at": "2026-08-10T07:46:30.083Z"
+}

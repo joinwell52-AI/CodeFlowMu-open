@@ -1,54 +1,20 @@
 /* Minimal PWA service worker — cache shell assets */
-const CACHE_NAME = "codeflowmu-pwa-v1.0.63";
+const PWA_APP_ID = "codeflowmu-1-2-21";
+const CACHE_PREFIX = `${PWA_APP_ID}-pwa-v`;
+const CACHE_NAME = "codeflowmu-1-2-21-pwa-v1.0.64";
 const LEGACY_CACHE_NAMES = [
-    "codeflowmu-pwa-v1.0.62",
-    "codeflowmu-pwa-v1.0.61",
-    "codeflowmu-pwa-v1.0.60",
-    "codeflowmu-pwa-v1.0.59",
-    "codeflowmu-pwa-v1.0.58",
-    "codeflowmu-pwa-v1.0.57",
-    "codeflowmu-pwa-v1.0.56",
-    "codeflowmu-pwa-v1.0.55",
-    "codeflowmu-pwa-v1.0.54",
-    "codeflowmu-pwa-v1.0.52",
-    "codeflowmu-pwa-v1.0.51",
-    "codeflowmu-pwa-v1.0.50",
-    "codeflowmu-pwa-v1.0.49",
-    "codeflowmu-pwa-v1.0.48",
-    "codeflowmu-pwa-v1.0.47",
-    "codeflowmu-pwa-v1.0.44",
-    "codeflowmu-pwa-v1.0.38",
-    "codeflowmu-pwa-v1.0.37",
-    "codeflowmu-pwa-v1.0.36",
-    "codeflowmu-pwa-v1.0.30",
-    "codeflowmu-pwa-v1.0.29",
-    "codeflowmu-pwa-v1.0.28",
-    "codeflowmu-pwa-v1.0.27",
-    "codeflowmu-pwa-v1.0.26",
-    "codeflowmu-pwa-v1.0.25",
-    "codeflowmu-pwa-v1.0.24",
-    "codeflowmu-pwa-v1.0.19",
-  "codeflowmu-pwa-v1.0.18",
-  "codeflowmu-pwa-v1.0.17",
-  "codeflowmu-pwa-v1.0.16",
-  "codeflowmu-pwa-v1.0.15",
-  "codeflowmu-pwa-v1.0.14",
-  "codeflowmu-pwa-v1.0.13",
-  "codeflowmu-pwa-v1.0.12",
-  "codeflowmu-pwa-v1.0.9",
-  "codeflowmu-pwa-v1.0.8",
-  "cfm-mobile-v26",
+  "codeflowmu-1-2-21-pwa-v1.0.63",
 ];
 const ASSETS = [
   "./",
   "./index.html",
-  "./mobile.js?v=1.0.63",
-  "./mobile.css?v=1.0.63",
-  "./i18n.js?v=1.0.63",
-  "./jsqr.min.js?v=1.0.63",
-  "./manifest.json?v=1.0.63",
-  "./logo-64.png?v=1.0.63",
-  "./RELEASES.json?v=1.0.63",
+  "./mobile.js?v=1.0.64",
+  "./mobile.css?v=1.0.64",
+  "./i18n.js?v=1.0.64",
+  "./jsqr.min.js?v=1.0.64",
+  "./manifest.json?v=1.0.64",
+  "./logo-64.png?v=1.0.64",
+  "./RELEASES.json?v=1.0.64",
 ];
 
 self.addEventListener("install", (event) => {
@@ -70,7 +36,9 @@ self.addEventListener("activate", (event) => {
     caches
       .keys()
       .then((keys) => {
-        const stale = new Set(keys.filter((k) => k !== CACHE_NAME));
+        const stale = new Set(
+          keys.filter((key) => key !== CACHE_NAME && key.startsWith(CACHE_PREFIX)),
+        );
         for (const legacy of LEGACY_CACHE_NAMES) stale.add(legacy);
         return Promise.all([...stale].map((k) => caches.delete(k)));
       })

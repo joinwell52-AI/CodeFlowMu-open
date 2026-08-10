@@ -346,6 +346,10 @@ test("mobile API: auth, bind-confirm, bootstrap, revoke", async () => {
       .set("Authorization", `Bearer ${token}`);
     assert.equal(bootstrap.status, 200);
     assert.equal(bootstrap.body.app, "codeflowmu-mobile");
+    assert.equal(bootstrap.body.pwa.app_id, "codeflowmu-1-2-21");
+    assert.equal(bootstrap.body.pwa.name, "码流 CodeFlowMu 开源兼容版");
+    assert.equal(bootstrap.body.pwa.source_repo, "joinwell52-AI/codeflowmu1.2.21");
+    assert.equal(bootstrap.body.pwa.api_contract, "codeflowmu-mobile-v2");
     assert.ok(bootstrap.body.api_base);
     assert.match(String(bootstrap.body.api_base), /\/m\/[a-f0-9]{16}$/);
     assert.ok(bootstrap.body.summary);

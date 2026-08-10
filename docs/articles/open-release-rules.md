@@ -335,6 +335,10 @@ codeflowmu-shell/src/web-panel.ts
 - `.git/`
 - 本机安装依赖：`node_modules/`、`.venv/`（仅本地，不提交）
 - 本机 `.env`（仅本地，不提交）
+- 本机实例与项目登记：`.codeflowmu/instance.json`、`.codeflowmu/projects-registry.json`
+- 本机 Gateway 与团队配置：`.codeflowmu/mobile-gateway.json`、`codeflowmu.team.json`
+
+发布准备在强制切换 GitHub `main` 基线前，必须快照 Git 已跟踪且已修改的上述保留配置；checkout 后立即恢复，再进入构建和安全同步。不能只在复制阶段声明“保留”，否则更早的 `checkout -f` 仍会覆盖本机设置。
 
 发布同步不得把以下本机测试态当作公开内容提交：
 
@@ -462,6 +466,7 @@ release/open-dev-team/CodeFlowMu
 
 - 用户项目目录
 - 用户主动登记的 Open 项目列表
+- 本机实例、Gateway 与团队模型配置
 - `.env`、依赖和虚拟环境
 
 但必须满足：

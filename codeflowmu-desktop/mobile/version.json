@@ -1,12 +1,17 @@
 {
-  "app_version": "V1.0.63",
-  "resource_version": "1.0.63",
-  "cache_name": "codeflowmu-pwa-v1.0.63",
-  "updated_at": "2026-08-05T03:16:29Z",
-  "release_name": "长期任务续办与事实证据门禁统一",
+  "app_version": "V1.0.64",
+  "resource_version": "1.0.64",
+  "cache_name": "codeflowmu-1-2-21-pwa-v1.0.64",
+  "pwa_app_id": "codeflowmu-1-2-21",
+  "api_contract": "codeflowmu-mobile-v2",
+  "updated_at": "2026-08-09T15:39:56Z",
+  "release_name": "Open compatibility PWA product identity",
   "changes": [
-    "任务详情新增事实检查修正入口，统一调用 PC、Mobile API 与 MCP 共用的正式决定服务",
-    "等待 PM 判断时可退回补证、确认事实不成立、接受证据例外或重新检查，并保留幂等审计记录",
-    "长期任务状态展示区分逻辑任务与物理 Session，避免把续办误显示为新任务或任务完成"
+    "Adds a stable application id and mobile API contract handshake.",
+    "Scopes caches and browser storage to this PWA without deleting sibling application data.",
+    "Publishes verifiable PWA provenance in standalone and Open release packages.",
+    "Displays the independent Open release directly as V1.0.64-open in the header and version panel.",
+    "Validates the Gateway PWA application id and API contract in addition to its version, rejecting cross-product responses.",
+    "Keeps authoritative Gateway publication outside this Open maintenance source while preserving read-only online verification."
   ]
 }

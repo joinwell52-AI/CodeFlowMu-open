@@ -22,19 +22,23 @@ export function isRemoteGatewayPublishAvailable(_projectRoot?: string): boolean 
   return false;
 }
 
+export function isPwaGatewayPublishReadOnly(): boolean {
+  return true;
+}
+
 export async function publishPwaToGateway(
   projectRoot: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<PwaGatewayPublishResult> {
   return {
     ok: false,
-    error: "OPEN_EDITION_GATEWAY_PUBLISH_DISABLED",
+    error: "PWA_GATEWAY_PUBLISH_AUTHORITY_EXTERNAL",
     mode: "dry_run",
     steps: [
       {
         id: "open_edition_disabled",
         ok: false,
-        message: "OPEN_EDITION_GATEWAY_PUBLISH_DISABLED",
+        message: "PWA_GATEWAY_PUBLISH_AUTHORITY_EXTERNAL",
       },
     ],
     pwa_gateway: await fetchPwaGatewaySyncStatus(projectRoot, fetchImpl),

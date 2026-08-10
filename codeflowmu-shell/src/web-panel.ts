@@ -5454,7 +5454,14 @@ export function buildWebPanelApp(
     const editionPath = join(root, ".codeflowmu", "edition-ui.json");
     const hostRoot = resolveMonorepoRootFromShellPkg(SHELL_PKG_ROOT);
     const hostEditionPath = hostRoot ? join(hostRoot, ".codeflowmu", "edition-ui.json") : "";
-    const candidate = existsSync(editionPath) ? editionPath : hostEditionPath;
+    // Edition identity belongs to the running CodeFlowMu host. An active
+    // business project may carry its own UI preferences, but it must not turn
+    // an Open maintenance host back into the mother/private product line.
+    const candidate = hostEditionPath && existsSync(hostEditionPath)
+      ? hostEditionPath
+      : existsSync(editionPath)
+        ? editionPath
+        : "";
     if (!candidate || !existsSync(candidate)) return false;
     try {
       const edition = JSON.parse(readFileSync(candidate, "utf-8")) as {
@@ -12802,10 +12809,13 @@ export function buildWebPanelApp(
     const configPath = join(root, ".codeflowmu", "edition-ui.json");
     const hostRoot = resolveMonorepoRootFromShellPkg(SHELL_PKG_ROOT);
     const hostConfigPath = hostRoot ? join(hostRoot, ".codeflowmu", "edition-ui.json") : "";
-    const candidate = existsSync(configPath)
-      ? configPath
-      : hostConfigPath && existsSync(hostConfigPath)
-        ? hostConfigPath
+    // The host application owns product/edition identity. Do not allow the
+    // currently selected development project to override Open branding and
+    // release boundaries.
+    const candidate = hostConfigPath && existsSync(hostConfigPath)
+      ? hostConfigPath
+      : existsSync(configPath)
+        ? configPath
         : "";
     if (!candidate) {
       res.json({ ok: true, edition: "mother", config: null });

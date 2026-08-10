@@ -31,6 +31,7 @@ import {
   listTasksFromLedgerAuto,
   listTasksFromLedgerFile,
 } from "../ledger-api-helpers.ts";
+import { MOBILE_PWA_IDENTITY } from "./mobilePwaIdentity.ts";
 import {
   getTaskSubmission,
   listTaskSubmissions,
@@ -685,6 +686,7 @@ export function createMobileRoutes(ctx: MobilePanelContext): MobileRoutesBundle 
       res.json({
         app: "codeflowmu-mobile",
         mode: "pm_dev_team",
+        pwa: MOBILE_PWA_IDENTITY,
         instance_id: getMobileInstanceId(projectRoot),
         api_base: resolveMobilePublicApiBase(projectRoot),
         device_id: req.mobileAuth?.device_id,

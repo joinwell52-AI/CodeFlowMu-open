@@ -6,42 +6,16 @@
   "use strict";
 
   /** 本机当前运行的 PWA 包版本（发版时与 version.json / index.html ?v= 对齐） */
-  var BUNDLE_VERSION = "V1.0.63";
-  var PWA_CACHE_BUST = "1.0.63";
-  var PWA_VERSION_STORAGE_KEY = "cfm_pwa_installed_version";
+  var PWA_APP_ID = "codeflowmu-1-2-21";
+  var PWA_NAME = "码流 CodeFlowMu 开源兼容版";
+  var PWA_API_CONTRACT = "codeflowmu-mobile-v2";
+  var PWA_CACHE_PREFIX = PWA_APP_ID + "-pwa-v";
+  var PWA_STORAGE_PREFIX = PWA_APP_ID + ":";
+  var BUNDLE_VERSION = "V1.0.64";
+  var PWA_CACHE_BUST = "1.0.64";
+  var PWA_VERSION_STORAGE_KEY = PWA_STORAGE_PREFIX + "installed_version";
   var PWA_LEGACY_CACHE_NAMES = [
-    "codeflowmu-pwa-v1.0.62",
-    "codeflowmu-pwa-v1.0.61",
-    "codeflowmu-pwa-v1.0.60",
-    "codeflowmu-pwa-v1.0.59",
-    "codeflowmu-pwa-v1.0.58",
-    "codeflowmu-pwa-v1.0.57",
-    "codeflowmu-pwa-v1.0.56",
-    "codeflowmu-pwa-v1.0.55",
-    "codeflowmu-pwa-v1.0.54",
-    "codeflowmu-pwa-v1.0.52",
-    "codeflowmu-pwa-v1.0.51",
-    "codeflowmu-pwa-v1.0.50",
-    "codeflowmu-pwa-v1.0.49",
-    "codeflowmu-pwa-v1.0.48",
-    "codeflowmu-pwa-v1.0.47",
-    "codeflowmu-pwa-v1.0.45",
-    "codeflowmu-pwa-v1.0.44",
-    "codeflowmu-pwa-v1.0.28",
-    "codeflowmu-pwa-v1.0.27",
-    "codeflowmu-pwa-v1.0.25",
-    "codeflowmu-pwa-v1.0.19",
-    "codeflowmu-pwa-v1.0.18",
-    "codeflowmu-pwa-v1.0.17",
-    "codeflowmu-pwa-v1.0.15",
-    "codeflowmu-pwa-v1.0.14",
-    "codeflowmu-pwa-v1.0.13",
-    "codeflowmu-pwa-v1.0.12",
-    "codeflowmu-pwa-v1.0.11",
-    "codeflowmu-pwa-v1.0.10",
-    "codeflowmu-pwa-v1.0.9",
-    "codeflowmu-pwa-v1.0.8",
-    "cfm-mobile-v26",
+    "codeflowmu-1-2-21-pwa-v1.0.63",
   ];
   var appVersion = BUNDLE_VERSION;
   var EMPTY_STATS = { today_tasks: 0, today_reports: 0, in_progress: 0, done: 0 };
@@ -53,9 +27,11 @@
   var bindingInProgress = false;
   /** bind 成功后短时内不因 refresh 401/403 清 session（毫秒时间戳） */
   var bindGraceUntil = 0;
-  /** 与 localStorage cfm_mobile_session_token 同步的内存 token，避免 bind 后首包请求仍读旧态 */
+  /** In-memory token mirrors this PWA's namespaced session token during bind. */
   var sessionMemoryToken = "";
-  var AUTH_TOKEN_KEY = "cfm_mobile_session_token";
+  var AUTH_TOKEN_KEY = PWA_STORAGE_PREFIX + "mobile_session_token";
+  var DEVICE_ID_KEY = PWA_STORAGE_PREFIX + "mobile_device_id";
+  var API_BASE_KEY = PWA_STORAGE_PREFIX + "mobile_api_base";
 
   var state = {
     tab: "home",
@@ -97,10 +73,10 @@
     projectGraph: null,
   };
 
-  var CHAT_LOCAL_KEY = "cfm_mobile_chat_log";
-  var SELECTED_ROLE_KEY = "codeflow_selected_role";
-  var TASKS_LIST_COLLAPSED_KEY = "cfm_tasks_list_collapsed";
-  var TASKS_VIEW_MODE_KEY = "cfm_tasks_view_mode";
+  var CHAT_LOCAL_KEY = PWA_STORAGE_PREFIX + "mobile_chat_log";
+  var SELECTED_ROLE_KEY = PWA_STORAGE_PREFIX + "selected_role";
+  var TASKS_LIST_COLLAPSED_KEY = PWA_STORAGE_PREFIX + "tasks_list_collapsed";
+  var TASKS_VIEW_MODE_KEY = PWA_STORAGE_PREFIX + "tasks_view_mode";
 
   function getToken() {
     if (sessionMemoryToken) return sessionMemoryToken;
@@ -127,8 +103,8 @@
     try {
       if (sessionMemoryToken) localStorage.setItem(AUTH_TOKEN_KEY, sessionMemoryToken);
       else localStorage.removeItem(AUTH_TOKEN_KEY);
-      if (deviceId) localStorage.setItem("cfm_mobile_device_id", deviceId);
-      if (apiBase) localStorage.setItem("cfm_mobile_api_base", apiBase);
+      if (deviceId) localStorage.setItem(DEVICE_ID_KEY, deviceId);
+      if (apiBase) localStorage.setItem(API_BASE_KEY, apiBase);
     } catch (e) {}
     try {
       document.documentElement.setAttribute("data-bound", sessionMemoryToken ? "1" : "0");
@@ -142,8 +118,8 @@
     sessionMemoryToken = "";
     try {
       localStorage.removeItem(AUTH_TOKEN_KEY);
-      localStorage.removeItem("cfm_mobile_device_id");
-      localStorage.removeItem("cfm_mobile_api_base");
+      localStorage.removeItem(DEVICE_ID_KEY);
+      localStorage.removeItem(API_BASE_KEY);
     } catch (e) {}
     try {
       document.documentElement.setAttribute("data-bound", "0");
@@ -217,25 +193,25 @@
     var lanOrigin = lanShellOrigin();
     if (lanOrigin && isGatewayApiBase(normalized)) {
       try {
-        localStorage.setItem("cfm_mobile_api_base", lanOrigin);
+        localStorage.setItem(API_BASE_KEY, lanOrigin);
       } catch (e) {}
       return;
     }
     try {
-      localStorage.setItem("cfm_mobile_api_base", normalized);
+      localStorage.setItem(API_BASE_KEY, normalized);
     } catch (e) {}
   }
   function clearInvalidStoredApiBase() {
     var stored = getStoredApiBase();
     if (stored && !isPlausibleApiBase(stored)) {
       try {
-        localStorage.removeItem("cfm_mobile_api_base");
+        localStorage.removeItem(API_BASE_KEY);
       } catch (e) {}
     }
   }
   function getStoredApiBase() {
     try {
-      return localStorage.getItem("cfm_mobile_api_base") || "";
+      return localStorage.getItem(API_BASE_KEY) || "";
     } catch (e) {
       return "";
     }
@@ -365,8 +341,10 @@
   }
   function updateVersionDisplay() {
     var el = $("versionInfo");
-    if (!el) return;
-    el.textContent = BUNDLE_VERSION;
+    var badge = $("openVersionBadge");
+    var displayVersion = BUNDLE_VERSION + "-open";
+    if (el) el.textContent = displayVersion;
+    if (badge) badge.textContent = displayVersion;
   }
   function renderReleaseNotes(version, releaseName, changes) {
     var wrap = $("releaseNotes");
@@ -381,7 +359,9 @@
       wrap.classList.add("hidden");
       return;
     }
-    nameEl.textContent = [String(version || "").trim(), name].filter(Boolean).join(" · ");
+    var displayVersion = String(version || "").trim();
+    if (displayVersion && !/-open$/i.test(displayVersion)) displayVersion += "-open";
+    nameEl.textContent = [displayVersion, name].filter(Boolean).join(" · ");
     listEl.textContent = "";
     items.forEach(function (item) {
       var li = document.createElement("li");
@@ -1177,10 +1157,32 @@
     el.classList.toggle("hidden", state.online !== false);
   }
   /* ── normalizers ── */
+  function assertPwaBootstrapIdentity(raw) {
+    var pwa = raw && raw.pwa && typeof raw.pwa === "object" ? raw.pwa : null;
+    if (!pwa || !String(pwa.app_id || "").trim()) {
+      throw new Error("PWA_APP_NOT_BOUND: runtime did not declare a PWA application id");
+    }
+    if (String(pwa.app_id) !== PWA_APP_ID) {
+      throw new Error(
+        "PWA_METADATA_MISMATCH: expected " + PWA_APP_ID + ", received " + String(pwa.app_id),
+      );
+    }
+    if (String(pwa.api_contract || "") !== PWA_API_CONTRACT) {
+      throw new Error(
+        "PWA_API_CONTRACT_MISMATCH: expected " +
+          PWA_API_CONTRACT +
+          ", received " +
+          String(pwa.api_contract || "missing"),
+      );
+    }
+    return pwa;
+  }
+
   function normalizeBootstrap(raw) {
     if (!raw) return unboundBootstrap();
     return {
       bound: true,
+      pwa: raw.pwa || { app_id: PWA_APP_ID, name: PWA_NAME, api_contract: PWA_API_CONTRACT },
       instance_id: raw.instance_id || raw.device_id || "—",
       pc_online: raw.status ? raw.status.pc_online === true : raw.pc_online === true,
       gateway_online: raw.status ? raw.status.gateway_online === true : raw.gateway_online === true,
@@ -4077,6 +4079,7 @@
     }
     try {
       var raw = await api("/api/v2/mobile/bootstrap");
+      assertPwaBootstrapIdentity(raw);
       reconcileApiBaseFromServer(raw.api_base);
       state.bootstrap = normalizeBootstrap(raw);
       clearApiError("bootstrap");
@@ -5070,7 +5073,7 @@
 
   function getOrCreatePreBindDeviceId() {
     try {
-      var existing = localStorage.getItem("cfm_mobile_device_id");
+      var existing = localStorage.getItem(DEVICE_ID_KEY);
       if (existing) return existing;
     } catch (e) {}
     var newId =
@@ -5079,7 +5082,7 @@
         ? crypto.randomUUID()
         : String(Date.now()) + "-" + Math.random().toString(36).slice(2, 10));
     try {
-      localStorage.setItem("cfm_mobile_device_id", newId);
+      localStorage.setItem(DEVICE_ID_KEY, newId);
     } catch (e2) {}
     return newId;
   }
@@ -5389,7 +5392,7 @@
         window.location.reload();
       }
     };
-    var targetCacheName = "codeflowmu-pwa-v" + PWA_CACHE_BUST;
+    var targetCacheName = PWA_CACHE_PREFIX + PWA_CACHE_BUST;
     var waitForWorkerActivation = function (reg) {
       if (!reg) return Promise.resolve();
       return new Promise(function (resolve) {
@@ -5462,7 +5465,7 @@
           var names = keys.filter(function (name) {
             return (
               name !== targetCacheName &&
-              (name.indexOf("codeflowmu-pwa-v") === 0 || PWA_LEGACY_CACHE_NAMES.indexOf(name) >= 0)
+              (name.indexOf(PWA_CACHE_PREFIX) === 0 || PWA_LEGACY_CACHE_NAMES.indexOf(name) >= 0)
             );
           });
           return Promise.all(

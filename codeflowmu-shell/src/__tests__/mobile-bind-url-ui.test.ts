@@ -71,7 +71,7 @@ describe("mobile bind URL UI", () => {
     assert.match(bundleVersion, /^V\d+\.\d+\.\d+$/);
     assert.match(
       sw,
-      new RegExp(`CACHE_NAME = "codeflowmu-pwa-v${escapedResource}"`),
+      new RegExp(`CACHE_NAME = "codeflowmu-1-2-21-pwa-v${escapedResource}"`),
     );
     assert.match(sw, /path\.endsWith\("\/mobile\/"\)/);
     assert.match(sw, /function isShellAssetRequest\(url\)/);

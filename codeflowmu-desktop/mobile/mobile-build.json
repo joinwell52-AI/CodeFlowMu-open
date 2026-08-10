@@ -1,7 +1,10 @@
 {
-  "ui_version": "v1.0.63",
+  "ui_version": "v1.0.64",
   "source": "codeflowmu-desktop/mobile",
   "built_at": "2026-08-04T06:47:17Z",
-  "build_time": "2026-08-05T03:16:29Z",
-  "commit": "879cec6a"
+  "build_time": "2026-08-10T07:46:30.083Z",
+  "commit": "e417d853c4ef21170e144e61ae88e366939a785d",
+  "pwa_app_id": "codeflowmu-1-2-21",
+  "api_contract": "codeflowmu-mobile-v2",
+  "source_repo": "joinwell52-AI/codeflowmu1.2.21"
 }

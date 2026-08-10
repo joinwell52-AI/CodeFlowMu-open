@@ -6059,13 +6059,21 @@ const LANGS={
     'st.proj.versionTitle':'版本信息',
     'st.proj.versionUnavailable':'版本信息不可用',
     'st.proj.pwaGatewayTitle':'Gateway 线上 PWA 同步',
-    'st.proj.pwaSyncLocal':'本地 Mobile PWA',
-    'st.proj.pwaSyncOnline':'Gateway 线上 PWA',
-    'st.proj.pwaSyncAligned':'已同步：本地与 Gateway 线上版本一致',
+    'st.proj.pwaSyncLocal':'本地 Open PWA 版本',
+    'st.proj.pwaSyncOnline':'Gateway 返回版本',
+    'st.proj.pwaSyncLocalAppId':'本地 PWA 应用 ID',
+    'st.proj.pwaSyncOnlineAppId':'线上 PWA 应用 ID',
+    'st.proj.pwaSyncLocalContract':'本地 API 契约',
+    'st.proj.pwaSyncOnlineContract':'线上 API 契约',
+    'st.proj.pwaSyncAligned':'已同步：版本、PWA 应用 ID 与 API 契约全部一致',
     'st.proj.pwaSyncMismatch':'未同步：可点击下方「发布到 Gateway」一键上传，或按 docs/PWA_RELEASE.md 手动发布',
     'st.proj.pwaSyncHint':'manifest 中的「Gateway 服务」是 Gateway 组件版本，与线上 PWA 静态资源版本无关。',
-    'st.proj.pwaSyncReadOnlyMismatch':'本地 PWA 版本较新；开源版仅只读检查官方演示 Gateway，不提供发布权限。',
-    'st.proj.pwaSyncReadOnlyHint':'线上版本由官方维护者统一发布，本地版本差异不影响 PC Panel 和本地 PWA 使用。',
+    'st.proj.pwaSyncReadOnlyMismatch':'身份一致但版本未对齐；本 Open 维护端仅只读核验，不直接发布到 Gateway。',
+    'st.proj.pwaSyncReadOnlyHint':'先完成 Open 仓库发版；Gateway 上线由权威 Gateway 发布器按 PWA 元数据执行。',
+    'st.proj.pwaSyncWrongProduct':'无法比较版本：当前地址返回的不是 CodeFlowMu Open PWA。',
+    'st.proj.pwaSyncWrongProductHint':'本机需要 codeflowmu-1-2-21，但 Gateway 返回了另一条产品线。说明该实例尚未绑定 Open PWA，或检测地址指向了其他产品；两边版本号不能据此比较。',
+    'st.proj.pwaSyncWrongContract':'无法连接：Gateway PWA 与当前 Runtime 的 API 契约不兼容。',
+    'st.proj.pwaSyncWrongContractHint':'请由 Gateway 维护者修正该实例的 PWA 应用 ID 与 API 契约绑定；本 Open 维护端没有覆盖 Gateway 的权限。',
     'st.proj.pwaSyncCheckUrl':'检测地址',
     'st.proj.pwaSyncUnavailable':'PWA 同步状态不可用',
     'st.proj.pwaPublishBtn':'发布到 Gateway',
@@ -6085,6 +6093,8 @@ const LANGS={
     'st.proj.pwaSyncErrLocal':'无法读取本地 mobile/version.json',
     'st.proj.pwaSyncErrTimeout':'请求 Gateway 超时',
     'st.proj.pwaSyncErrOnlineMissing':'线上 version.json 缺少 app_version',
+    'st.proj.pwaSyncErrIdentity':'Gateway 返回了另一条 PWA 产品线，已拒绝按版本差异处理',
+    'st.proj.pwaSyncErrContract':'Gateway PWA 与当前 Runtime 的 API 契约不兼容',
     'st.proj.pwaSyncErrHttp':'Gateway 返回 HTTP {code}',
     'st.proj.pwaSyncErrFetch':'无法连接 Gateway 线上地址',
     'st.proj.changelogTitle':'版本更新日志',
@@ -7211,13 +7221,21 @@ const LANGS={
     'st.proj.versionTitle':'Version info',
     'st.proj.versionUnavailable':'Version info unavailable',
     'st.proj.pwaGatewayTitle':'Gateway online PWA sync',
-    'st.proj.pwaSyncLocal':'Local Mobile PWA',
-    'st.proj.pwaSyncOnline':'Gateway online PWA',
-    'st.proj.pwaSyncAligned':'In sync: local matches Gateway-hosted PWA',
+    'st.proj.pwaSyncLocal':'Local Open PWA version',
+    'st.proj.pwaSyncOnline':'Version returned by Gateway',
+    'st.proj.pwaSyncLocalAppId':'Local PWA application ID',
+    'st.proj.pwaSyncOnlineAppId':'Online PWA application ID',
+    'st.proj.pwaSyncLocalContract':'Local API contract',
+    'st.proj.pwaSyncOnlineContract':'Online API contract',
+    'st.proj.pwaSyncAligned':'In sync: version, PWA application ID and API contract all match',
     'st.proj.pwaSyncMismatch':'Out of sync: use “Publish to Gateway” below, or follow docs/PWA_RELEASE.md manually',
     'st.proj.pwaSyncHint':'Manifest “Gateway service” is the Gateway component version, not the online PWA static bundle.',
-    'st.proj.pwaSyncReadOnlyMismatch':'The local PWA is newer. Open edition checks the official demo Gateway read-only and cannot publish to it.',
-    'st.proj.pwaSyncReadOnlyHint':'The online version is published by official maintainers; this mismatch does not affect the PC Panel or local PWA.',
+    'st.proj.pwaSyncReadOnlyMismatch':'Identity matches but versions are not aligned. This Open maintenance host verifies Gateway read-only and cannot publish to it.',
+    'st.proj.pwaSyncReadOnlyHint':'Release the Open repository first; the authoritative Gateway publisher deploys the PWA only after validating its metadata.',
+    'st.proj.pwaSyncWrongProduct':'Versions cannot be compared: this address did not return the CodeFlowMu Open PWA.',
+    'st.proj.pwaSyncWrongProductHint':'This host requires codeflowmu-1-2-21, but Gateway returned another product line. The instance is not bound to the Open PWA or the check URL targets another product; the two version numbers are not comparable.',
+    'st.proj.pwaSyncWrongContract':'Connection rejected: the Gateway PWA API contract is incompatible with this Runtime.',
+    'st.proj.pwaSyncWrongContractHint':'A Gateway maintainer must correct the instance PWA application ID and API contract binding. This Open maintenance host has no authority to overwrite Gateway.',
     'st.proj.pwaSyncCheckUrl':'Check URL',
     'st.proj.pwaSyncUnavailable':'PWA sync status unavailable',
     'st.proj.pwaPublishBtn':'Publish to Gateway',
@@ -7237,6 +7255,8 @@ const LANGS={
     'st.proj.pwaSyncErrLocal':'Cannot read local mobile/version.json',
     'st.proj.pwaSyncErrTimeout':'Gateway request timed out',
     'st.proj.pwaSyncErrOnlineMissing':'Online version.json missing app_version',
+    'st.proj.pwaSyncErrIdentity':'Gateway returned another PWA product line; version-only comparison was rejected',
+    'st.proj.pwaSyncErrContract':'Gateway PWA and the current Runtime use incompatible API contracts',
     'st.proj.pwaSyncErrHttp':'Gateway returned HTTP {code}',
     'st.proj.pwaSyncErrFetch':'Cannot reach Gateway online URL',
     'st.proj.changelogTitle':'Version changelog',
@@ -11004,7 +11024,8 @@ function parseReportsApiResponse(payload){
 function applyHeaderVersionBadge(ver){
   const el=document.getElementById('hdr-version-badge');
   if(!el||ver==null||String(ver).trim()==='')return;
-  el.textContent=String(ver).trim();
+  const raw=String(ver).trim();
+  el.textContent=isOpenProductLineEdition()&&!/-open$/i.test(raw)?raw+'-open':raw;
 }
 
 async function refreshHeaderVersionBadge(){
@@ -27174,7 +27195,18 @@ function isOpenDevTeamEdition() {
   return !!(_editionConfig && _editionConfig.edition === 'open-dev-team');
 }
 
+function isOpenProductLineEdition() {
+  return !!(_editionConfig && (
+    _editionConfig.edition === 'open-dev-team'
+    || _editionConfig.edition === 'open-maintenance'
+  ));
+}
+
 function applyEditionShellChrome() {
+  if (isOpenProductLineEdition()) {
+    const versionBadge = document.getElementById('hdr-version-badge');
+    if (versionBadge) applyHeaderVersionBadge(versionBadge.textContent);
+  }
   if (!isOpenDevTeamEdition()) return;
   const gitTab = document.querySelector('.ap-tab[data-stab="git"]');
   if (gitTab) {
@@ -27208,7 +27240,7 @@ function applyEditionShellChrome() {
 }
 
 function getProjectVersionRows() {
-  return isOpenDevTeamEdition()
+  return isOpenProductLineEdition()
     ? PANEL_VERSION_ROWS_OPEN
     : PANEL_VERSION_ROWS_FULL;
 }
@@ -27239,6 +27271,13 @@ const PANEL_VERSION_ROWS_MOBILE = [
   ['Mobile PWA', 'mobile_pwa'],
   ['Mobile API', 'mobile_api'],
   ['Gateway 服务', 'gateway'],
+  ['SW Cache', 'sw_cache'],
+];
+
+const PANEL_VERSION_ROWS_MOBILE_OPEN = [
+  ['CodeFlowMu Open', 'codeflowmu'],
+  ['Mobile PWA', 'mobile_pwa'],
+  ['Mobile API', 'mobile_api'],
   ['SW Cache', 'sw_cache'],
 ];
 
@@ -27306,9 +27345,17 @@ async function loadPanelVersionInfo(targetId, rows) {
       return;
     }
     const v = data.versions;
-    el.innerHTML = rows.map(([label, key]) =>
-      '<div style="font-size:14px;color:var(--text2);font-family:\'Fira Code\',monospace">'+esc(label)+'：'+esc(String(v[key] ?? '—'))+'</div>'
-    ).join('');
+    const openVersionKeys = new Set(['codeflowmu', 'shell', 'runtime', 'mobile_pwa', 'mobile_api', 'sw_cache']);
+    el.innerHTML = rows.map(([label, key]) => {
+      const raw = String(v[key] ?? '—');
+      const shown = isOpenProductLineEdition()
+        && openVersionKeys.has(key)
+        && raw !== '—'
+        && !/-open$/i.test(raw)
+          ? raw+'-open'
+          : raw;
+      return '<div style="font-size:14px;color:var(--text2);font-family:\'Fira Code\',monospace">'+esc(label)+'：'+esc(shown)+'</div>';
+    }).join('');
   } catch {
     el.innerHTML = '<div style="color:var(--text3)">'+esc(t('st.proj.versionUnavailable'))+'</div>';
   }
@@ -27320,6 +27367,8 @@ function pwaGatewaySyncErrorMessage(code) {
   if (key === 'LOCAL_PWA_VERSION_UNAVAILABLE') return t('st.proj.pwaSyncErrLocal');
   if (key === 'FETCH_TIMEOUT') return t('st.proj.pwaSyncErrTimeout');
   if (key === 'ONLINE_VERSION_MISSING') return t('st.proj.pwaSyncErrOnlineMissing');
+  if (key === 'PWA_METADATA_MISMATCH') return t('st.proj.pwaSyncErrIdentity');
+  if (key === 'PWA_API_CONTRACT_MISMATCH') return t('st.proj.pwaSyncErrContract');
   if (key.startsWith('HTTP_')) return t('st.proj.pwaSyncErrHttp').replace('{code}', key.slice(5));
   if (key.startsWith('FETCH_FAILED:')) return t('st.proj.pwaSyncErrFetch');
   return key;
@@ -27401,19 +27450,36 @@ async function loadPwaGatewaySyncCard(bodyId, cardId) {
     }
     const local = sync.local_app_version != null ? String(sync.local_app_version) : '—';
     const online = sync.gateway_online_app_version != null ? String(sync.gateway_online_app_version) : '—';
+    const localAppId = sync.local_pwa_app_id != null ? String(sync.local_pwa_app_id) : '—';
+    const onlineAppId = sync.gateway_online_pwa_app_id != null ? String(sync.gateway_online_pwa_app_id) : '—';
+    const localContract = sync.local_api_contract != null ? String(sync.local_api_contract) : '—';
+    const onlineContract = sync.gateway_online_api_contract != null ? String(sync.gateway_online_api_contract) : '—';
     const aligned = !!sync.aligned;
+    const wrongProduct = sync.error === 'PWA_METADATA_MISMATCH';
+    const wrongContract = sync.error === 'PWA_API_CONTRACT_MISMATCH';
     const publishMeta = data.pwa_gateway_publish;
     const gatewayReadOnly = !!(publishMeta && publishMeta.read_only);
     const statusClass = aligned ? 'st-proj-pwa-sync-ok' : 'st-proj-pwa-sync-warn';
     const statusText = aligned
       ? t('st.proj.pwaSyncAligned')
-      : gatewayReadOnly
-        ? t('st.proj.pwaSyncReadOnlyMismatch')
-        : t('st.proj.pwaSyncMismatch');
+      : wrongProduct
+        ? t('st.proj.pwaSyncWrongProduct')
+        : wrongContract
+          ? t('st.proj.pwaSyncWrongContract')
+          : gatewayReadOnly
+            ? t('st.proj.pwaSyncReadOnlyMismatch')
+            : t('st.proj.pwaSyncMismatch');
+    const hintKey = wrongProduct
+      ? 'st.proj.pwaSyncWrongProductHint'
+      : wrongContract
+        ? 'st.proj.pwaSyncWrongContractHint'
+        : gatewayReadOnly
+          ? 'st.proj.pwaSyncReadOnlyHint'
+          : 'st.proj.pwaSyncHint';
     const hint = aligned
       ? ''
-      : '<div class="st-proj-pwa-sync-hint">'+esc(t(gatewayReadOnly ? 'st.proj.pwaSyncReadOnlyHint' : 'st.proj.pwaSyncHint'))+'</div>';
-    const err = sync.error
+      : '<div class="st-proj-pwa-sync-hint">'+esc(t(hintKey))+'</div>';
+    const err = sync.error && !wrongProduct && !wrongContract
       ? '<div class="st-proj-pwa-sync-error">'+esc(pwaGatewaySyncErrorMessage(sync.error))+'</div>'
       : '';
     const url = sync.check_url
@@ -27429,6 +27495,10 @@ async function loadPwaGatewaySyncCard(bodyId, cardId) {
     el.innerHTML =
       '<div class="st-proj-pwa-sync-row"><span>'+esc(t('st.proj.pwaSyncLocal'))+'</span><code>'+esc(local)+'</code></div>'
       + '<div class="st-proj-pwa-sync-row"><span>'+esc(t('st.proj.pwaSyncOnline'))+'</span><code>'+esc(online)+'</code></div>'
+      + '<div class="st-proj-pwa-sync-row"><span>'+esc(t('st.proj.pwaSyncLocalAppId'))+'</span><code>'+esc(localAppId)+'</code></div>'
+      + '<div class="st-proj-pwa-sync-row"><span>'+esc(t('st.proj.pwaSyncOnlineAppId'))+'</span><code>'+esc(onlineAppId)+'</code></div>'
+      + '<div class="st-proj-pwa-sync-row"><span>'+esc(t('st.proj.pwaSyncLocalContract'))+'</span><code>'+esc(localContract)+'</code></div>'
+      + '<div class="st-proj-pwa-sync-row"><span>'+esc(t('st.proj.pwaSyncOnlineContract'))+'</span><code>'+esc(onlineContract)+'</code></div>'
       + '<div class="'+statusClass+'">'+esc(statusText)+'</div>'
       + hint + err + url + publishBtn;
     if (card) {
@@ -28909,7 +28979,10 @@ async function purgeRevokedMobileDevices() {
 
 async function renderMobilePage() {
   await loadEditionConfig();
-  void loadPanelVersionInfo('mobile-version-body', PANEL_VERSION_ROWS_MOBILE);
+  void loadPanelVersionInfo(
+    'mobile-version-body',
+    isOpenProductLineEdition() ? PANEL_VERSION_ROWS_MOBILE_OPEN : PANEL_VERSION_ROWS_MOBILE,
+  );
   if (isOpenDevTeamEdition()) renderOpenEditionGatewayCard('mobile-pwa-gateway-body', 'mobile-pwa-gateway-card');
   else void loadPwaGatewaySyncCard('mobile-pwa-gateway-body', 'mobile-pwa-gateway-card');
   const panelPort = panelPortNumber();

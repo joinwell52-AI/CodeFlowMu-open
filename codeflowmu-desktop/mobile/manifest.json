@@ -1,7 +1,8 @@
 {
-  "name": "码流 CodeFlowMu",
-  "short_name": "CodeFlowMu",
-  "description": "CodeFlowMu mobile operator console",
+  "id": "codeflowmu-1-2-21",
+  "name": "码流 CodeFlowMu 开源兼容版",
+  "short_name": "CodeFlowMu 兼容版",
+  "description": "CodeFlowMu 1.2.21 开源兼容版移动操作台",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

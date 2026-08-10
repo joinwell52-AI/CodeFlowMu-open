@@ -788,7 +788,7 @@
     },
   };
 
-  const STORAGE_KEY = "cfm_lang";
+  const STORAGE_KEY = "codeflowmu-1-2-21:lang";
 
   function getLang() {
     const saved = localStorage.getItem(STORAGE_KEY);

@@ -2,6 +2,20 @@
   "schema_version": 1,
   "releases": [
     {
+      "version": "V1.0.64",
+      "resource_version": "1.0.64",
+      "released_at": "2026-08-09T15:39:56Z",
+      "name": "Open compatibility PWA product identity",
+      "changes": [
+        "Adds a stable application id and mobile API contract handshake.",
+        "Scopes caches and browser storage to this PWA without deleting sibling application data.",
+        "Publishes verifiable PWA provenance in standalone and Open release packages.",
+        "Displays the independent Open release directly as V1.0.64-open in the header and version panel.",
+        "Validates the Gateway PWA application id and API contract in addition to its version, rejecting cross-product responses.",
+        "Keeps authoritative Gateway publication outside this Open maintenance source while preserving read-only online verification."
+      ]
+    },
+    {
       "version": "V1.0.63",
       "resource_version": "1.0.63",
       "released_at": "2026-08-05T03:16:29Z",
