@@ -16,6 +16,11 @@
   <a href="README.md">English README</a> ·
   <a href="#快速安装">快速安装</a> ·
   <a href="#真实界面">真实界面</a> ·
+  <a href="https://joinwell52-ai.github.io/CodeFlowMu-open/"><strong>产品主页</strong></a> ·
+  <a href="https://github.com/joinwell52-AI/FCoP">FCoP GitHub</a> ·
+  <a href="https://joinwell52-ai.github.io/FCoP/">FCoP 主页</a> ·
+  <a href="https://github.com/joinwell52-AI/joinwell52">TMPA</a> ·
+  <a href="https://joinwell52-ai.github.io/joinwell52/zh/">Digital Employee Works</a> ·
   <a href="INSTALL.md">安装手册</a> ·
   <a href="docs/open/help.zh.md">PC 与 PWA 操作手册</a>
 </p>
@@ -36,11 +41,23 @@
 
 CodeFlowMu Open 是一个本地优先的多 Agent 开发团队应用。你提交需求，PM 负责分析和派发，DEV 实现，OPS 处理运行与交付，QA 验证；任务、报告、证据、审批和项目状态统一呈现在 PC Panel，并可通过手机 PWA 随时查看和操作。
 
+> **当前 Provider 边界：**这个开源产品目前只通过 **Cursor SDK / Cursor API Key** 接入 Agent。Provider-neutral 接口属于未来扩展点；当前发行版不包含、也不宣称支持其他 Agent Provider。
+
 它解决的不是“再增加一个聊天窗口”，而是让多个 Agent 围绕同一套可追踪的任务生命周期协作：
 
 ```text
 需求 → PM 规划 → TASK → DEV / OPS / QA → REPORT → REVIEW / APPROVAL → 完成
 ```
+
+## 项目家族
+
+| 层级 | 项目 | 定位 |
+|---|---|---|
+| 理论与规范 | [TMPA](https://github.com/joinwell52-AI/joinwell52) · [主页](https://joinwell52-ai.github.io/joinwell52/zh/) | 治理架构、规范 Core、符合性测试与证据 |
+| 协议 | [FCoP GitHub](https://github.com/joinwell52-AI/FCoP) · [主页](https://joinwell52-ai.github.io/FCoP/) | MIT 开源文件式行为治理协议，承载团队的持久工作工件 |
+| 产品 | **CodeFlowMu Open** · [主页](https://joinwell52-ai.github.io/CodeFlowMu-open/) | 当前这个 MIT 开源、可安装的四人开发团队产品；目前只对接 Cursor |
+
+完整研究与产品地图：[Digital Employee Works](https://joinwell52-ai.github.io/joinwell52/zh/)。
 
 ## 为什么需要它
 

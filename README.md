@@ -16,6 +16,11 @@
   <a href="README.zh.md">Simplified Chinese README</a> ·
   <a href="#quick-install">Quick Install</a> ·
   <a href="#real-product-screens">Product Screens</a> ·
+  <a href="https://joinwell52-ai.github.io/CodeFlowMu-open/"><strong>Product Site</strong></a> ·
+  <a href="https://github.com/joinwell52-AI/FCoP">FCoP GitHub</a> ·
+  <a href="https://joinwell52-ai.github.io/FCoP/">FCoP Site</a> ·
+  <a href="https://github.com/joinwell52-AI/joinwell52">TMPA</a> ·
+  <a href="https://joinwell52-ai.github.io/joinwell52/">Digital Employee Works</a> ·
   <a href="INSTALL.md">Installation Guide</a> ·
   <a href="docs/open/help.md">Illustrated PC & PWA Manual</a>
 </p>
@@ -36,11 +41,23 @@ Full release record：[RELEASES.md](RELEASES.md)
 
 CodeFlowMu Open is a local-first multi-agent development team application. You submit a requirement; PM analyzes and dispatches it, DEV implements it, OPS handles runtime and delivery, and QA verifies it. Tasks, reports, evidence, approvals, and project state are visible in the PC Panel and available from the Mobile PWA.
 
+> **Current provider boundary:** this open product connects to agents through **Cursor SDK / Cursor API Key only**. Provider-neutral interfaces are future extension points; this release does not include or claim support for other agent providers.
+
 It is not another chat window. It gives multiple agents one traceable delivery lifecycle:
 
 ```text
 Requirement → PM Plan → TASK → DEV / OPS / QA → REPORT → REVIEW / APPROVAL → Done
 ```
+
+## Project family
+
+| Layer | Project | Role |
+|---|---|---|
+| Theory and specification | [TMPA](https://github.com/joinwell52-AI/joinwell52) · [Site](https://joinwell52-ai.github.io/joinwell52/) | Governance architecture, normative Core, conformance, and evidence |
+| Protocol | [FCoP GitHub](https://github.com/joinwell52-AI/FCoP) · [Site](https://joinwell52-ai.github.io/FCoP/) | MIT-licensed file-based behavior-governance protocol used for durable team artifacts |
+| Product | **CodeFlowMu Open** · [Site](https://joinwell52-ai.github.io/CodeFlowMu-open/) | This installable MIT-licensed four-role development team; currently Cursor-only |
+
+The broader research and product map is available at [Digital Employee Works](https://joinwell52-ai.github.io/joinwell52/).
 
 ## Core Capabilities
 
