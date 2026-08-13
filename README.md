@@ -27,6 +27,13 @@
 
 ---
 
+> [!NOTE]
+> **📢 Version Status Notice**
+>
+> This public repository version is no longer actively updated with new features.
+>
+> *The current production version (v1.9.0) is maintained in a private repository and is not publicly accessible.*
+
 <!-- OPEN_RELEASE_NOTES_START -->
 ## V1.2.29-open Release Notes
 
