@@ -34,6 +34,8 @@
 >
 > *The current production version (v1.9.0) is maintained in a private repository and is not publicly accessible.*
 
+> **TMPA conformance boundary:** CodeFlowMu Open V1.2.29-open predates the formalization of TMPA V1.0 and is one of its historical engineering sources. This release has not completed formal conformance validation against TMPA S1.0 and is not claimed as a TMPA-conformant reference implementation.
+
 <!-- OPEN_RELEASE_NOTES_START -->
 ## V1.2.29-open Release Notes
 
