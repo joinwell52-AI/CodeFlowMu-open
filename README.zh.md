@@ -34,6 +34,8 @@
 >
 > *当前实际生产环境运行的版本（v1.9.0）基于私有仓库迭代，暂不对外公开。*
 
+> **TMPA 符合性边界：**CodeFlowMu Open V1.2.29-open 形成于 TMPA V1.0 正式定稿之前，是 TMPA 的历史工程来源之一；本版本尚未按 TMPA S1.0 完成正式符合性验证，因此不声明为 TMPA 符合性参考实现。
+
 <!-- OPEN_RELEASE_NOTES_START -->
 ## V1.2.29-open 更新日志
 
