@@ -33,12 +33,14 @@ CodeflowMu-Distribution
 → installer, installation/upgrade documentation, and formal Releases
 ```
 
-Authorized users should obtain the current product and installation instructions from:
+The current product is still completing productization and installer-chain validation, so `CodeflowMu-Distribution` **remains private for now**. After the product is complete and the formal Release Gate passes, we will decide whether to make the distribution repository public.
 
-**CodeFlowMu Distribution (authorized access)**  
+**CodeFlowMu Distribution (currently private during productization)**  
 https://github.com/joinwell52-AI/CodeflowMu-Distribution
 
-> `CodeflowMu-Distribution` is currently a private product-distribution repository. GitHub users without authorization may see a 404 when opening that URL. This does not mean the CodeFlowMu project has stopped or that the repository does not exist.
+> GitHub users without repository access may currently see a 404. This is because the product is not yet complete and the distribution repository has not been opened, not because the CodeFlowMu project has stopped or the repository does not exist.
+
+If the distribution repository is opened in the future, users will obtain the formal installation path from its README, customer documentation, and GitHub Releases. CodeFlowMu source code will still not be published through that distribution repository.
 
 Do not treat installation instructions, version numbers, or Releases in this historical repository as the installation path for the current CodeFlowMu product.
 
