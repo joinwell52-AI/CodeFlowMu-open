@@ -33,12 +33,14 @@ CodeflowMu-Distribution
 → 安装包、安装说明、升级说明和正式 Release
 ```
 
-获得产品访问授权的用户，请从当前产品分发仓库获取安装方式与正式版本：
+当前产品仍在产品化与安装链验证阶段，因此 `CodeflowMu-Distribution` **暂时保持私有**。产品完成并通过正式 Release Gate 后，再决定该分发仓库是否对外公开。
 
-**CodeFlowMu Distribution（授权访问）**  
+**CodeFlowMu Distribution（当前开发阶段为私有）**  
 https://github.com/joinwell52-AI/CodeflowMu-Distribution
 
-> `CodeflowMu-Distribution` 当前为私有产品分发仓库。未获得访问授权的 GitHub 用户访问该链接时可能显示 404；这不代表 CodeFlowMu 项目停止或仓库不存在。
+> 目前未获仓库访问权限的 GitHub 用户可能看到 404，这是因为产品尚未完成、分发仓库暂未公开，不代表 CodeFlowMu 项目停止或仓库不存在。
+
+未来如果分发仓库公开，用户将从该仓库 README、安装文档和 GitHub Releases 获取正式安装方式；CodeFlowMu 源码仍不通过该仓库发布。
 
 请不要把本仓库的历史源码安装方式、历史版本号或历史 Release 当作当前 CodeFlowMu 产品的安装方式。
 
