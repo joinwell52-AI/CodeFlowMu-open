@@ -13,7 +13,34 @@
 - New feature pull requests are not requested
 - This repository is **not** the source of current CodeFlowMu customer releases
 
-The current CodeFlowMu product line is developed separately as a closed-source product and distributed through a separate product-distribution process.
+The CodeFlowMu project itself has not stopped. Current CodeFlowMu development continues as a separate **closed-source product line**, and its source repository is no longer public.
+
+## Current CodeFlowMu product
+
+The current product development and distribution path is now completely separate from this historical open repository:
+
+```text
+CodeFlowMu-open
+→ historical open-source implementation
+→ frozen at V1.2.29-open
+
+codeflowmu
+→ current private development repository
+→ source is not distributed to customers
+
+CodeflowMu-Distribution
+→ current product distribution repository
+→ installer, installation/upgrade documentation, and formal Releases
+```
+
+Authorized users should obtain the current product and installation instructions from:
+
+**CodeFlowMu Distribution (authorized access)**  
+https://github.com/joinwell52-AI/CodeflowMu-Distribution
+
+> `CodeflowMu-Distribution` is currently a private product-distribution repository. GitHub users without authorization may see a 404 when opening that URL. This does not mean the CodeFlowMu project has stopped or that the repository does not exist.
+
+Do not treat installation instructions, version numbers, or Releases in this historical repository as the installation path for the current CodeFlowMu product.
 
 ## Historical scope
 
