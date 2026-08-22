@@ -13,7 +13,34 @@
 - 不再接受面向新功能的 Pull Request
 - 本仓库**不是**当前 CodeFlowMu 客户产品的发布来源
 
-当前 CodeFlowMu 产品线已经转为独立的闭源产品开发，并通过单独的产品分发流程交付。
+CodeFlowMu 项目本身没有停止。当前 CodeFlowMu 已转为独立的**闭源产品线**继续开发，源码仓库不再公开。
+
+## 当前 CodeFlowMu 产品
+
+当前产品的开发与发布已经与本历史开源仓库完全分离：
+
+```text
+CodeFlowMu-open
+→ 历史开源实现
+→ V1.2.29-open 冻结
+
+codeflowmu
+→ 当前私有开发仓库
+→ 不对客户公开源码
+
+CodeflowMu-Distribution
+→ 当前产品发布仓库
+→ 安装包、安装说明、升级说明和正式 Release
+```
+
+获得产品访问授权的用户，请从当前产品分发仓库获取安装方式与正式版本：
+
+**CodeFlowMu Distribution（授权访问）**  
+https://github.com/joinwell52-AI/CodeflowMu-Distribution
+
+> `CodeflowMu-Distribution` 当前为私有产品分发仓库。未获得访问授权的 GitHub 用户访问该链接时可能显示 404；这不代表 CodeFlowMu 项目停止或仓库不存在。
+
+请不要把本仓库的历史源码安装方式、历史版本号或历史 Release 当作当前 CodeFlowMu 产品的安装方式。
 
 ## 历史定位
 
