@@ -1,13 +1,9 @@
-# Contributing to CodeFlowMu Open
+# Contribution Status — Frozen Historical Edition
 
-Thank you for helping improve CodeFlowMu Open.
+`CodeFlowMu-open` is frozen as a historical open-source edition as of 2026-08-22.
 
-Before opening a pull request:
+This repository is no longer accepting new feature contributions or product-development pull requests.
 
-1. Keep changes inside the public-edition boundary described in `OPEN-BOUNDARY.md`.
-2. Do not commit credentials, runtime ledgers, user projects, generated caches, or private Gateway code.
-3. Install dependencies with `npm ci` from the committed root lockfile.
-4. Run the focused tests for the area you changed and describe the evidence in the pull request.
-5. Keep Windows Use and Browser Use targets allowlisted; do not weaken their policy boundaries.
+Please do not submit changes intended to keep this repository synchronized with the current private CodeFlowMu product line. The historical source is intentionally preserved as a stable reference.
 
-Public releases are generated from a clean mother-repository commit. Direct edits in the generated public worktree may be overwritten by the next full replacement release.
+For the freeze rationale, maintenance boundary, and license note, see [ARCHIVED.md](ARCHIVED.md).
